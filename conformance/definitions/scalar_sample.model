@@ -1,0 +1,24 @@
+model ScalarSample {
+  id           UUID
+  enabled      Boolean
+  rank         Int
+  score        Float
+  optionalAt   DateTime?
+  optionalUuid UUID?
+
+  @@id(id)
+}
+
+mutation RecordSample {
+  sample ScalarSample.create
+}
+
+mutation ReviseSample {
+  sample ScalarSample.update<
+    enabled,
+    rank,
+    score,
+    optionalAt,
+    optionalUuid
+  >
+}

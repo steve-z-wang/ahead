@@ -1,0 +1,1340 @@
+{
+  "formatVersion": 1,
+  "mutations": {
+    "CaptionWithNote": {
+      "1": {
+        "name": "CaptionWithNote",
+        "version": 1,
+        "slots": [
+          {
+            "name": "moment",
+            "model": "Moment",
+            "operation": "update",
+            "cardinality": "single",
+            "allowedPatchFields": [
+              "caption"
+            ]
+          }
+        ],
+        "input": {
+          "enumValues": {},
+          "models": {
+            "moment": {
+              "name": "Moment",
+              "identityFields": [
+                "id"
+              ],
+              "knownFields": [
+                "caption",
+                "capturedAt",
+                "id",
+                "spaceId"
+              ],
+              "fields": [
+                {
+                  "name": "caption",
+                  "nullable": true,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "identity": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "CaptureMoment": {
+      "1": {
+        "name": "CaptureMoment",
+        "version": 1,
+        "slots": [
+          {
+            "name": "moment",
+            "model": "Moment",
+            "operation": "create",
+            "cardinality": "single"
+          },
+          {
+            "name": "star",
+            "model": "Star",
+            "operation": "create",
+            "cardinality": "single",
+            "bindings": [
+              {
+                "relation": "moment",
+                "fields": [
+                  "momentId"
+                ],
+                "slot": "moment"
+              }
+            ]
+          },
+          {
+            "name": "tags",
+            "model": "StarTag",
+            "operation": "create",
+            "cardinality": "list",
+            "bindings": [
+              {
+                "relation": "star",
+                "fields": [
+                  "userId",
+                  "momentId"
+                ],
+                "slot": "star"
+              },
+              {
+                "relation": "moment",
+                "fields": [
+                  "momentId"
+                ],
+                "slot": "moment"
+              }
+            ]
+          }
+        ],
+        "input": {
+          "enumValues": {},
+          "models": {
+            "moment": {
+              "name": "Moment",
+              "identityFields": [
+                "id"
+              ],
+              "knownFields": [
+                "caption",
+                "capturedAt",
+                "id",
+                "spaceId"
+              ],
+              "fields": [
+                {
+                  "name": "caption",
+                  "nullable": true,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "capturedAt",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "dateTime"
+                  }
+                },
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "identity": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                },
+                {
+                  "name": "spaceId",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                }
+              ]
+            },
+            "star": {
+              "name": "Star",
+              "identityFields": [
+                "userId",
+                "momentId"
+              ],
+              "knownFields": [
+                "momentId",
+                "userId"
+              ],
+              "fields": [
+                {
+                  "name": "momentId",
+                  "nullable": false,
+                  "identity": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                },
+                {
+                  "name": "userId",
+                  "nullable": false,
+                  "identity": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                }
+              ]
+            },
+            "starTag": {
+              "name": "StarTag",
+              "identityFields": [
+                "id"
+              ],
+              "knownFields": [
+                "id",
+                "label",
+                "momentId",
+                "userId"
+              ],
+              "fields": [
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "identity": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                },
+                {
+                  "name": "label",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  },
+                  "prerequisite": {
+                    "name": "RemoteLabel",
+                    "arguments": {
+                      "key": "label"
+                    }
+                  }
+                },
+                {
+                  "name": "momentId",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                },
+                {
+                  "name": "userId",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "CreateSpace": {
+      "1": {
+        "name": "CreateSpace",
+        "version": 1,
+        "slots": [
+          {
+            "name": "space",
+            "model": "Space",
+            "operation": "create",
+            "cardinality": "single"
+          }
+        ],
+        "input": {
+          "enumValues": {
+            "SpaceKind": [
+              "personal",
+              "group"
+            ]
+          },
+          "models": {
+            "space": {
+              "name": "Space",
+              "identityFields": [
+                "id"
+              ],
+              "knownFields": [
+                "avatarKey",
+                "id",
+                "kind",
+                "name",
+                "ownerId"
+              ],
+              "fields": [
+                {
+                  "name": "avatarKey",
+                  "nullable": true,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  },
+                  "prerequisite": {
+                    "name": "RemoteLabel",
+                    "arguments": {
+                      "key": "avatarKey"
+                    }
+                  }
+                },
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "identity": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                },
+                {
+                  "name": "kind",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "enum",
+                    "name": "SpaceKind"
+                  }
+                },
+                {
+                  "name": "name",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "ownerId",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "DeleteSpace": {
+      "1": {
+        "name": "DeleteSpace",
+        "version": 1,
+        "slots": [
+          {
+            "name": "space",
+            "model": "Space",
+            "operation": "delete",
+            "cardinality": "single"
+          }
+        ],
+        "input": {
+          "enumValues": {},
+          "models": {
+            "space": {
+              "name": "Space",
+              "identityFields": [
+                "id"
+              ],
+              "knownFields": [
+                "avatarKey",
+                "id",
+                "kind",
+                "name",
+                "ownerId"
+              ],
+              "fields": [
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "identity": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "DiscardMoment": {
+      "1": {
+        "name": "DiscardMoment",
+        "version": 1,
+        "slots": [
+          {
+            "name": "moment",
+            "model": "Moment",
+            "operation": "delete",
+            "cardinality": "single"
+          }
+        ],
+        "input": {
+          "enumValues": {},
+          "models": {
+            "moment": {
+              "name": "Moment",
+              "identityFields": [
+                "id"
+              ],
+              "knownFields": [
+                "caption",
+                "capturedAt",
+                "id",
+                "spaceId"
+              ],
+              "fields": [
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "identity": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "KeepMoment": {
+      "1": {
+        "name": "KeepMoment",
+        "version": 1,
+        "slots": [
+          {
+            "name": "star",
+            "model": "Star",
+            "operation": "create",
+            "cardinality": "single"
+          }
+        ],
+        "input": {
+          "enumValues": {},
+          "models": {
+            "star": {
+              "name": "Star",
+              "identityFields": [
+                "userId",
+                "momentId"
+              ],
+              "knownFields": [
+                "momentId",
+                "userId"
+              ],
+              "fields": [
+                {
+                  "name": "momentId",
+                  "nullable": false,
+                  "identity": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                },
+                {
+                  "name": "userId",
+                  "nullable": false,
+                  "identity": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "PublishNote": {
+      "1": {
+        "name": "PublishNote",
+        "version": 1,
+        "slots": [
+          {
+            "name": "note",
+            "model": "LocalNote",
+            "operation": "create",
+            "cardinality": "single"
+          }
+        ],
+        "input": {
+          "enumValues": {
+            "LocalNoteStatus": [
+              "active",
+              "archived"
+            ]
+          },
+          "models": {
+            "localNote": {
+              "name": "LocalNote",
+              "identityFields": [
+                "id"
+              ],
+              "knownFields": [
+                "id",
+                "status",
+                "text"
+              ],
+              "fields": [
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "identity": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                },
+                {
+                  "name": "status",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "enum",
+                    "name": "LocalNoteStatus"
+                  }
+                },
+                {
+                  "name": "text",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "RecaptionWithNote": {
+      "1": {
+        "name": "RecaptionWithNote",
+        "version": 1,
+        "slots": [
+          {
+            "name": "moment",
+            "model": "Moment",
+            "operation": "update",
+            "cardinality": "single",
+            "allowedPatchFields": [
+              "caption"
+            ]
+          }
+        ],
+        "input": {
+          "enumValues": {},
+          "models": {
+            "moment": {
+              "name": "Moment",
+              "identityFields": [
+                "id"
+              ],
+              "knownFields": [
+                "caption",
+                "capturedAt",
+                "id",
+                "spaceId"
+              ],
+              "fields": [
+                {
+                  "name": "caption",
+                  "nullable": true,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "identity": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "RecordSample": {
+      "1": {
+        "name": "RecordSample",
+        "version": 1,
+        "slots": [
+          {
+            "name": "sample",
+            "model": "ScalarSample",
+            "operation": "create",
+            "cardinality": "single"
+          }
+        ],
+        "input": {
+          "enumValues": {},
+          "models": {
+            "scalarSample": {
+              "name": "ScalarSample",
+              "identityFields": [
+                "id"
+              ],
+              "knownFields": [
+                "enabled",
+                "id",
+                "optionalAt",
+                "optionalUuid",
+                "rank",
+                "score"
+              ],
+              "fields": [
+                {
+                  "name": "enabled",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "boolean"
+                  }
+                },
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "identity": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                },
+                {
+                  "name": "optionalAt",
+                  "nullable": true,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "dateTime"
+                  }
+                },
+                {
+                  "name": "optionalUuid",
+                  "nullable": true,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                },
+                {
+                  "name": "rank",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "int"
+                  }
+                },
+                {
+                  "name": "score",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "float"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "RegisterUser": {
+      "1": {
+        "name": "RegisterUser",
+        "version": 1,
+        "slots": [
+          {
+            "name": "user",
+            "model": "User",
+            "operation": "create",
+            "cardinality": "single"
+          }
+        ],
+        "input": {
+          "enumValues": {},
+          "models": {
+            "user": {
+              "name": "User",
+              "identityFields": [
+                "id"
+              ],
+              "knownFields": [
+                "handle",
+                "id"
+              ],
+              "fields": [
+                {
+                  "name": "handle",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "identity": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "RenameSpace": {
+      "1": {
+        "name": "RenameSpace",
+        "version": 1,
+        "slots": [
+          {
+            "name": "space",
+            "model": "Space",
+            "operation": "update",
+            "cardinality": "single",
+            "allowedPatchFields": [
+              "name",
+              "avatarKey"
+            ]
+          }
+        ],
+        "input": {
+          "enumValues": {},
+          "models": {
+            "space": {
+              "name": "Space",
+              "identityFields": [
+                "id"
+              ],
+              "knownFields": [
+                "avatarKey",
+                "id",
+                "kind",
+                "name",
+                "ownerId"
+              ],
+              "fields": [
+                {
+                  "name": "avatarKey",
+                  "nullable": true,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  },
+                  "prerequisite": {
+                    "name": "RemoteLabel",
+                    "arguments": {
+                      "key": "avatarKey"
+                    }
+                  }
+                },
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "identity": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                },
+                {
+                  "name": "name",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "2": {
+        "name": "RenameSpace",
+        "version": 2,
+        "slots": [
+          {
+            "name": "space",
+            "model": "Space",
+            "operation": "update",
+            "cardinality": "single",
+            "allowedPatchFields": [
+              "name",
+              "avatarKey",
+              "kind"
+            ]
+          }
+        ],
+        "input": {
+          "enumValues": {
+            "SpaceKind": [
+              "personal",
+              "group"
+            ]
+          },
+          "models": {
+            "space": {
+              "name": "Space",
+              "identityFields": [
+                "id"
+              ],
+              "knownFields": [
+                "avatarKey",
+                "id",
+                "kind",
+                "name",
+                "ownerId"
+              ],
+              "fields": [
+                {
+                  "name": "avatarKey",
+                  "nullable": true,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  },
+                  "prerequisite": {
+                    "name": "RemoteLabel",
+                    "arguments": {
+                      "key": "avatarKey"
+                    }
+                  }
+                },
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "identity": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                },
+                {
+                  "name": "kind",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "enum",
+                    "name": "SpaceKind"
+                  }
+                },
+                {
+                  "name": "name",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "ReviseMoment": {
+      "1": {
+        "name": "ReviseMoment",
+        "version": 1,
+        "slots": [
+          {
+            "name": "moment",
+            "model": "Moment",
+            "operation": "update",
+            "cardinality": "single",
+            "allowedPatchFields": [
+              "caption"
+            ]
+          },
+          {
+            "name": "removedTags",
+            "model": "StarTag",
+            "operation": "delete",
+            "cardinality": "list",
+            "bindings": [
+              {
+                "relation": "moment",
+                "fields": [
+                  "momentId"
+                ],
+                "slot": "moment"
+              }
+            ]
+          },
+          {
+            "name": "addedTags",
+            "model": "StarTag",
+            "operation": "create",
+            "cardinality": "list",
+            "bindings": [
+              {
+                "relation": "moment",
+                "fields": [
+                  "momentId"
+                ],
+                "slot": "moment"
+              }
+            ]
+          },
+          {
+            "name": "star",
+            "model": "Star",
+            "operation": "delete",
+            "cardinality": "optional"
+          }
+        ],
+        "input": {
+          "enumValues": {},
+          "models": {
+            "moment": {
+              "name": "Moment",
+              "identityFields": [
+                "id"
+              ],
+              "knownFields": [
+                "caption",
+                "capturedAt",
+                "id",
+                "spaceId"
+              ],
+              "fields": [
+                {
+                  "name": "caption",
+                  "nullable": true,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "identity": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                }
+              ]
+            },
+            "star": {
+              "name": "Star",
+              "identityFields": [
+                "userId",
+                "momentId"
+              ],
+              "knownFields": [
+                "momentId",
+                "userId"
+              ],
+              "fields": [
+                {
+                  "name": "momentId",
+                  "nullable": false,
+                  "identity": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                },
+                {
+                  "name": "userId",
+                  "nullable": false,
+                  "identity": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                }
+              ]
+            },
+            "starTag": {
+              "name": "StarTag",
+              "identityFields": [
+                "id"
+              ],
+              "knownFields": [
+                "id",
+                "label",
+                "momentId",
+                "userId"
+              ],
+              "fields": [
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "identity": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                },
+                {
+                  "name": "label",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  },
+                  "prerequisite": {
+                    "name": "RemoteLabel",
+                    "arguments": {
+                      "key": "label"
+                    }
+                  }
+                },
+                {
+                  "name": "momentId",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                },
+                {
+                  "name": "userId",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "ReviseSample": {
+      "1": {
+        "name": "ReviseSample",
+        "version": 1,
+        "slots": [
+          {
+            "name": "sample",
+            "model": "ScalarSample",
+            "operation": "update",
+            "cardinality": "single",
+            "allowedPatchFields": [
+              "enabled",
+              "rank",
+              "score",
+              "optionalAt",
+              "optionalUuid"
+            ]
+          }
+        ],
+        "input": {
+          "enumValues": {},
+          "models": {
+            "scalarSample": {
+              "name": "ScalarSample",
+              "identityFields": [
+                "id"
+              ],
+              "knownFields": [
+                "enabled",
+                "id",
+                "optionalAt",
+                "optionalUuid",
+                "rank",
+                "score"
+              ],
+              "fields": [
+                {
+                  "name": "enabled",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "boolean"
+                  }
+                },
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "identity": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                },
+                {
+                  "name": "optionalAt",
+                  "nullable": true,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "dateTime"
+                  }
+                },
+                {
+                  "name": "optionalUuid",
+                  "nullable": true,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                },
+                {
+                  "name": "rank",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "int"
+                  }
+                },
+                {
+                  "name": "score",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "float"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "SaveAccountState": {
+      "1": {
+        "name": "SaveAccountState",
+        "version": 1,
+        "slots": [
+          {
+            "name": "accountState",
+            "model": "AccountState",
+            "operation": "create",
+            "cardinality": "single"
+          }
+        ],
+        "input": {
+          "enumValues": {},
+          "models": {
+            "accountState": {
+              "name": "AccountState",
+              "identityFields": [
+                "userId"
+              ],
+              "knownFields": [
+                "inboxSeenAt",
+                "spaceOrder",
+                "userId"
+              ],
+              "fields": [
+                {
+                  "name": "inboxSeenAt",
+                  "nullable": true,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "dateTime"
+                  }
+                },
+                {
+                  "name": "spaceOrder",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "list",
+                    "element": "uuid"
+                  }
+                },
+                {
+                  "name": "userId",
+                  "nullable": false,
+                  "identity": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "Unstar": {
+      "1": {
+        "name": "Unstar",
+        "version": 1,
+        "slots": [
+          {
+            "name": "star",
+            "model": "Star",
+            "operation": "delete",
+            "cardinality": "single"
+          }
+        ],
+        "input": {
+          "enumValues": {},
+          "models": {
+            "star": {
+              "name": "Star",
+              "identityFields": [
+                "userId",
+                "momentId"
+              ],
+              "knownFields": [
+                "momentId",
+                "userId"
+              ],
+              "fields": [
+                {
+                  "name": "momentId",
+                  "nullable": false,
+                  "identity": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                },
+                {
+                  "name": "userId",
+                  "nullable": false,
+                  "identity": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "WriteMoment": {
+      "1": {
+        "name": "WriteMoment",
+        "version": 1,
+        "slots": [
+          {
+            "name": "moment",
+            "model": "Moment",
+            "operation": "create",
+            "cardinality": "single"
+          }
+        ],
+        "input": {
+          "enumValues": {},
+          "models": {
+            "moment": {
+              "name": "Moment",
+              "identityFields": [
+                "id"
+              ],
+              "knownFields": [
+                "caption",
+                "capturedAt",
+                "id",
+                "spaceId"
+              ],
+              "fields": [
+                {
+                  "name": "caption",
+                  "nullable": true,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "capturedAt",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "dateTime"
+                  }
+                },
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "identity": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                },
+                {
+                  "name": "spaceId",
+                  "nullable": false,
+                  "identity": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

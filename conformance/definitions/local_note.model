@@ -1,0 +1,35 @@
+enum LocalNoteStatus {
+  active
+  archived
+}
+
+// An ordinary Model. Nothing here says whether its rows leave the device:
+// a Model describes a row shape, and synchronization is chosen per write
+// (CAP-488). The same Model below is written both ways.
+model LocalNote {
+  id     UUID
+  text   String
+  status LocalNoteStatus
+
+  @@id(id)
+}
+
+// Wire-capable, so the journeys can prove the same Model reaches the Backend
+// when an act names it — while `localSync.write` on it queues nothing at all.
+mutation PublishNote {
+  note LocalNote.create
+}
+
+// The companion act: one declared wire slot, and a device-only LocalNote
+// written inside the callback. The note shares the act's fate — provisional
+// until the act settles, rolled back whole on refusal — and never reaches the
+// wire, because it was written rather than returned.
+mutation CaptionWithNote {
+  moment Moment.update<caption>
+}
+
+// The same shape over an EXISTING note — what the direct-lane interleave
+// journey pends while a `write` lands a final edit beside it.
+mutation RecaptionWithNote {
+  moment Moment.update<caption>
+}

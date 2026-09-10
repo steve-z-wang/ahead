@@ -1,0 +1,13 @@
+model AccountState {
+  userId      UUID
+  spaceOrder  UUID[]
+  inboxSeenAt DateTime?
+
+  user User @reference(via: [userId], onTargetDelete: delete)
+
+  @@id(userId)
+}
+
+mutation SaveAccountState {
+  accountState AccountState.create
+}

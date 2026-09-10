@@ -1,0 +1,15 @@
+.DS_Store
+.worktrees/
+.dart_tool/
+.pub/
+node_modules/
+build/
+dist/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

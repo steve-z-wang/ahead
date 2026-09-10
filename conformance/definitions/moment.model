@@ -1,0 +1,52 @@
+model Moment {
+  id         UUID
+  spaceId    UUID
+  capturedAt DateTime
+  caption    String?
+
+  space Space @reference(via: [spaceId], onTargetDelete: delete)
+
+  stars         Star[]
+  outgoingLinks MomentLink[] @inverse("MomentLinkSource")
+  incomingLinks MomentLink[] @inverse("MomentLinkTarget")
+
+  @@id(id)
+}
+
+// A page on its own, kept by nobody — the plain create beside the composite
+// below, so a contract that only needs a page does not have to keep one.
+mutation WriteMoment {
+  moment Moment.create
+}
+
+mutation DiscardMoment {
+  moment Moment.delete
+}
+
+// The composite act, and the reason mutations exist: one page, the star that
+// keeps it, and the tags that travel with both — one name, one record, one
+// fate. With 40 tags this is the 42-operation page the batch limit used to
+// split. The bindings are the act's declared wiring (spec
+// 2026-08-16-slot-bindings): the star names this act's own moment (through
+// its identity), and each tag is MULTI-PARENT — its composite `star`
+// reference and its `moment` reference both point into the act. The star's
+// `user` relation stays an ordinary field: the person is not a row of this
+// act, and binding is per-relation.
+mutation CaptureMoment {
+  moment Moment.create
+  star   Star.create(moment: moment)
+  tags   StarTag.create(star: star, moment: moment)[]
+
+  @@sequence(after: [RenameSpace(space: moment.space)])
+}
+
+// Execution order is declaration order: the removals run before the additions
+// because the schema says so, not because a caller remembered to. The tag
+// slots bind the moment they revise — a delete is held against its stored
+// row, a create against its payload.
+mutation ReviseMoment {
+  moment      Moment.update<caption>
+  removedTags StarTag.delete(moment: moment)[]
+  addedTags   StarTag.create(moment: moment)[]
+  star        Star.delete?
+}

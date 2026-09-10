@@ -1,0 +1,17 @@
+model User {
+  id     UUID
+  handle String
+
+  accountState AccountState?
+  spaces       Space[]
+  stars        Star[]
+
+  @@id(id)
+  @@unique(handle)
+}
+
+// The smallest act there is: one operation, one name. Every family a contract
+// writes starts here, because a write with no act to belong to cannot be made.
+mutation RegisterUser {
+  user User.create
+}

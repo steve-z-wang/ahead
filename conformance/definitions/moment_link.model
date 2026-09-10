@@ -1,0 +1,13 @@
+// Two relations between the same pair of Models, which is the only reason this
+// Model exists: it is the fixture that proves a shared relation name keeps the
+// two directions apart all the way into the generated relation facts (CAP-437).
+model MomentLink {
+  id       UUID
+  sourceId UUID
+  targetId UUID
+
+  source Moment @reference("MomentLinkSource", via: [sourceId])
+  target Moment @reference("MomentLinkTarget", via: [targetId])
+
+  @@id(id)
+}

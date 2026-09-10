@@ -1,0 +1,30 @@
+{
+  "name": "local-sync-backend",
+  "version": "0.0.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "jest --runInBand"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "watchman": false,
+    "testMatch": [
+      "<rootDir>/test/**/*.spec.ts"
+    ]
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@types/node": "^26.1.2",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.5",
+    "typescript": "^5.7.3",
+    "@types/ws": "8.5.13"
+  },
+  "dependencies": {
+    "ws": "8.18.0"
+  }
+}
