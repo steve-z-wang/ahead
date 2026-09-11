@@ -1,0 +1,16 @@
+model Book {
+ id String
+ title String
+ comments Comment[]
+ @@id(id)
+}
+model Comment {
+ id String
+ bookId String
+ text String
+ book Book @reference(via: [bookId], onTargetDelete: delete)
+ @@id(id)
+}
+mutation AddBook { book Book.create }
+mutation AddComment { comment Comment.create }
+model Counter { id String index Int? @@id(id) }

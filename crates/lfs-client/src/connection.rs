@@ -1,0 +1,114 @@
+//! Transient connection lifecycle. The host supplies clock, entropy, timers and network I/O.
+use serde::Serialize;
+#[derive(Default)]
+pub struct ConnectionDriver {
+    running: bool,
+    paused: bool,
+    dirty: bool,
+    in_flight: bool,
+    attempt: u32,
+    due: u64,
+}
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ConnectionAction {
+    Idle,
+    Sync,
+    Wait { millis: u64 },
+}
+impl ConnectionDriver {
+    pub fn start(&mut self, now: u64) {
+        *self = Self {
+            running: true,
+            dirty: true,
+            due: now,
+            ..Default::default()
+        };
+    }
+    pub fn stop(&mut self) {
+        *self = Self::default();
+    }
+    pub fn pause(&mut self) {
+        self.paused = true;
+    }
+    pub fn resume(&mut self, now: u64) {
+        self.paused = false;
+        self.dirty = true;
+        self.due = now;
+    }
+    pub fn wake(&mut self) {
+        self.dirty = true;
+    }
+    pub fn next(&mut self, now: u64) -> ConnectionAction {
+        if !self.running || self.paused || self.in_flight || !self.dirty {
+            return ConnectionAction::Idle;
+        }
+        if self.due > now {
+            return ConnectionAction::Wait {
+                millis: self.due - now,
+            };
+        }
+        self.dirty = false;
+        self.in_flight = true;
+        ConnectionAction::Sync
+    }
+    pub fn complete(&mut self, success: bool, now: u64, entropy: u64) {
+        if !self.running || !self.in_flight {
+            return;
+        }
+        self.in_flight = false;
+        if success {
+            self.attempt = 0;
+            self.due = now;
+        } else {
+            let base = 250u64
+                .saturating_mul(1u64 << self.attempt.min(7))
+                .min(30_000);
+            self.attempt = self.attempt.saturating_add(1);
+            self.due = now.saturating_add(base * (800 + entropy % 401) / 1000);
+            self.dirty = true;
+        }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn lifecycle_keeps_writes_during_request_and_pauses_work() {
+        let mut d = ConnectionDriver::default();
+        d.start(10);
+        assert_eq!(d.next(10), ConnectionAction::Sync);
+        d.wake();
+        assert_eq!(d.next(10), ConnectionAction::Idle);
+        d.complete(true, 12, 0);
+        assert_eq!(d.next(12), ConnectionAction::Sync);
+        d.pause();
+        d.complete(true, 13, 0);
+        d.wake();
+        assert_eq!(d.next(99), ConnectionAction::Idle);
+        d.resume(100);
+        assert_eq!(d.next(100), ConnectionAction::Sync);
+        d.stop();
+        d.complete(false, 101, 0);
+        assert_eq!(d.next(1000), ConnectionAction::Idle);
+    }
+    #[test]
+    fn retry_backoff_is_bounded_and_wake_does_not_busy_loop() {
+        let mut d = ConnectionDriver::default();
+        d.start(0);
+        let mut now = 0;
+        for _ in 0..40 {
+            assert_eq!(d.next(now), ConnectionAction::Sync);
+            d.complete(false, now, 200);
+            d.wake();
+            let ConnectionAction::Wait { millis } = d.next(now) else {
+                panic!("retry must wait")
+            };
+            assert!((250..=30_000).contains(&millis));
+            now += millis;
+        }
+        assert_eq!(d.next(now), ConnectionAction::Sync);
+        d.complete(true, now, 0);
+        assert_eq!(d.next(now), ConnectionAction::Idle);
+    }
+}

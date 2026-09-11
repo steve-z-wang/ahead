@@ -1,0 +1,12 @@
+{
+  "pull": [
+    {"name": "safe maximum", "wire": "{\"scope\":\"book\",\"fromCursor\":9007199254740991,\"toCursor\":9007199254740991,\"changes\":[]}", "valid": true},
+    {"name": "overflow", "wire": "{\"scope\":\"book\",\"fromCursor\":0,\"toCursor\":9007199254740992,\"changes\":[]}", "valid": false},
+    {"name": "negative", "wire": "{\"scope\":\"book\",\"fromCursor\":-1,\"toCursor\":0,\"changes\":[]}", "valid": false},
+    {"name": "null withdrawal", "wire": "{\"scope\":\"book\",\"fromCursor\":0,\"toCursor\":1,\"changes\":[{\"syncId\":1,\"model\":\"Entry\",\"identity\":{\"id\":\"one\"},\"state\":null}]}", "valid": true}
+  ],
+  "receipt": [
+    {"name": "legacy fallback", "wire": "{\"requiredScope\":\"book\",\"requiredSyncId\":0,\"rejections\":[]}", "valid": true},
+    {"name": "explicit empty rejected", "wire": "{\"requiredScope\":\"book\",\"requiredSyncId\":0,\"requiredCheckpoints\":[],\"rejections\":[]}", "valid": false}
+  ]
+}

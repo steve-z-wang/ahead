@@ -1,0 +1,14 @@
+generator client {
+  provider = "prisma-client-js"
+  output = "./generated/client"
+}
+datasource db {
+  provider = "postgresql"
+  url = env("DATABASE_URL")
+}
+model BusinessProbe {
+  id String @id
+}
+model FrameworkProbe {
+  id String @id
+}

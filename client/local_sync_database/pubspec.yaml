@@ -1,9 +1,0 @@
-name: local_sync_database
-description: SQLite-shaped persistence contract for LocalSync.
-publish_to: none
-
-environment:
-  sdk: ^3.10.3
-
-dev_dependencies:
-  test: ^1.25.0

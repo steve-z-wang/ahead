@@ -1,0 +1,1 @@
+{"enums":[],"models":[{"name":"Entry","identity":["id"],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}]}]}

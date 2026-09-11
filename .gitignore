@@ -1,5 +1,6 @@
 .DS_Store
 .worktrees/
+/target/
 .dart_tool/
 .pub/
 node_modules/
@@ -13,3 +14,6 @@ coverage/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+
+.tools/
+artifacts/

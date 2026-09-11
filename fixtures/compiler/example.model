@@ -1,0 +1,13 @@
+enum Status { active archived }
+model Entry {
+ id UUID
+ title String
+ note String?
+ at DateTime
+ tags String[]
+ status Status
+ @@id(id)
+}
+mutation CreateEntry { entry Entry.create }
+mutation EditEntry { entry Entry.update<title,note,at> @@version(2) }
+mutation RemoveEntries { entries Entry.delete[] maybe Entry.delete? }
