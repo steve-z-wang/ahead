@@ -1,6 +1,8 @@
-# Rust server SDK
+# TypeScript 后端 SDK
 
 [English](README.md) | [简体中文](README.zh-CN.md)
+
+这个 TypeScript SDK 将共享 Rust server runtime 嵌入你的 Node 应用。业务 Handler 和 Loader 使用 TypeScript 实现。
 
 `index.mts` 运行于支持 TypeScript 的 Node（Node 22.18+），也可以使用 TypeScript 编译。通过 `node bindings/node/build.mjs` 构建本地 native module。如果将 native artifact 打包到其他位置，可注入 `native` 实现。
 

@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-一个采用共享 Rust runtime、提供强类型 Dart/TypeScript API 的 local-first state framework。
+一个提供 TypeScript 和 Dart 客户端、TypeScript 后端 SDK，并采用共享 Rust runtime 的 local-first state framework。
 
 第一版通过嵌入式 Node 后端和 Prisma/PostgreSQL，为使用本地 SQLite 的客户端提供服务。Rust 负责 schema 校验、乐观状态、持久化 Mutation batch、Channel Cursor，以及 ACK/Pull 结算。业务代码提供 Handler、Loader，并在应用自己管理的事务内显式向 Channel 发布变化。生成的业务类型保留在 Dart/TypeScript 中。
 
