@@ -1,0 +1,81 @@
+:root {
+  --lfs-paper: #ffffff;
+  --lfs-canvas: #f5f7fb;
+  --lfs-ink: #17243a;
+  --lfs-muted: #58677d;
+  --lfs-cobalt: #315ce8;
+  --lfs-local: #237d62;
+  --md-text-font: "Avenir Next", "Segoe UI", sans-serif;
+  --md-code-font: "SFMono-Regular", Consolas, monospace;
+}
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: var(--lfs-paper);
+  --md-primary-bg-color: var(--lfs-ink);
+  --md-primary-bg-color--light: var(--lfs-muted);
+  --md-default-fg-color: var(--lfs-ink);
+  --md-default-fg-color--light: var(--lfs-muted);
+  --md-accent-fg-color: var(--lfs-cobalt);
+  --md-typeset-a-color: var(--lfs-cobalt);
+  --md-code-bg-color: var(--lfs-canvas);
+}
+[data-md-color-scheme="slate"] {
+  --lfs-paper: #172033;
+  --lfs-canvas: #202d44;
+  --lfs-ink: #e6edf7;
+  --lfs-muted: #b1bfd3;
+  --lfs-cobalt: #9bb6ff;
+  --lfs-local: #79d8b5;
+  --md-default-bg-color: var(--lfs-paper);
+  --md-default-fg-color: var(--lfs-ink);
+  --md-default-fg-color--light: var(--lfs-muted);
+  --md-primary-fg-color: var(--lfs-paper);
+  --md-primary-bg-color: var(--lfs-ink);
+  --md-primary-bg-color--light: var(--lfs-muted);
+  --md-accent-fg-color: var(--lfs-cobalt);
+  --md-typeset-a-color: var(--lfs-cobalt);
+  --md-code-bg-color: var(--lfs-canvas);
+}
+.md-header { box-shadow: none; border-bottom: 1px solid #8290a326; }
+.md-header__topic { font-weight: 650; letter-spacing: -.02em; }
+.md-tabs { border-bottom: 1px solid #8290a326; }
+.md-tabs__link { font-weight: 550; }
+.md-typeset { font-size: .82rem; line-height: 1.7; }
+.md-typeset h1, .md-typeset h2, .md-typeset h3 { color: var(--lfs-ink); font-weight: 620; letter-spacing: -.025em; }
+.md-typeset h1 { line-height: 1.18; }
+.md-typeset code { font-size: .86em; }
+.md-typeset pre > code { border: 1px solid #8290a326; border-radius: 6px; }
+.md-typeset .md-button { color: var(--lfs-cobalt); border-color: var(--lfs-cobalt); border-radius: 5px; font-size: .77rem; padding: .65em 1.2em; }
+.md-typeset .md-button--primary { background-color: #315ce8; border-color: #315ce8; color: #fff; }
+.md-typeset .md-button:focus-visible, a:focus-visible, button:focus-visible { outline: 3px solid var(--lfs-cobalt); outline-offset: 4px; }
+.lfs-intro { max-width: 47rem; margin: 2.3rem 0 2rem; }
+.md-typeset .lfs-kicker { margin-bottom: .8rem; font-size: .62rem; font-weight: 700; letter-spacing: .13em; color: var(--lfs-local); }
+.md-typeset .lfs-intro h1 { margin: 0 0 1.1rem; font-size: clamp(2.15rem, 4.7vw, 3.3rem); letter-spacing: -.045em; }
+.md-typeset .lfs-lead { max-width: 35rem; font-size: 1.1rem; line-height: 1.55; color: var(--lfs-muted); }
+.md-typeset .lfs-platforms { margin: 1.2rem 0 1.5rem; font-size: .74rem; color: var(--lfs-muted); }
+.lfs-intro .md-button { margin: 0 .4rem .6rem 0; }
+.lfs-flow { display: grid; grid-template-columns: repeat(3, 1fr); margin: 0 0 2.8rem; padding: 1.3rem 0; background: var(--lfs-canvas); border-radius: 7px; }
+.lfs-flow-step { display: flex; flex-direction: column; gap: .35rem; padding: .2rem 1.3rem; }
+.lfs-flow-step + .lfs-flow-step { border-left: 1px solid #8290a34a; }
+.lfs-flow-step strong { color: var(--lfs-ink); font-size: .86rem; }
+.lfs-flow-step > span:last-child { font-size: .73rem; line-height: 1.55; color: var(--lfs-muted); }
+.lfs-state { color: var(--lfs-local); font-family: var(--md-code-font); font-size: .57rem; font-weight: 600; letter-spacing: .04em; }
+.lfs-guide-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.6rem; margin: 2.1rem 0; }
+.lfs-guide-grid > div { border-top: 2px solid #8290a34a; }
+.md-typeset .lfs-guide-grid h3 { margin-top: .8rem; }
+.md-typeset .lfs-guide-grid p { font-size: .77rem; }
+@media (min-width: 76.25em) { .md-content__inner { margin-left: 1.5rem; margin-right: 1.5rem; } }
+@media (max-width: 44em) {
+  .lfs-intro { margin-top: 1.1rem; }
+  .lfs-flow, .lfs-guide-grid { grid-template-columns: 1fr; }
+  .lfs-flow { padding: .2rem 1rem; margin-bottom: 1.8rem; }
+  .lfs-flow-step { padding: 1rem 0; }
+  .lfs-flow-step + .lfs-flow-step { border-left: 0; border-top: 1px solid #8290a34a; }
+  .lfs-guide-grid { gap: .3rem; }
+  .md-typeset .lfs-lead { font-size: 1rem; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
+
+.md-search__form { background-color: var(--lfs-canvas); }
+
+/* Keep the home page wide on desktop without removing the mobile drawer. */
+@media (min-width: 76.25em) { body:has(.lfs-intro) .md-sidebar--primary { display: none; } }

@@ -1,0 +1,76 @@
+site_name: local-first-state
+site_description: TypeScript and Dart clients, a TypeScript backend SDK, and a shared Rust runtime.
+site_url: https://steve-z-wang.github.io/local-first-state/
+repo_url: https://github.com/steve-z-wang/local-first-state
+repo_name: steve-z-wang/local-first-state
+edit_uri: ''
+docs_dir: .generated
+site_dir: site
+strict: true
+theme:
+  name: material
+  language: en
+  font: false
+  logo: assets/logo.svg
+  favicon: assets/logo.svg
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+  palette:
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+plugins:
+  - search
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+extra_css:
+  - stylesheets/extra.css
+nav:
+  - Start:
+      - Home: index.md
+      - Quick start: examples/rust-round-trip/README.md
+      - Concepts: concepts.md
+  - Clients:
+      - TypeScript: packages/client-js/README.md
+      - Dart: packages/dart/README.md
+  - Backend:
+      - TypeScript SDK: packages/server/README.md
+      - Prisma: packages/persistence-prisma/README.md
+      - Nest: packages/nest/README.md
+  - Project:
+      - Overview: project.md
+      - Compiler: crates/lfs-compiler/README.md
+      - Testing: integration/README.md
+      - Capacity: integration/rust/README.md
+      - Platforms: integration/platform/README.md
+      - Recovery: docs/architecture/compatibility-and-recovery.md
+      - Implementation: docs/implementation-progress.md
+      - Architecture: docs/architecture/code-organization.md
+      - Naming: docs/architecture/concepts-and-naming.md
+      - Roadmap: docs/next-things.md
+      - Documentation: docs/documentation.md
+validation:
+  links:
+    not_found: warn
+    anchors: warn
+    unrecognized_links: warn
