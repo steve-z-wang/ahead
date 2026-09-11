@@ -14,6 +14,7 @@ npm run typecheck
 node --test integration/bindings/client-js/*.test.mjs
 bash integration/persistence/transaction-probe/run.sh
 bash integration/persistence/server/run.sh
+(cd packages/nest && npm ci)
 (cd integration/nest && npm ci && npm test)
 case "$(uname -s)" in
  Darwin) export LFS_LIBRARY="$root/target/debug/liblfs_dart.dylib";;
