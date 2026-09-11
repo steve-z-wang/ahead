@@ -1,6 +1,6 @@
 # Compatibility and recovery
 
-This source alpha uses a new local SQLite layout. Open a new database path; do not point it at an Oasis database. The historical implementation remains available on `main`. Moving an existing application requires draining its pending writes or a separately designed importer; this version does not delete or convert the old database.
+This source alpha uses a new local SQLite layout. Open a new database path; do not point it at an Oasis database. The historical implementation remains available in Git history at commit `989c4c769b1d41b4b3276f8c97f6bd8ef9eb4fb8`. Moving an existing application requires draining its pending writes or a separately designed importer; this version does not delete or convert the old database.
 
 ## Boundaries
 

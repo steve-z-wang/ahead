@@ -58,4 +58,4 @@ The source alpha uses a new local database. Original database/history importing,
 
 Dependency audit: root development tools and the updated Nest 11.2.3 package/test dependency sets reported zero npm findings. The pinned Prisma 6.19 CLI used by example/test tooling reported four high transitive findings involving `effect` and `deepmerge-ts`; no forced major-version downgrade or override was applied. The framework runtime adapter does not depend on Prisma CLI. Resolve and revalidate that tooling dependency set before public distribution.
 
-The original implementation remains on `main` at `989c4c769b1d41b4b3276f8c97f6bd8ef9eb4fb8`. The rebuild lives on `codex/rust-rebuild`. The upstream repository remains private; no registry publishing or license grant has been performed.
+The original implementation is retained in Git history at `989c4c769b1d41b4b3276f8c97f6bd8ef9eb4fb8`. The rebuild was developed on `codex/rust-rebuild` and merged into `main`. The upstream repository remains private; no registry publishing or license grant has been performed.
