@@ -5,7 +5,7 @@ The script owns a temporary PostgreSQL cluster and cleans it up on success/failu
 The Prisma schema and test package live together under `integration/bindings/node`
 so client generation resolves the pinned package without installing dependencies
 elsewhere in the repository. The native binding and lifecycle notes are in
-`bindings/node/README.md`.
+[Node binding notes](../../../bindings/node/README.md).
 
 Contracts include shared business/framework rollback, a deliberately global-client
 negative control, successful commit and closed handles, poison-on-caught-error,

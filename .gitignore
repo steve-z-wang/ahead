@@ -17,3 +17,9 @@ coverage/
 
 .tools/
 artifacts/
+
+# Documentation website build environment and generated output
+/website/.generated/
+/website/site/
+/website/.venv/
+/website/__pycache__/

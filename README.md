@@ -1,8 +1,10 @@
 # local-first-state
 
-A local-first state framework with a shared Rust runtime and typed Dart/TypeScript APIs.
+A local-first state framework with TypeScript and Dart clients, a TypeScript backend SDK, and a shared Rust runtime.
 
 The first implementation runs local SQLite clients against an embedded Node backend with Prisma/PostgreSQL. Rust owns schema validation, optimistic state, durable mutation batches, channel cursors and ACK/Pull settlement. Business code supplies Handlers, Loaders and explicit channel publication inside application-owned transactions. Generated business types stay in Dart/TypeScript.
+
+[Documentation website setup and preview](website/README.md)
 
 ## Try it
 
@@ -45,6 +47,8 @@ Use `sync`, `edit TEXT`, `show`, and `status` to observe offline edits, server n
 - [Implementation roadmap](docs/superpowers/plans/2026-09-10-rust-rebuild.md)
 - [Reference behavior inventory](docs/superpowers/specs/2026-09-10-existing-logic-audit.md)
 
+- [Documentation maintenance](docs/documentation.md)
+
 This is a source alpha. Cross-channel record revisions and their new conflict rules remain deferred. The original per-change invalid Pull skip behavior and overlapping channel limitations are retained. Live wakeups are process-local; multi-process deployments need a host-provided committed notification mechanism. The first SQLite implementation keeps a snapshot in memory and writes changed documents; large-cache performance still needs dedicated work. It does not import the original database layout.
 
-The reference implementation is retained in Git history at commit `989c4c769b1d41b4b3276f8c97f6bd8ef9eb4fb8`. This branch is a fresh implementation, with shared wire behavior covered by tests; it is not a drop-in database migration. The repository remains private. No package release or license grant has been added.
+The reference implementation is retained in Git history at commit `989c4c769b1d41b4b3276f8c97f6bd8ef9eb4fb8`. This branch is a fresh implementation, with shared wire behavior covered by tests; it is not a drop-in database migration. No package release or license grant has been added.

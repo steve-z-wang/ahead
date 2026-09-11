@@ -1,70 +1,71 @@
 # Next things / TODO
 
-2026-09-10：用户明确决定先完成保留原行为的 Rust 重写，再讨论以下能力。这里的条目不是当前实现的前置条件，也不代表已经实现。
+> Historical design record (2026-09-10): status statements and proposed APIs below reflect the original planning stage. See [implementation evidence](implementation-progress.md) for the current delivered scope and verified limitations.
 
-## 当前范围
+2026-09-10: The user explicitly decided to finish the Rust rewrite while preserving existing behavior before discussing the capabilities below. These items are not prerequisites for the current implementation and do not indicate that they have been implemented.
 
-从零实现 schema 驱动的 Rust client/server runtime、语言 SDK、生成器和 persistence adapter。算法行为以参考实现为准；命名和对外 API 的改善不能暗中改变事务、队列、结算或协议语义。
+## Current scope
 
-## 之后再做
+Implement a schema-driven Rust client/server runtime, language SDKs, generators, and persistence adapters from scratch. Algorithmic behavior follows the reference implementation; improvements to names and public APIs must not silently change transaction, queue, settlement, or protocol semantics.
 
-- [ ] **跨 channel 的 record revision**：同一 record 从不同 channel 到达时比较内容版本；不将 channel cursor 作为跨 channel 的新旧标准。
-- [ ] recordRevision 与 loaded state 的一致性读取；同次发布向多个 channel 分发同一版本。
-- [ ] 同版本幂等、冲突诊断、旧页面迟到及 Move A→B→A 测试。
-- [ ] 在扩展跨 channel 语义时明确 remove-from-channel 与真实 delete，设计 tombstone/watermark 保留和安全清理。
-- [ ] 评估 optional revision 的升级/fencing 成本；目前不决定所有 record 必带或按需开启。
-- [ ] 单独评审当前 pull 失败后 skip/推进 cursor 的行为；记录风险，重写时不顺手变成整页原子 apply。
-- [ ] 如有需要，重新讨论 per-mutation receipt / 独立事务及消除 accepted-prefix 阻塞；当前保留 batch 事务、batch receipt 和 prefix 结算。
-- [ ] 新 wire version、counter 十进制字符串、epoch/reset、自动 GC；这些属于另行设计的协议变化，不随 Rust 迁移默认启用。
-- [ ] 扩展 schema compatibility fence 对 identity/type/nullability 等变化的检查；保留当前 fence 后独立设计。
-- [ ] 外部用户事务提交后的 wake、额外 polling 和多进程通知策略；先验证当前通知边界。
-- [ ] 改进 settlement witness coverage、权限撤销后的恢复，以及当前 channel-authorizer/host 策略；不能在未评审时删除旧行为。
+## Later work
 
-## 已确认的 naming
+- [ ] **Cross-channel record revision**: compare content versions when the same record arrives from different channels; do not use the channel cursor as a cross-channel recency measure.
+- [ ] Consistent reads of recordRevision and loaded state; distribute the same version to multiple channels from one publication.
+- [ ] Tests for same-version idempotence, conflict diagnostics, late old pages, and Move A→B→A.
+- [ ] When extending cross-channel semantics, explicitly distinguish remove-from-channel from true delete, and design tombstone/watermark retention and safe cleanup.
+- [ ] Evaluate the upgrade/fencing cost of optional revisions; there is currently no decision that every record must carry one or that revisions are enabled on demand.
+- [ ] Review separately the current behavior that skips/advances the cursor after a pull failure; record the risk, and do not casually turn it into atomic whole-page apply during the rewrite.
+- [ ] If needed, revisit per-mutation receipts / independent transactions and removal of accepted-prefix blocking; the current scope preserves batch transactions, batch receipts, and prefix settlement.
+- [ ] A new wire version, decimal-string counters, epoch/reset, and automatic GC; these are separately designed protocol changes and are not enabled by default with the Rust migration.
+- [ ] Extend the schema compatibility fence to inspect identity/type/nullability changes; preserve the current fence first, then design this independently.
+- [ ] Wake after external user-transaction commits, additional polling, and multi-process notification strategy; first verify the current notification boundary.
+- [ ] Improve settlement witness coverage, recovery after permission revocation, and the current channel-authorizer/host policy; do not remove old behavior without review.
 
-采用 [概念与命名](architecture/concepts-and-naming.md) 的名称；命名本身已确定，不再是 TODO。当前文档与新 API 使用 Channel、Loader、Push/Pull、Cursor/Checkpoint，旧源码与 wire/storage 字段保留原名以供对照。
+## Confirmed naming
 
-## 先前 record revision 方案，供后续评审
+Use the names in [Concepts and Naming](architecture/concepts-and-naming.md). The names themselves are settled and are no longer TODOs. Current documentation and new APIs use Channel, Loader, Push/Pull, and Cursor/Checkpoint; old source and wire/storage fields retain their original names for comparison.
 
-下面保留先前的技术草案，术语已更新为当前命名；示例动作名不是已启用的 wire 字段。其中“推荐”“第一版/alpha”等表达均指未来能力设计，不是当前 Rust 重写的决定。可选性、删除语义、授权和 GC 仍需确认。
+## Earlier record-revision proposal for future review
 
+The earlier technical draft is retained below with terminology updated to the current names; example action names are not enabled wire fields. Expressions such as “recommended” and “first version/alpha” refer to the design of a future capability, not a decision for the current Rust rewrite. Optionality, deletion semantics, authorization, and GC still require confirmation.
 
-### 两种数字，各管一件事
+### Two numbers, each with one purpose
 
-- `channelCursor`：某个 channel 的交付进度，也用于 settlement witness。
-- `recordRevision`：同一个 `(model, identity)` 的内容新旧；不能比较不同 record 的 revision。
+- `channelCursor`: delivery progress for one channel, also used as a settlement witness.
+- `recordRevision`: content recency for one `(model, identity)`; revisions of different records cannot be compared.
 
-推荐所有同步 record 从创建起带 revision，避免后来发现重叠时升级老消息的复杂性。不需要系统全局变量，也不是每张 model table 一个 counter。
+The recommendation is for every synchronized record to carry a revision from creation, avoiding the complexity of upgrading old messages after overlap is discovered. This needs neither a system-global variable nor one counter per model table.
 
-同一 publish 调用向 A/B fanout，共用同一 record revision；A/B 各自分配 channel cursor。重复调用同一 record 的 publish 需要事务内合并或显式 reuse publication token，不能误称两个不同调用天然只加一次。
+One publish call fanning out to A/B shares one record revision; A and B each allocate their own channel cursor. Repeated publish calls for the same record require transaction-local merging or explicit reuse of a publication token; two distinct calls must not be described incorrectly as naturally incrementing only once.
 
-revision 的比较域还包含账号/服务实例的 authority namespace；同一客户端会话内同 key/revision 必须得到相同完整权威内容。不同 viewer 的内容若不同，不能在切换账号时共用未隔离的缓存。对同一 viewer 的不同 channel 不支持同 key/revision 的不同字段视图；需要拆 model/identity。
+The comparison domain for revisions also includes the authority namespace of the account/service instance. Within one client session, the same key/revision must yield the same complete authoritative content. If content differs by viewer, caches without account isolation cannot be reused when switching accounts. Different channels for the same viewer cannot present different field views under the same key/revision; split the model/identity instead.
 
-只因 audience 变化而再发布允许 bump revision（内容可相同）；保证是同 revision 不得代表冲突权威内容，反向不要求相同内容必须同 revision。
+Republishing solely because the audience changed may bump the revision even when the content is identical. The guarantee is that the same revision cannot represent conflicting authoritative content; the converse does not require identical content to share a revision.
 
-### Wire 三种动作
+### Three wire actions
 
-- `upsert(identity, recordRevision, fullState)`：可见权威状态。
-- `removeFromChannel(identity)`：当前 channel 不再提供它；按该 channel 的顺序改变 membership。
-- `deleteRecord(identity, recordRevision)`：实体真实删除，覆盖所有旧版本；删除必须仍通知受影响的 channel。
+- `upsert(identity, recordRevision, fullState)`: visible authoritative state.
+- `removeFromChannel(identity)`: the current channel no longer provides it; changes membership in that channel's order.
+- `deleteRecord(identity, recordRevision)`: the entity is truly deleted, superseding all older versions; deletion must still notify affected channels.
 
-`removeFromChannel` 与 `deleteRecord` 是协议级明确区分，不能依靠 null 猜测。channel claim 仍有存在价值，不因新增 record revision 就可删掉。
+`removeFromChannel` and `deleteRecord` are explicitly distinct at the protocol level and cannot be inferred from null. Channel claims remain valuable after adding record revision and cannot simply be removed.
 
-### Client 应用规则
+### Client application rules
 
-1. 先验证 channel epoch/from/through 和 page 顺序。
-2. membership 按 channel 流进度处理；record 内容按跨 channel recordRevision 判断。旧内容被忽略并不意味着其有效 membership 事件可以一并丢弃。
-3. 新 upsert 推进 authoritative base，重放 pending；同 revision 同内容幂等；同 revision 冲突内容为协议错误并停止推进。
-4. 新 tombstone 阻止旧 upsert 复活；更旧 tombstone 同样不能覆盖新内容。
-5. remove 只释放当前 claim；另有有效 claim 则保留。最后 claim 离开时，authority availability 变 absent，并按既定 replay 规则处理 pending，不能把 pending silently 丢掉。
-6. channel removal 导致父记录离开，不得不加判断就清除孩子其他 channel 的有效 claim。实体 cascade 与 channel-membership cascade 分开测试。
+1. First validate channel epoch/from/through and page order.
+2. Process membership according to channel-stream progress; judge record content by cross-channel recordRevision. Ignoring stale content does not permit discarding its valid membership event.
+3. A newer upsert advances the authoritative base, then replays pending work; the same revision with the same content is idempotent; conflicting content at the same revision is a protocol error and stops advancement.
+4. A newer tombstone prevents an old upsert from resurrecting the record; an older tombstone likewise cannot replace newer content.
+5. Removal releases only the current claim; retain the record if another valid claim exists. When the final claim leaves, authority availability becomes absent and pending work is handled by the established replay rules; pending work must not be silently discarded.
+6. When channel removal causes a parent record to leave, it must not clear a child's valid claim from another channel without an explicit check. Test entity cascade separately from channel-membership cascade.
 
-### 最新 fetch 不解决乱序
+### Fetching the latest state does not solve reordering
 
-snapshot S1 读取 rev10 后网络延迟；S2 读取 rev11 先到。客户端仍必须拒绝后来抵达的 rev10。invalidation 的旧 revision 不能与 loader 读到的新内容拼接；snapshot 中 current revision 与 state 必须相符。
+Snapshot S1 reads rev10 and is delayed by the network; S2 reads rev11 and arrives first. The client must still reject rev10 when it later arrives. An invalidation's old revision cannot be paired with newer content read by a loader; current revision and state must agree within the snapshot.
 
-### 存储规模与 reset
+### Storage scale and reset
 
-客户端保留版本 watermark/tombstone，防止离线旧消息复活；alpha 不做 TTL 猜测 GC。提供行数/字节统计和显式账号级 reset。server 保留 compacted invalidations 和去重信息。达到规模门槛前，设计 channel generation + snapshot reset：先 fencing 旧 session，再重建 claims/cursors，不删除 pending/local-only 数据。只有可以证明旧消息不可再出现，才清理 watermark。此机制未完成前，不宣称缓存永久有界。
+The client retains version watermarks/tombstones to prevent old offline messages from resurrecting data; alpha does not use guessed TTL-based GC. Provide row/byte statistics and an explicit account-level reset. The server retains compacted invalidations and deduplication information. Before reaching scale limits, design channel generation + snapshot reset: fence old sessions first, then rebuild claims/cursors without deleting pending/local-only data. A watermark may be cleared only when old messages can be proven unable to reappear. Do not claim the cache is permanently bounded before this mechanism is complete.
 
-channel 允许订阅不代表记录一定可见。loader 是内容授权边界；若 identity 本身敏感，运输层也须过滤未知 identity 的撤回通知。可选 channel guard 是优化/元数据保护，不是强制 business primitive。权限变化必须发布 withdrawal 或触发明确 resnapshot。
+Permission to subscribe to a channel does not imply that a record is visible. The loader is the content-authorization boundary; if an identity is itself sensitive, the transport layer must also filter withdrawal notifications for unknown identities. An optional channel guard is an optimization/metadata-protection measure, not a required business primitive. Permission changes must publish a withdrawal or trigger an explicit resnapshot.
