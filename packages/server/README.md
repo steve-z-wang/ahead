@@ -1,5 +1,7 @@
 # Rust server SDK
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 `index.mts` runs on Node with TypeScript support (Node 22.18+), or can be compiled with TypeScript. Build the local native module with `node bindings/node/build.mjs`. Supply an injected `native` implementation when packaging the native artifact elsewhere.
 
 ```ts

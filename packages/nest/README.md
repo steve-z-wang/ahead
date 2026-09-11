@@ -1,5 +1,7 @@
 # Nest integration
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 `@Handles(name, version)` and `@Loads(model)` mark methods on ordinary singleton business providers. The Nest adapter discovers them after provider construction, including asynchronous dependencies, and binds the real instance. Duplicate or missing registrations fail application startup. Request-scoped and transient backend providers are rejected; pass request information through the handler/loader context.
 
 ```ts

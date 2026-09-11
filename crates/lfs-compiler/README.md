@@ -1,5 +1,7 @@
 # Rust schema compiler
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 `cargo run -p lfs-compiler -- compile INPUT_DIR OUTPUT_DIR` reads sorted `.model` files and emits `schema.json`, `backend.json`, `generated.ts`, `generated.dart`, and `mutation-history.json`. Generated APIs contain conversions and forwarding only; state transitions remain in the Rust runtime. The Dart output imports `package:local_first_state/local_first_state.dart`. TypeScript accepts the structural `ClientPort` implemented by the JS package.
 
 Supported declarations are models, enums, prerequisites, named mutations, scalar and nullable scalar fields, scalar lists, composite identities, unique groups, references (including named references and cascade deletion), inverse metadata, prerequisite invocations, mutation slot bindings, optional/list slots, restricted update fields, mutation versions, and sequence paths. Unknown syntax is an error with source location. Schema descriptors carry normalized requirements, prerequisites and client policies for the runtime.

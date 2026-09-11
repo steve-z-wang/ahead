@@ -1,5 +1,7 @@
 # Dart client
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 Generated model types sit above the generic `Client`; schema validation, local state, SQL reads, optimistic replay, channel cursors, mutation scheduling and settlement execute in Rust. Native calls run in a worker isolate.
 
 Build the native library first with `bash scripts/build.sh` from the root. `Client.open(path: ..., schema: schema, owner: userId, libraryPath: ...)` keeps explicit native library selection for development. iOS uses process-linked native symbols when no path is supplied; see the platform smoke harness for the link/build steps.

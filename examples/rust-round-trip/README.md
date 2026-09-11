@@ -1,5 +1,7 @@
 # Rust round trip
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 An embedded Node backend, Prisma/PostgreSQL business database, shared Rust protocol runtime, generated TypeScript/Dart models, and local SQLite clients. Everything needed belongs to this repository; no Oasis checkout is used.
 
 On macOS with Node 22.18+ (verified with 26.4), Rust (pinned by `rust-toolchain.toml`), Python 3 and PostgreSQL command-line tools on PATH:

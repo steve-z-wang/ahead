@@ -1,5 +1,7 @@
 # Rust integration
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 `cargo test -p lfs-integration` runs 64 deterministic combinations of lost ACK, local edits, Pull/ACK ordering, rejection and restart. Expected visible values are asserted independently of the client reducer; the backend Host fixture supplies controlled persistence. Actual PostgreSQL transaction behavior is tested under `integration/persistence`.
 
 For a small capacity diagnostic:

@@ -1,5 +1,7 @@
 # TypeScript client
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 `Client.open({path,schema,owner})` opens the shared Rust runtime with actual SQLite persistence. Build `bindings/node` before importing this source package. Generated model APIs wrap the generic client; schema is runtime data and adding a model does not recompile Rust.
 
 ```ts

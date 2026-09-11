@@ -1,5 +1,7 @@
 # Node native transaction probe (M0)
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 This is a feasibility probe, not the server SDK or the general persistence adapter.
 Rust runs in-process through NAPI-RS; it owns no database connection. `run_probe`
 invokes the Node host using a thread-safe function, awaits the returned JavaScript

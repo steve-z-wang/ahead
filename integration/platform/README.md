@@ -1,5 +1,7 @@
 # Platform verification
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 macOS arm64 Node and Dart are exercised by the complete host gate. Simulator checks are separate because they require Xcode and a usable installed iOS runtime.
 
 ```sh

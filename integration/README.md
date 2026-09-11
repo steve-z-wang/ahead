@@ -1,5 +1,7 @@
 # Tests
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 The three test layers share data, not implementations:
 
 1. Crate tests live beside their Rust modules. `integration/rust` connects the real Rust client and server state machines and checks deterministic ACK/Pull/restart traces against expected visible state.

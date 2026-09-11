@@ -1,98 +1,102 @@
 # local-first-state Rust Rebuild Implementation Plan
 
+[English](2026-09-10-rust-rebuild.md) | [简体中文](../../zh-CN/superpowers/plans/2026-09-10-rust-rebuild.md)
+
+> Historical design record (2026-09-10): status statements and proposed APIs below reflect the original planning stage. See [implementation evidence](../../implementation-progress.md) for the current delivered scope and verified limitations.
+
 > **For agentic workers:** Use `superpowers:executing-plans` to execute the accepted milestone task-by-task. Do not start runtime implementation from this proposal until the architecture decisions are reviewed. No sub-agent work is required. Checkboxes track future implementation, not work completed while writing this plan.
 
-> 当前实施范围：保留参考实现的逻辑；新增 record revision、跨 channel 仲裁和其他行为改动均在 [Next things](../../next-things.md)，不属于以下里程碑。命名以 [概念与命名](../../architecture/concepts-and-naming.md) 为准。
+> Current implementation scope: preserve the reference implementation's logic. New record revisions, cross-channel arbitration, and other behavioral changes belong in [Next things](../../next-things.md), outside the milestones below. Naming follows [Concepts and naming](../../architecture/concepts-and-naming.md).
 
-**Goal:** 从零交付共用 Rust 协议与状态机的 local-first-state，保留自然的 Dart/TypeScript 业务接口与用户事务控制。
+**Goal:** Deliver local-first-state from scratch with a shared Rust protocol and state machine, while preserving natural Dart/TypeScript business interfaces and user control of transactions.
 
-**Architecture:** Rust client/server runtime 共享 schema、wire、operation semantics。宿主通过 typed ports 执行业务 handler/loader、事务内持久化和网络 I/O。第一闭环采用 Dart native、Rust SQLite、Node binding、Prisma/PostgreSQL。
+**Architecture:** The Rust client/server runtimes share schema, wire format, and operation semantics. The host executes business handlers/loaders, persistence within transactions, and network I/O through typed ports. The first complete round trip uses Dart native, Rust SQLite, a Node binding, and Prisma/PostgreSQL.
 
-**Tech Stack:** Rust workspace；SQLite；PostgreSQL；Node/TypeScript；Dart。NAPI-RS、flutter_rust_bridge、rusqlite 是 spike 候选；实际版本完成构建验证后写入 lockfile/toolchain。unadapter 不作为正确性前提。
+**Tech Stack:** Rust workspace; SQLite; PostgreSQL; Node/TypeScript; Dart. NAPI-RS, flutter_rust_bridge, and rusqlite are spike candidates; record actual versions in the lockfile/toolchain after build verification. Correctness must not depend on unadapter.
 
 ## Global Constraints
 
-- 项目名称 `local-first-state`；GitHub 保持 private；不自动发布 package。
-- 用户拥有 backend transaction；框架只使用绑定该 transaction 的 persistence。
-- publish 必须明确 channels；不引入 ambient channel 或强制 channel/model 一对一。
-- 共同算法放在 Rust；SDK 不能自己实现 ACK settlement、record conflict 或 replay。
-- 用户已于 2026-09-10 授权端到端执行本计划；实现进度与验证见 docs/implementation-progress.md。
-- 旧参考源码保存在 main 和历史提交；用户已授权在新分支删除旧实现。不改 Oasis，不清空实际客户端队列，不修改生产 DB。
-- 所有新测试使用临时 SQLite 和本轮创建的隔离 Postgres，不能读取生产 DATABASE_URL。
-- 大的未定协议先通过场景定稿；每个后续 milestone 单独细化为可执行任务，不用虚构完整代码掩盖未定设计。
+- The project name is `local-first-state`; keep GitHub private; do not automatically publish packages.
+- The user owns the backend transaction; the framework uses only persistence bound to that transaction.
+- Publish must specify channels explicitly; introduce neither ambient channels nor a mandatory one-to-one channel/model mapping.
+- Shared algorithms belong in Rust; SDKs must not implement ACK settlement, record conflict handling, or replay independently.
+- The user authorized end-to-end execution of this plan on 2026-09-10; see [implementation progress](../../implementation-progress.md) for implementation and verification status.
+- The old reference source remains on main and in historical commits; the user authorized deleting the old implementation on the new branch. Do not change Oasis, empty actual client queues, or modify production databases.
+- All new tests use temporary SQLite databases and isolated Postgres created during this effort; they must not read the production DATABASE_URL.
+- Resolve major open protocol questions through scenarios first; refine each subsequent milestone into executable tasks separately, without inventing complete code to conceal unresolved designs.
 
 ---
 
-## 1. 阅读顺序与工作目录
+## 1. Reading Order and Working Directory
 
-1. 先读 [架构提案](../specs/2026-09-10-rust-core-design.md)。
-2. 用 [逻辑覆盖表](../specs/2026-09-10-existing-logic-audit.md) 检查遗漏。
-3. 按此计划的 gate 顺序执行，不先从头翻译 compiler。
+1. Read the [architecture proposal](../specs/2026-09-10-rust-core-design.md) first.
+2. Use the [logic coverage table](../specs/2026-09-10-existing-logic-audit.md) to check for omissions.
+3. Follow this plan's gate order; do not begin by porting the compiler from scratch.
 
-当前实现 worktree：`/Users/stevewang/Github/local first state/.worktrees/rust-rebuild`，branch `codex/rust-rebuild`。用户已授权从零实现并在该分支清除旧代码；旧实现以 main/参考提交保存。目录边界以 [代码组织](../../architecture/code-organization.md) 为准。
+Current implementation worktree: `/Users/stevewang/Github/local first state/.worktrees/rust-rebuild`, branch `codex/rust-rebuild`. The user authorized implementation from scratch and removal of old code on this branch; the old implementation is preserved on main/in reference commits. Directory boundaries follow [Code organization](../../architecture/code-organization.md).
 
-以下路径相对该 worktree 根目录；随实施逐步创建。
+The following paths are relative to that worktree's root and will be created incrementally during implementation.
 
 ```text
-Cargo.toml                         workspace，随第一个 Rust 测试一起建立
-rust-toolchain.toml                spike 通过后固定工具链
-crates/lfs-core/src/               schema、value、identity、operation、protocol
-crates/lfs-client/src/             projection、queue、channel、settlement、query
-crates/lfs-server/src/             mutation、publish、load、host ports
+Cargo.toml                         workspace, created with the first Rust test
+rust-toolchain.toml                pin the toolchain after the spike passes
+crates/lfs-core/src/               schema, value, identity, operation, protocol
+crates/lfs-client/src/             projection, queue, channel, settlement, query
+crates/lfs-server/src/             mutation, publish, load, host ports
 crates/lfs-sqlite/src/             local DB actor/session/storage
 bindings/node/src/               Node binding
 bindings/dart/src/               Dart binding
-crates/lfs-compiler/src/           后期 compiler 迁移
+crates/lfs-compiler/src/           later compiler migration
 packages/server/src/              TypeScript facade / host dispatcher
 packages/persistence-prisma/src/   transactional Postgres adapter
 packages/nest/src/                decorators / provider discovery
 packages/dart/                    Dart facade
-packages/client-js/               后期 JS/browser facade
-examples/rust-round-trip/          独立完整示例
-fixtures/protocol/              公共 wire/schema vectors
-fixtures/scenarios/                人类可读交错时序及预期状态
-integration/                      真实 DB / bridge / E2E
+packages/client-js/               later JS/browser facade
+examples/rust-round-trip/          standalone complete example
+fixtures/protocol/              shared wire/schema vectors
+fixtures/scenarios/                human-readable interleavings and expected states
+integration/                      real DB / bridge / E2E
 ```
 
-不要因为目录列出就一次 scaffold 所有 package。每个新 crate/package 随其第一个可验证交付创建。Rust runtime 只读取通用 schema metadata，不生成或链接业务 model 类型；代码组织文档定义了新增 model 不重编 Rust 的验收测试。
+Do not scaffold all packages at once merely because their directories are listed. Create each crate/package with its first verifiable deliverable. The Rust runtime reads only generic schema metadata; it neither generates nor links business model types. The code organization document defines an acceptance test for adding a model without recompiling Rust.
 
-## 2. 总体阶段与退出条件
+## 2. Overall Phases and Exit Criteria
 
-| 阶段 | 交付 | 进入下一阶段前的证明 |
+| Phase | Deliverable | Evidence required before the next phase |
 |---|---|---|
-| M0 决策与 bridge 可行性 | 对齐关键语义；Node tx、Dart SQLite 两个最小 spike | 同事务 rollback、重复请求、超时、dispose 都可观察验证 |
-| M1 最小完整闭环 | UpdateEntry，单 channel，真实业务表、持久化 queue、ACK/pull | 断网修改、重启、ACK 乱序、拒绝、lost response 全通过 |
-| M2 现有多 channel 行为 | 独立 cursor、claims、动态订阅、Move、多个 checkpoints | 与参考行为一致；已有乱序限制明确记录，不引入 revision |
-| M3 现有高级客户端行为 | cascade、companion、dependencies、readiness、query/watch、batch | 覆盖表所有 runtime 行有测试；明确所有 intentional differences |
-| M4 compiler 与 SDK DX | Rust compiler、Dart/TS types、Nest decorators、migration contracts | generated code 无算法；历史 mutation 可重放；类型误用编译失败 |
-| M5 平台与开放发布准备 | Dart mobile、Node 部署、JS/Web 验证、文档、独立示例 | 干净机器安装可跑；恢复/存储边界明确；license 决策完成 |
+| M0 Decisions and bridge feasibility | Align key semantics; two minimal spikes for Node transactions and Dart SQLite | Same-transaction rollback, duplicate requests, timeouts, and disposal are observable and verifiable |
+| M1 Minimal complete round trip | UpdateEntry, one channel, real business tables, durable queue, ACK/pull | Offline edits, restart, out-of-order ACKs, rejection, and lost responses all pass |
+| M2 Existing multi-channel behavior | Independent cursors, claims, dynamic subscriptions, Move, multiple checkpoints | Matches reference behavior; existing ordering limitations are explicitly documented; no revisions introduced |
+| M3 Existing advanced client behavior | Cascade, companion, dependencies, readiness, query/watch, batch | Tests cover every runtime row in the coverage table; all intentional differences are explicit |
+| M4 Compiler and SDK developer experience | Rust compiler, Dart/TS types, Nest decorators, migration contracts | Generated code contains no algorithms; historical mutations can replay; type misuse fails compilation |
+| M5 Platforms and public release preparation | Dart mobile, Node deployment, JS/Web verification, documentation, standalone examples | Installation works on a clean machine; recovery/storage boundaries are explicit; license decision is complete |
 
-不把这些阶段换算成未经验证的精确工期。M0 的 bridge 和 transaction 结果决定后面是否调整实现方式。
+Do not convert these phases into unverified precise schedules. M0 bridge and transaction results determine whether the implementation approach needs adjustment later.
 
-## 3. M0：先证明最危险的边界
+## 3. M0: Prove the Riskiest Boundaries First
 
-### Task 0.1 — 将关键设计决定变成可评审的场景
+### Task 0.1 — Turn Key Design Decisions into Reviewable Scenarios
 
-**Files:** `fixtures/scenarios/transaction-boundary.md`、`fixtures/scenarios/settlement-order.md`、`fixtures/scenarios/channel-overlap.md`。
+**Files:** `fixtures/scenarios/transaction-boundary.md`, `fixtures/scenarios/settlement-order.md`, `fixtures/scenarios/channel-overlap.md`.
 
-**输入:** 本设计 §7/9/10 和参考实现。**输出:** 固定的现有行为场景，后续测试据此实现。
+**Input:** Sections 7/9/10 of the design and the reference implementation. **Output:** Fixed scenarios for existing behavior, on which later tests will be based.
 
-- [ ] 写出以下时序的预期 DB 状态，不先实现代码。
-- [ ] 固定 batch transaction、每 mutation savepoint、batch receipt 及 sequence/hash 去重的预期。
-- [ ] 保留现有 wire 字段、整数范围和删除表示；recordRevision、decimal strings、epoch 延后。
-- [ ] 将确认后的文档单独提交，作为实现基准。
+- [ ] Write expected database states for the following event sequences before implementing code.
+- [ ] Fix expectations for batch transactions, per-mutation savepoints, batch receipts, and sequence/hash deduplication.
+- [ ] Preserve existing wire fields, integer ranges, and deletion representation; defer recordRevision, decimal strings, and epoch.
+- [ ] Commit the confirmed documents separately as the implementation baseline.
 
-场景 A：同一 batch 中 M1 执行成功，M2 handler unknown error；整个 batch 的业务写入、receipt 和 publication 全部 rollback。若 M2 是明确业务拒绝，则只回滚 M2 的 savepoint，batch 可提交 M1 的写入及 M2 的拒绝结果。重试遵循既有 batch receipt 规则。
+Scenario A: Within one batch, M1 succeeds and the M2 handler encounters an unknown error; all business writes, receipts, and publications for the entire batch roll back. If M2 is an explicit business rejection, roll back only M2's savepoint; the batch may commit M1's writes and M2's rejection result. Retries follow existing batch receipt rules.
 
-场景 B：base.text=A，M1→B，M2→C；M1 ACK 需要 channel:11，先收到 channel:10，再 11；可见 text 始终 C。按既有 batch checkpoints 与 accepted-prefix 规则结算，M2 尚未满足条件时继续 pending。
+Scenario B: base.text=A, M1→B, M2→C; M1's ACK requires channel:11, but channel:10 arrives before 11; visible text remains C throughout. Settle according to existing batch checkpoints and accepted-prefix rules; M2 remains pending until its conditions are met.
 
-场景 C：同 record 同时由 A/B channel 提供。按参考实现固定 claim 建立、null 释放当前 claim、最后 claim 释放及 authority cascade 的结果；记录延迟响应可能覆盖较新内容的限制。record revision 仲裁与新的删除协议在 Next things。
+Scenario C: The same record is supplied by channels A/B simultaneously. Fix the outcomes of claim creation, null releasing the current claim, release of the last claim, and authority cascade according to the reference implementation; document the limitation that delayed responses may overwrite newer content. Record revision arbitration and the new deletion protocol belong in Next things.
 
-### Task 0.2 — Node bridge 加入真实 Prisma transaction
+### Task 0.2 — Connect the Node Bridge to a Real Prisma Transaction
 
-**Create:** `bindings/node/src/transaction_probe.rs`、`packages/persistence-prisma/src/transaction-session.ts`、`integration/node/transaction-bridge.test.ts`、`integration/node/schema.prisma`。
+**Create:** `bindings/node/src/transaction_probe.rs`, `packages/persistence-prisma/src/transaction-session.ts`, `integration/node/transaction-bridge.test.ts`, `integration/node/schema.prisma`.
 
-**接口形状（spike 专用，不是正式 SDK）:**
+**Interface shape (spike only, not the official SDK):**
 
 ```ts
 type TxProbe = {
@@ -103,7 +107,7 @@ type TxProbe = {
 declare function runRustProbe(host: TxProbe): Promise<{ observed: number }>;
 ```
 
-验收测试主体：
+Acceptance test body:
 
 ```ts
 await expect(prisma.$transaction(async tx => {
@@ -121,220 +125,220 @@ expect(await prisma.businessProbe.count()).toBe(0);
 expect(await prisma.frameworkProbe.count()).toBe(0);
 ```
 
-- [ ] 建立隔离 Postgres、两张 probe 表和 Node test harness；先测试错误地使用全局 client 的实现确实被此断言识别。
-- [ ] 实现 Rust→JS async callback→Rust 返回链；不能使用另一个 Rust DB pool。
-- [ ] 加入 callback rejection、Rust error、ORM timeout、runtime dispose 和多个并发 transaction；不同 handle 不可串写。
-- [ ] 在 tx 结束后再调用保存的 host handle，必须返回 `transaction_closed`，无 DB 操作。
-- [ ] 测试外层 commit 失败时 HTTP 层绝不生成 accepted ACK。
-- [ ] 记录每个 mutation callback 数量、序列化字节和 bridge 耗时；不据微基准宣布 Rust 更快。
-- [ ] 固定可工作的 binding/runtime 版本并提交。
+- [ ] Set up isolated Postgres, two probe tables, and a Node test harness; first verify that this assertion detects an implementation that incorrectly uses the global client.
+- [ ] Implement the Rust→JS async callback→Rust return chain; do not use a separate Rust database pool.
+- [ ] Add callback rejection, Rust errors, ORM timeouts, runtime disposal, and multiple concurrent transactions; different handles must not write into each other's transactions.
+- [ ] Calling a retained host handle after its transaction ends must return `transaction_closed`, without any database operation.
+- [ ] Test that the HTTP layer never produces an accepted ACK when the outer commit fails.
+- [ ] Record callback count, serialized bytes, and bridge duration per mutation; do not claim Rust is faster based on microbenchmarks.
+- [ ] Pin working binding/runtime versions and commit.
 
-**运行目标:** `node --test integration/node/transaction-bridge.test.mjs`（测试源码的构建步骤与 harness 同步提供）。不装完整产品依赖；失败时先定位桥接层，不改成独立事务绕过。
+**Run target:** `node --test integration/node/transaction-bridge.test.mjs` (provide test-source build steps together with the harness). Do not install the full product dependency set; isolate bridge failures first instead of bypassing them with independent transactions.
 
-### Task 0.3 — Dart ↔ Rust SQLite transaction session
+### Task 0.3 — Dart ↔ Rust SQLite Transaction Session
 
-**Create:** `crates/lfs-sqlite/src/session.rs`、`bindings/dart/src/api.rs`、`integration/dart/transaction_bridge_test.dart`。
+**Create:** `crates/lfs-sqlite/src/session.rs`, `bindings/dart/src/api.rs`, `integration/dart/transaction_bridge_test.dart`.
 
-**接口契约:** open runtime；begin session；session 内 query/apply；commit/rollback；watch committed changes；close。session 必须有唯一 handle 与结束状态。
+**Interface contract:** Open runtime; begin session; query/apply within the session; commit/rollback; watch committed changes; close. Each session must have a unique handle and terminal state.
 
-- [ ] 写测试：session 内写入后读得到，session 外 watcher 在 commit 前看不到；rollback 后 DB 恢复。
-- [ ] 写测试：外层直接写入 + 内层 mutation savepoint 失败，只回滚该 mutation；外层可继续提交。
-- [ ] Rust worker 拥有 SQLite；Dart Future 不阻塞 UI isolate。
-- [ ] 提交后收到一次一致结果；rollback 不发送中间结果；close 结束 watcher。
-- [ ] 进程重开读取 committed rows；未提交 session 不残留半条 mutation。
-- [ ] 记录跨 binding 的 integer/null/bytes/Unicode/error 行为，固定第一组 ABI vectors。
+- [ ] Test that writes are readable within the session but invisible to watchers outside it before commit; rollback restores the database.
+- [ ] Test that an outer direct write plus a failed inner mutation savepoint rolls back only that mutation; the outer transaction can still commit.
+- [ ] The Rust worker owns SQLite; Dart Futures do not block the UI isolate.
+- [ ] Receive one consistent result after commit; rollback emits no intermediate results; close terminates watchers.
+- [ ] Reopening the process reads committed rows; uncommitted sessions leave no partial mutations.
+- [ ] Record integer/null/bytes/Unicode/error behavior across the binding and fix the first set of ABI vectors.
 
-**运行目标:** `dart test integration/dart/transaction_bridge_test.dart`，实际 package/test 路径由该 harness 的 pubspec 定义。使用临时文件 DB；不是只测 in-memory reducer。
+**Run target:** `dart test integration/dart/transaction_bridge_test.dart`; the harness's pubspec defines the actual package/test paths. Use temporary file databases, rather than testing only an in-memory reducer.
 
-**M0 判定:** 若两条 bridge 中任一无法可靠地保持生命周期和事务语义，暂停扩展；可改 binding 机制（例如 suspend/resume），不可降低 atomicity 承诺。只有 architecture adjustment 被记录后才继续。
+**M0 decision:** If either bridge cannot reliably preserve lifecycle and transaction semantics, pause expansion. The binding mechanism may change (for example, suspend/resume), but the atomicity promise must not weaken. Continue only after documenting the architecture adjustment.
 
-## 4. M1：第一个有用的完整闭环
+## 4. M1: The First Useful Complete Round Trip
 
-第一版示例：两位 viewer 共享一个 Book channel；一张 Entry 业务表；UpdateEntry 具名 mutation；Dart native client 本地 SQLite。暂不做媒体、Move、compiler 重写或浏览器。
+First example: two viewers share one Book channel; one Entry business table; an UpdateEntry named mutation; a Dart native client with local SQLite. Defer media, Move, compiler rewriting, and browsers.
 
-### Task 1.1 — 公共 value/identity/protocol kernel
+### Task 1.1 — Shared Value/Identity/Protocol Kernel
 
-**Create:** `crates/lfs-core/src/{value,identity,operation,protocol,error}.rs`、`crates/lfs-core/tests/wire_vectors.rs`、`fixtures/protocol/`。
+**Create:** `crates/lfs-core/src/{value,identity,operation,protocol,error}.rs`, `crates/lfs-core/tests/wire_vectors.rs`, `fixtures/protocol/`.
 
-**输出:** 通用 record identity、batch envelope/receipt、channel checkpoint、pull page/change 和 typed errors。具体字段依据参考协议，不重新定义意义；Rust 内部类型名不等于 wire 字段名。
+**Output:** Generic record identity, batch envelope/receipt, channel checkpoint, pull page/change, and typed errors. Use the reference protocol's concrete fields without redefining their meanings; internal Rust type names are not wire field names.
 
-从参考实现提取真实 JSON fixtures，覆盖成功、拒绝、重复请求和非法输入。不另造 protocol-v2 示例；新 API 名称在边界映射至旧 wire 字段。
+Extract real JSON fixtures from the reference implementation for success, rejection, duplicate requests, and invalid input. Do not invent protocol-v2 examples; map new API names to old wire fields at the boundary.
 
-- [ ] 固定 counter 范围、canonical hash、unknown field/version、UUID、datetime、patch absent/null。
-- [ ] 先写 golden vectors 和拒绝 vectors：负 cursor、overflow、重复 key、非法 float、channel mismatch。
-- [ ] 实现 codec/normalization；单元测试和 Node/Dart ABI 同读 vectors。
-- [ ] 提交 kernel 与 vectors；不在 SDK 复制解析规则。
+- [ ] Fix counter ranges, canonical hash, unknown field/version handling, UUID, datetime, and patch absent/null behavior.
+- [ ] Write golden vectors and rejection vectors first: negative cursors, overflow, duplicate keys, invalid floats, and channel mismatch.
+- [ ] Implement codec/normalization; unit tests and Node/Dart ABI tests read the same vectors.
+- [ ] Commit the kernel and vectors; do not duplicate parsing rules in SDKs.
 
-**验证:** `cargo test -p lfs-core`；另执行 M0 两种 binding 的 value tests。
+**Verification:** `cargo test -p lfs-core`; also run value tests for both M0 bindings.
 
-### Task 1.2 — 本地 apply/replay 与持久化 queue
+### Task 1.2 — Local Apply/Replay and a Durable Queue
 
-**Create:** `crates/lfs-client/src/{projection,queue,mutation}.rs`、`crates/lfs-sqlite/src/{schema,client_store}.rs`、`crates/lfs-client/tests/optimistic_replay.rs`。
+**Create:** `crates/lfs-client/src/{projection,queue,mutation}.rs`, `crates/lfs-sqlite/src/{schema,client_store}.rs`, `crates/lfs-client/tests/optimistic_replay.rs`.
 
-**输入:** core operations、M0 ClientStore session。**输出:** 在一个 SQLite transaction 内 apply visible state + base + durable pending intent。
+**Input:** Core operations and the M0 ClientStore session. **Output:** Apply visible state + base + durable pending intent within one SQLite transaction.
 
-- [ ] 写测试：base A→enqueue B→visible B；重开仍 B 且队列仍有 M1。
-- [ ] 写测试：M1 改 text，远端改另一个字段；replay 只覆盖 M1 修改的字段。
-- [ ] 写测试：create/update/delete、absent/null、同 row 多 mutation；失败不留下 queue-only 或 main-only 状态。
-- [ ] 实现 sparse base 与 reducer；不依赖外部 callback 重放业务代码。
-- [ ] 为直接本地写入与 mutation 写入设置不同 fate，禁止误发本地操作。
-- [ ] 提交 SQLite schema 和 tests；以数据库内容验证，不只断言内部函数被调用。
+- [ ] Test base A→enqueue B→visible B; after reopening, B remains visible and the queue still contains M1.
+- [ ] Test that M1 changes text while the remote side changes another field; replay overwrites only fields changed by M1.
+- [ ] Test create/update/delete, absent/null, and multiple mutations on the same row; failure leaves neither queue-only nor main-only state.
+- [ ] Implement the sparse base and reducer; do not depend on external callbacks to replay business code.
+- [ ] Assign different fates to direct local writes and mutation writes to prevent accidental transmission of local operations.
+- [ ] Commit the SQLite schema and tests; verify database contents instead of merely asserting that internal functions were called.
 
-**验证:** `cargo test -p lfs-client --test optimistic_replay`、`cargo test -p lfs-sqlite`。
+**Verification:** `cargo test -p lfs-client --test optimistic_replay`, `cargo test -p lfs-sqlite`.
 
-### Task 1.3 — Server persistence 与显式 publish
+### Task 1.3 — Server Persistence and Explicit Publish
 
-**Create:** `crates/lfs-server/src/{ports,publish}.rs`、`packages/persistence-prisma/src/{index,publication,receipt,snapshot}.ts`、`integration/postgres/publish.test.ts`。
+**Create:** `crates/lfs-server/src/{ports,publish}.rs`, `packages/persistence-prisma/src/{index,publication,receipt,snapshot}.ts`, `integration/postgres/publish.test.ts`.
 
-**输入:** tx-bound host session。**输出:** 每 channel 的 publication position，在同一事务持久化。
+**Input:** A transaction-bound host session. **Output:** Per-channel publication positions persisted in the same transaction.
 
-- [ ] 建立 namespaced framework tables 和 migrations：clients/receipts、channel heads、compacted invalidations；本轮不建 record revision 表。
-- [ ] 测试同 channel 并发发布得到互异单调 position；rollback 不留 invalidation/head 增量。
-- [ ] 测试不同 channel 无框架全局锁；同 record 多 channel 发布按各自 head 和 invalidation 独立记录。
-- [ ] 测试 counter 耗尽显式失败；重复 identity/channels 规范化后不多次写入。
-- [ ] 实现 snapshot 读取；模拟 concurrent update，验证 head/invalidation/state 满足参考读取契约；隔离保证不足时记录并单独评审。
-- [ ] 迁移现有 commit wake / catch-up 行为；测试 hint 与服务重启；外部 tx 通知缺口先记录，不默认加入新 polling 语义。
-- [ ] 提交 adapter 及真实 Postgres 测试。
+- [ ] Create namespaced framework tables and migrations: clients/receipts, channel heads, and compacted invalidations; do not create record revision tables in this effort.
+- [ ] Test that concurrent publications to the same channel receive distinct monotonic positions; rollback leaves no invalidation/head increments.
+- [ ] Test that different channels have no framework-wide global lock; publications of one record to multiple channels are recorded independently against each channel's head and invalidation.
+- [ ] Test explicit failure on counter exhaustion; duplicate identities/channels do not cause repeated writes after normalization.
+- [ ] Implement snapshot reads; simulate concurrent updates and verify that head/invalidation/state satisfy the reference read contract; document insufficient isolation guarantees for separate review.
+- [ ] Port existing commit wake / catch-up behavior; test hints and service restart; document external-transaction notification gaps first, without adding new polling semantics by default.
+- [ ] Commit the adapter and real Postgres tests.
 
-**验证:** package 提供 `npm run test:integration -- publish`；harness 创建/销毁专属 DB。此脚本在 Task 中建立，不假定旧 server package 已有。
+**Verification:** The package provides `npm run test:integration -- publish`; the harness creates/destroys a dedicated database. Create this script in the task; do not assume it exists in the old server package.
 
-### Task 1.4 — 业务 handler 与 durable receipt
+### Task 1.4 — Business Handlers and Durable Receipts
 
-**Create:** `crates/lfs-server/src/{mutation,receipt}.rs`、`packages/server/src/{mutation-context,dispatch}.ts`、`integration/postgres/mutation-receipt.test.ts`。
+**Create:** `crates/lfs-server/src/{mutation,receipt}.rs`, `packages/server/src/{mutation-context,dispatch}.ts`, `integration/postgres/mutation-receipt.test.ts`.
 
-**输入:** batch envelope、typed dispatcher、绑定的 persistence。**输出:** 包含 mutation 接受/拒绝结果的 batch receipt；仅外层 commit 成功后可发送。
+**Input:** Batch envelope, typed dispatcher, and bound persistence. **Output:** A batch receipt containing mutation acceptance/rejection results, sendable only after the outer commit succeeds.
 
-- [ ] 测试两次并发相同 batch sequence/hash 只执行一次业务 callback；相同 key 不同 hash 冲突。
-- [ ] 测试业务写入/publication/receipt 任一步故障，全 rollback；用户 catch publication 错误后也不能得到有效 completion 并提交 accepted receipt。
-- [ ] 测试明确 rejection 经 savepoint 回滚当前 mutation 后纳入 batch receipt；未知异常回滚整个 batch。
-- [ ] 测试外层事务结束前不能发送 ACK；commit 成功但 response 丢失，重试返回已有 receipt。
-- [ ] 测试两条 mutation 的业务拒绝与未知异常分别符合 Task 0.1 的原行为。
-- [ ] wrapper 返回 branded completion；未绑定事务、遗漏 callback 完成、tx 已关闭均失败。
-- [ ] 提交 runtime/SDK/测试，业务 handler 保持 TS。
+- [ ] Test that two concurrent requests with the same batch sequence/hash execute the business callback only once; the same key with a different hash conflicts.
+- [ ] Test that failure in any business write/publication/receipt step rolls everything back; catching a publication error must not let the user obtain a valid completion and commit an accepted receipt.
+- [ ] Test that explicit rejection rolls back the current mutation through a savepoint and is included in the batch receipt; unknown exceptions roll back the entire batch.
+- [ ] Test that no ACK can be sent before the outer transaction finishes; if commit succeeds but the response is lost, retry returns the existing receipt.
+- [ ] Test that business rejection and unknown exceptions across two mutations match the original behavior in Task 0.1.
+- [ ] The wrapper returns a branded completion; an unbound transaction, incomplete callback, or closed transaction must fail.
+- [ ] Commit runtime/SDK/tests; keep business handlers in TS.
 
-**验证:** `cargo test -p lfs-server` 与真实数据库 mutation-receipt integration。
+**Verification:** `cargo test -p lfs-server` and mutation-receipt integration against a real database.
 
-### Task 1.5 — Loader、pull、settlement
+### Task 1.5 — Loader, Pull, and Settlement
 
-**Create:** `crates/lfs-server/src/loader.rs`、`crates/lfs-client/src/{pull,settlement}.rs`、`packages/server/src/loader.ts`、`crates/lfs-client/tests/settlement_orders.rs`。
+**Create:** `crates/lfs-server/src/loader.rs`, `crates/lfs-client/src/{pull,settlement}.rs`, `packages/server/src/loader.ts`, `crates/lfs-client/tests/settlement_orders.rs`.
 
-**输入:** snapshot port、loader dispatcher、receipt/cursor。**输出:** 权威 page 及客户端按既有逐 change 规则 apply/settle。
+**Input:** Snapshot port, loader dispatcher, and receipt/cursor. **Output:** Authoritative pages and client apply/settle behavior using the existing per-change rules.
 
-- [ ] loader 按 model 批量读取，保持既有 identity 对齐、完整 state/null 和 prepareForViewer 契约。
-- [ ] 迁移现有 settlement channel 选择与 required checkpoints；更严格的 witness coverage 另行设计。
-- [ ] 测试 ACK→page 与 page→ACK 两个顺序；重启在每个 durable 边界结果相同。
-- [ ] 测试既有 decoder/canonical apply 失败分类和逐 change skip/cursor 推进；将风险与期望结果明确记录，不改成整页 rollback。
-- [ ] 测试同 row M1/M2 顺序、server normalization、server delete、拒绝后的 rebuild。
-- [ ] 测试 repeated/empty/gapped page、cursor-ahead、late stale response。
-- [ ] 成功后 sparse before-image/queue 清理，剩余 mutation 的基础状态正确。
+- [ ] Loaders read in batches by model, preserving the existing identity alignment, full state/null, and prepareForViewer contracts.
+- [ ] Port existing settlement channel selection and required checkpoints; design stricter witness coverage separately.
+- [ ] Test both ACK→page and page→ACK orders; restarting at every durable boundary yields the same result.
+- [ ] Test existing decoder/canonical apply failure classifications and per-change skip/cursor advancement; explicitly document risks and expected outcomes instead of changing to whole-page rollback.
+- [ ] Test M1/M2 ordering on the same row, server normalization, server deletion, and rebuild after rejection.
+- [ ] Test repeated/empty/gapped pages, cursor-ahead, and late stale responses.
+- [ ] Clean up sparse before-images/queues after success, with correct base state for remaining mutations.
 
-**验证:** `cargo test -p lfs-client --test settlement_orders`，并通过 SQLite 读回断言。
+**Verification:** `cargo test -p lfs-client --test settlement_orders`, with assertions reading back from SQLite.
 
-### Task 1.6 — SDK 与真实示例
+### Task 1.6 — SDKs and a Real Example
 
-**Create:** `examples/rust-round-trip/{README.md,compose.yaml}`、`examples/rust-round-trip/server/`、`examples/rust-round-trip/client/`、`integration/e2e/round-trip.test.ts`。
+**Create:** `examples/rust-round-trip/{README.md,compose.yaml}`, `examples/rust-round-trip/server/`, `examples/rust-round-trip/client/`, `integration/e2e/round-trip.test.ts`.
 
-- [ ] 提供应用自己的 Prisma transaction、一个普通函数 handler、一个 loader；暂不依赖 Nest。
-- [ ] Dart facade 提供 typed read/watch/mutate；事务和操作通过 Rust bridge。
-- [ ] HTTP/WS 挂在同一个示例 Node server；协议 bytes 由 Rust 处理。
-- [ ] 自动场景：初始 pull→断网修改→关闭重开→上线→丢一次 ACK→重试→等待 pull→最终 queue/base 清理。
-- [ ] 第二场景：server 改写 text；第三场景：server 拒绝；实际 UI/local query 输出必须体现正确结果。
-- [ ] 提供只启动本示例资源的脚本，清理只删除自己创建的容器/volume；无需生产账号。
-- [ ] 将精确安装、生成、构建、运行、期望输出写入 README；干净目录完整运行一次。
+- [ ] Provide the application's own Prisma transaction, a plain-function handler, and a loader; do not depend on Nest yet.
+- [ ] The Dart facade provides typed read/watch/mutate; transactions and operations go through the Rust bridge.
+- [ ] Mount HTTP/WS on the same example Node server; Rust handles protocol bytes.
+- [ ] Automated scenario: initial pull→offline edit→close and reopen→go online→lose one ACK→retry→wait for pull→final queue/base cleanup.
+- [ ] Second scenario: the server rewrites text; third scenario: the server rejects; actual UI/local query output must reflect the correct result.
+- [ ] Provide scripts that start only this example's resources and remove only containers/volumes they created; no production account is needed.
+- [ ] Document exact installation, generation, build, run steps, and expected output in README; execute the full flow once from a clean directory.
 
-**M1 验收矩阵:**
+**M1 acceptance matrix:**
 
-| 故障点 | 必须观察到 |
+| Failure point | Required observation |
 |---|---|
-| 本地 commit 前崩溃 | 无半条 queue/visible write |
-| 本地 commit 后离线 | 重开仍有 optimism 和相同 mutation ID |
-| server receipt 写失败 | 业务及 publication 都 rollback |
-| server commit 后 ACK 丢失 | 重试不重复业务 |
-| ACK 先到 | wire optimism 保留到 checkpoint |
-| pull 先到 | ACK 到来即可从 durable cursor 结算 |
-| decode/apply failure | 按参考失败分类验证逐 change skip/cursor 行为；不宣称其安全性已改善 |
-| 明确拒绝 | mutation 操作完整回滚，拒绝记录可读 |
-| 关闭/重新登录 | 旧 session callback 不写新 DB |
+| Crash before local commit | No partial queue/visible write |
+| Offline after local commit | Optimism and the same mutation ID survive reopening |
+| Server receipt write fails | Business writes and publication both roll back |
+| ACK lost after server commit | Retry does not repeat business execution |
+| ACK arrives first | Wire optimism remains until the checkpoint |
+| Pull arrives first | Settlement can use the durable cursor as soon as ACK arrives |
+| Decode/apply failure | Verify per-change skip/cursor behavior by reference failure classification; do not claim improved safety |
+| Explicit rejection | Mutation operations roll back completely; the rejection record is readable |
+| Close/log in again | Old session callbacks do not write to the new database |
 
-M1 只是可验证 alpha 核心，不宣布全部旧能力已替代。
+M1 is only a verifiable alpha core; it does not establish replacement of all old capabilities.
 
-## 5. M2：保留现有多 channel 行为
+## 5. M2: Preserve Existing Multi-Channel Behavior
 
-**Files:** `crates/lfs-client/src/{membership,channel,settlement}.rs`、`crates/lfs-server/src/{publish,loader}.rs`、`integration/e2e/channel-overlap.test.ts`。
+**Files:** `crates/lfs-client/src/{membership,channel,settlement}.rs`, `crates/lfs-server/src/{publish,loader}.rs`, `integration/e2e/channel-overlap.test.ts`.
 
-- [ ] 每个 channel 独立 head/cursor；不同 channel 的数字不可比较。
-- [ ] 迁移 channel row claims、upsert、null 释放与既有 authority cascade；不引入新的删除动作。
-- [ ] 测试动态 desired channels、订阅/取消、重连及本地事务 rollback。
-- [ ] 测试跨多个 channel 的 batch checkpoints、ACK/page 乱序和 accepted-prefix settlement。
-- [ ] 从旧实现提取 Move 和 overlap 场景，包括旧响应迟到的实际限制；不得用拟议 revision 行为作为本轮断言。
-- [ ] 保留既有授权、prepareForViewer 与 identity 对齐语义。
-- [ ] 更强的内容版本保证、remove/delete 区分、权限恢复与 GC 进入 Next things。
+- [ ] Each channel has independent head/cursor values; numbers from different channels are incomparable.
+- [ ] Port channel row claims, upsert, null release, and existing authority cascade; introduce no new deletion actions.
+- [ ] Test dynamic desired channels, subscription/unsubscription, reconnection, and local transaction rollback.
+- [ ] Test batch checkpoints across multiple channels, out-of-order ACK/pages, and accepted-prefix settlement.
+- [ ] Extract Move and overlap scenarios from the old implementation, including actual limitations of late old responses; do not use proposed revision behavior as assertions for this effort.
+- [ ] Preserve existing authorization, prepareForViewer, and identity alignment semantics.
+- [ ] Stronger content version guarantees, the remove/delete distinction, permission recovery, and GC belong in Next things.
 
-**退出条件:** 场景与参考实现行为等价，限制有明确记录；没有因共享 Rust runtime 而宣称新增乱序保护。
+**Exit criteria:** Scenarios are behaviorally equivalent to the reference implementation and limitations are explicit; do not claim new ordering protection merely from sharing a Rust runtime.
 
-## 6. M3：完整客户端行为与性能
+## 6. M3: Complete Client Behavior and Performance
 
-**Files:** `crates/lfs-client/src/{dependencies,readiness,cascade,companion,query,lifecycle}.rs`，对应 `tests/`；`packages/dart/`、`integration/e2e/`。
+**Files:** `crates/lfs-client/src/{dependencies,readiness,cascade,companion,query,lifecycle}.rs` and corresponding `tests/`; `packages/dart/`, `integration/e2e/`.
 
-按以下顺序逐项交付，每项先迁入独立期望测试，再实现：
+Deliver each item in this order, first porting independent expectation tests, then implementing:
 
-1. 多操作 mutation / local direct / companion 同 fate；accepted companion 正确推进本地 base。
-2. cascade graph main+before 扫描、拒绝恢复、ancestor mutation 与 child edit 交错。
-3. lifecycle dependencies 与 business sequence；独立任务超车；前置拒绝传播差异。
-4. prerequisite ready/failed/retry、取消、用户重试/drop、引用清理；上传任务由宿主执行。
-5. durable rejection inbox、acknowledge、derived per-record status。
-6. durable desired channels、optimistic subscribe/unsubscribe rollback、既有 pending settlement 所需读取规则。
-7. typed query、relation/inverse、排序/null/limit、watch 初始值/去重/commit-only/关闭；read-only SQL 的写入防护。
-8. batch envelope、byte/count 限制、冻结重试、后台 lifecycle、auth refresh、backoff/jitter、bounded queues。
+1. Shared fate for multi-operation mutations / local direct writes / companions; accepted companions advance the local base correctly.
+2. Cascade graph main+before scans, recovery from rejection, and interleavings of ancestor mutations with child edits.
+3. Lifecycle dependencies and business sequence; independent tasks overtaking others; differences in propagation of prerequisite rejection.
+4. Prerequisite ready/failed/retry, cancellation, user retry/drop, and reference cleanup; the host executes upload tasks.
+5. Durable rejection inbox, acknowledge, and derived per-record status.
+6. Durable desired channels, rollback of optimistic subscribe/unsubscribe, and existing read rules required for pending settlement.
+7. Typed queries, relation/inverse, sorting/null/limit, watch initial value/deduplication/commit-only/close; write protection for read-only SQL.
+8. Batch envelope, byte/count limits, frozen retries, background lifecycle, auth refresh, backoff/jitter, and bounded queues.
 
-**验证:** 对照覆盖表逐行归属；随机时序 property tests + independent oracle。每 mutation/页不做逐字段 bridge callback，记录 DB round trips、p50/p95、队列10/1000条下的 replay 成本。优化不得改变 durable 边界或查询可见性。
+**Verification:** Assign responsibility row by row against the coverage table; randomized-interleaving property tests + an independent oracle. Avoid per-field bridge callbacks for each mutation/page; record database round trips, p50/p95, and replay costs with queues of 10/1000 entries. Optimizations must not change durable boundaries or query visibility.
 
-## 7. M4：compiler、API 与 Nest
+## 7. M4: Compiler, API, and Nest
 
-**Files:** `crates/lfs-compiler/src/{syntax,semantic,history,emit}/`、`packages/nest/src/{decorators,discovery,module}.ts`、`fixtures/schema-evolution/`。
+**Files:** `crates/lfs-compiler/src/{syntax,semantic,history,emit}/`, `packages/nest/src/{decorators,discovery,module}.ts`, `fixtures/schema-evolution/`.
 
-- [ ] 先把现有 compiler 输出规范化为 Rust runtime descriptor，移除 generated 算法依赖。
-- [ ] 逐步迁 parser、语义分析、relation graph、slot binding、version history；旧/新 compiler 对同合法定义输出语义等价结果。
-- [ ] 迁移既有 schema compatibility fence，测试 model/field 删除、新增字段和旧客户端读取；更广的 identity/type/nullability fence 进入 Next things。
-- [ ] 生成 Dart/TS operation builders 与 backend typed input，保持 absent/null、version snapshots。
-- [ ] 业务型 input facade 显式映射底层 slots；不让任意 host callback 成为 Rust replay 的隐式依赖。
-- [ ] 加 Nest `@Handles` / `@Loads` + provider discovery；interface 检查静态类型，decorator 记录运行时 metadata。
-- [ ] 启动失败测试：重复 handler、漏注册 model/version、错误 descriptor；普通函数注册仍能使用全部能力。
-- [ ] HTTP adapter 挂载用户 server；独立 listen 不是必须运行的第二个服务。
+- [ ] First normalize existing compiler output into Rust runtime descriptors and remove dependencies on generated algorithms.
+- [ ] Incrementally port the parser, semantic analysis, relation graph, slot binding, and version history; old/new compilers produce semantically equivalent results for the same valid definitions.
+- [ ] Port existing schema compatibility fences; test model/field deletion, new fields, and old-client reads; broader identity/type/nullability fences belong in Next things.
+- [ ] Generate Dart/TS operation builders and backend typed input, preserving absent/null and version snapshots.
+- [ ] Business-oriented input facades explicitly map underlying slots; arbitrary host callbacks must not become implicit dependencies of Rust replay.
+- [ ] Add Nest `@Handles` / `@Loads` + provider discovery; interfaces check static types, and decorators record runtime metadata.
+- [ ] Test startup failures: duplicate handlers, missing model/version registration, and incorrect descriptors; plain-function registration still supports every capability.
+- [ ] Mount the HTTP adapter on the user's server; standalone listen is not a mandatory second service.
 
-**退出条件:** 一个业务作者可以只读示例完成 model、handler、loader、publish 集成；所有生成算法 fence 与 ABI 测试通过。新 compiler 不依赖 Oasis。
+**Exit criteria:** A business developer can integrate a model, handler, loader, and publish by reading only the example; all generated-algorithm fence and ABI tests pass. The new compiler does not depend on Oasis.
 
-## 8. M5：平台、迁移、开放准备
+## 8. M5: Platforms, Migration, and Public Release Preparation
 
-- [ ] Dart：macOS 开发、iOS simulator/device、Android emulator/device 的 build/load/restart smoke；精确平台支持表。
-- [ ] Node：macOS 与 Linux 的实际 native artifact 安装、生产构建、容器启动；平台矩阵基于验证，不只基于编译成功。
-- [ ] JS/Web：WASM 与 browser SQLite/OPFS 或 host storage 的独立 spike；多 tab single-writer、worker、quota、关闭和恢复。未验证前标为未支持。
-- [ ] 非 TypeScript backend：独立 Rust host 示例再考虑 SQLx/SeaORM；不承诺从 ORM A 的 tx 自动转换为 ORM B 的 tx。
-- [ ] 旧 storage/wire 迁移：选择 drain 或专门迁移器，保护 unsent/frozen/accepted/companion/local-only；不默认删除旧数据库。
-- [ ] 协议版本兼容表、breaking changes、故障恢复指南、capacity/retention 说明。
-- [ ] CI 分核心、binding、adapter、E2E、package smoke；只保留有独立价值的 conformance，不重复整套算法测试。
-- [ ] 作者选择 license；核查分发文件；源代码先公开，registry 发布按另行明确范围推进。
+- [ ] Dart: build/load/restart smoke tests for macOS development, iOS simulator/device, and Android emulator/device; an exact platform support table.
+- [ ] Node: actual native artifact installation, production builds, and container startup on macOS and Linux; base the platform matrix on verification, not compilation success alone.
+- [ ] JS/Web: independent spikes for WASM and browser SQLite/OPFS or host storage; multi-tab single-writer, workers, quota, shutdown, and recovery. Mark unsupported until verified.
+- [ ] Non-TypeScript backends: provide a standalone Rust host example before considering SQLx/SeaORM; do not promise automatic conversion from ORM A's transaction to ORM B's transaction.
+- [ ] Old storage/wire migration: choose draining or a dedicated migrator, protecting unsent/frozen/accepted/companion/local-only state; do not delete old databases by default.
+- [ ] Protocol version compatibility table, breaking changes, failure recovery guide, and capacity/retention documentation.
+- [ ] Separate CI into core, binding, adapter, E2E, and package smoke tests; retain only conformance tests with independent value, without duplicating the entire algorithm test suite.
+- [ ] The author selects a license; audit distributed files; make source public first, and advance registry publication within a separately explicit scope.
 
-## 9. 测试映射
+## 9. Test Mapping
 
-| 旧 conformance | 新测试责任 |
+| Old conformance suite | New test responsibility |
 |---|---|
-| model-generation | Rust compiler golden/type compile/history；typed SDK smoke |
-| server-client-protocol | 共享 Rust codec vectors + ABI value fidelity + cross-version fixtures |
+| model-generation | Rust compiler golden/type compilation/history; typed SDK smoke tests |
+| server-client-protocol | Shared Rust codec vectors + ABI value fidelity + cross-version fixtures |
 | client-storage-contract | Rust ClientStore/SQLite transaction/watch/savepoint tests |
-| server-persistence-contract | 真实 Postgres adapter atomicity/locking/snapshot tests |
-| end-to-end-sync | 精选真实 SDK→network→Rust→businessDB→localDB journeys |
+| server-persistence-contract | Real Postgres adapter atomicity/locking/snapshot tests |
+| end-to-end-sync | Selected real SDK→network→Rust→businessDB→localDB journeys |
 
-保留历史 wire vectors 的原因是协议对外承诺依然存在。共用代码不能发现两端同时写错，所以 property oracle 和最终 DB 状态断言仍独立于生产 reducer。
+Historical wire vectors remain because the protocol's external commitments still exist. Shared code cannot detect the same mistake on both sides, so property oracles and final database state assertions remain independent of the production reducer.
 
-## 10. 计划自检与开始实施前的具体选择
+## 10. Plan Self-Check and Concrete Choices Before Implementation
 
-- 本计划覆盖 compiler、client、server、protocol、storage、SDK、infra、examples、migration 和发布准备。
-- 第一闭环不依赖 decorator、完整 compiler 或所有 ORM，避免先做外围 DX 却未证明事务可行。
-- per-mutation receipt、remove/delete 分开、pull 失败不 skip 和 recordRevision 全部延后；当前保留原行为。
-- 命名改变只影响新 API 与内部符号；旧 wire/storage 字段不批量改名。
-- 未定问题均有明确的负责阶段、验收场景和发布门槛。
-- 下一次开始实施，先确认 M0 的默认架构选择，再逐个执行；当前已获实施授权，按验证结果更新进度。
+- This plan covers compiler, client, server, protocol, storage, SDK, infrastructure, examples, migration, and release preparation.
+- The first round trip does not depend on decorators, the complete compiler, or every ORM, avoiding peripheral developer-experience work before transaction feasibility is proven.
+- Per-mutation receipts, separating remove/delete, not skipping pull failures, and recordRevision are all deferred; preserve original behavior for now.
+- Naming changes affect only new APIs and internal symbols; do not bulk-rename old wire/storage fields.
+- Every open question has an explicit responsible phase, acceptance scenario, and release gate.
+- When implementation next begins, confirm M0's default architecture choices first, then execute tasks one by one; implementation is already authorized, and progress should reflect verification results.
 
 ## Implementation evidence
 
