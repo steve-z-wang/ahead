@@ -18,4 +18,4 @@ The current harness targets an installed iOS 18.x runtime and an iPhone 16 simul
 - All disposable simulators were removed. The pre-existing user simulator was left untouched.
 - Android SDK/emulator and physical-device validation are unavailable on this host. No Android support claim is made from the Rust source alone.
 
-CI includes a macOS/Linux host matrix, but only observed runs count as platform support evidence. See the [implementation ledger](../../docs/implementation-progress.md) for the current status.
+The [macOS/Linux CI run for code commit 92bf410](https://github.com/steve-z-wang/local-first-state/actions/runs/34555679980) passed the complete host gate, real Node/Dart/PostgreSQL HTTP end-to-end tests, optimized builds and native binding smoke on both fresh runners. This does not extend the result to iOS or Android. See the [implementation ledger](../../docs/implementation-progress.md) for the detailed coverage.

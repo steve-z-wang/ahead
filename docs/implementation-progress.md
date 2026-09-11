@@ -14,9 +14,9 @@ The user approved end-to-end implementation on 2026-09-10. The Rust rewrite now 
 | Compiler | Rust `.model` parser/validation/history; generated Dart and TypeScript identities, model/patch types, operation builders, typed queries, relations and backend inputs. |
 | Developer workflow | Independent runnable example, build/test scripts, host CI definition, shared fixtures, compatibility/recovery documentation and a repeatable small capacity diagnostic. |
 
-## Verification on macOS arm64
+## Verification
 
-`bash scripts/test.sh` passed after the migration, stale-connection and BigInt review fixes. The subsequent close-during-connect fix passed all Node/Dart SDK tests, strict TypeScript checking, Dart analysis and the real HTTP end-to-end run. The complete gate includes:
+`bash scripts/test.sh` passed locally on macOS arm64. The final [GitHub verification run](https://github.com/steve-z-wang/local-first-state/actions/runs/34555679980) passed on fresh `macos-14` and `ubuntu-24.04` runners for code commit `92bf410`, including the complete gate, optimized Rust/Node builds and the optimized binding smoke. A clean-install Nest dependency omission found in the first CI run was corrected before this successful run. The complete gate includes:
 
 | Check | Observed result |
 | --- | --- |
@@ -48,10 +48,10 @@ A broad read-only review checked `97faef6..26e3f99` plus focused subsequent fixe
 
 | Platform | Observed support |
 | --- | --- |
-| macOS arm64, Node + Dart | Native build, persistence and full HTTP E2E verified. |
+| macOS, Node + Dart | Local arm64 and fresh hosted runner: native build, persistence, full HTTP E2E and optimized artifacts verified. |
 | iOS arm64 simulator | Rust static library and Flutter app link/build verified. Runtime smoke did not reach the first Dart main marker on a disposable iOS 18.5 simulator; no passing FFI/SQLite app-restart claim. See [platform evidence](../integration/platform/README.md). |
 | iOS device / Android | Not verified. No Android SDK/emulator is available on this host. |
-| Linux | CI definition is present, but no observed hosted run recorded yet. |
+| Linux, Node + Dart | Fresh Ubuntu 24.04 runner: complete host gate, real PostgreSQL/HTTP E2E, optimized builds and native binding smoke passed. |
 | Browser/WASM / Windows | Not supported/verified by this first source implementation. |
 
 The source alpha uses a new local database. Original database/history importing, arbitrary identity/type conversion, production-scale indexing, distributed committed wake delivery and broader platform packaging are not implemented. The existing overlapping-channel limitations and per-change malformed Pull skip behavior are preserved. Record revisions, protocol reset/GC and other semantics changes remain in [Next things](next-things.md).
