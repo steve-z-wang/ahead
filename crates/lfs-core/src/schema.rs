@@ -1,0 +1,383 @@
+use crate::{Result, canonical_json, invalid};
+use chrono::{DateTime, SecondsFormat};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+use std::collections::BTreeSet;
+
+pub const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Schema {
+    pub enums: Vec<EnumDescriptor>,
+    pub models: Vec<ModelDescriptor>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requirements: Vec<RequirementDescriptor>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prerequisites: Vec<Value>,
+    #[serde(
+        default,
+        rename = "clientPolicies",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub client_policies: Vec<Value>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RequirementDescriptor {
+    pub model: String,
+    pub field: String,
+    pub name: String,
+    pub arguments: std::collections::BTreeMap<String, String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EnumDescriptor {
+    pub name: String,
+    pub values: Vec<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ModelDescriptor {
+    pub name: String,
+    pub identity: Vec<String>,
+    pub fields: Vec<FieldDescriptor>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relations: Vec<RelationDescriptor>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unique: Vec<Vec<String>>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelationDescriptor {
+    pub name: String,
+    pub target: String,
+    pub fields: Vec<String>,
+    pub target_fields: Vec<String>,
+    pub on_delete: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FieldDescriptor {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub value_type: ValueType,
+    pub nullable: bool,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ValueType {
+    Scalar { name: ScalarType },
+    Enum { name: String },
+    List { element: Box<ValueType> },
+}
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ScalarType {
+    String,
+    Boolean,
+    Int,
+    Float,
+    DateTime,
+    Uuid,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordKey {
+    pub model: String,
+    pub identity: Value,
+}
+impl RecordKey {
+    pub fn encoded_identity(&self) -> Result<String> {
+        canonical_json(&self.identity)
+    }
+    pub fn encoded(&self) -> Result<String> {
+        canonical_json(&serde_json::json!([self.model, self.identity]))
+    }
+}
+
+impl Schema {
+    pub fn from_value(value: Value) -> Result<Self> {
+        let schema: Self = serde_json::from_value(value)?;
+        schema.validate()?;
+        Ok(schema)
+    }
+    pub fn validate(&self) -> Result<()> {
+        if self.models.is_empty() {
+            return Err(invalid("models must be nonempty"));
+        }
+        let mut names = BTreeSet::new();
+        for en in &self.enums {
+            if en.name.is_empty()
+                || !names.insert(en.name.as_str())
+                || en.values.is_empty()
+                || en.values.iter().any(|v| v.is_empty())
+                || en.values.iter().collect::<BTreeSet<_>>().len() != en.values.len()
+            {
+                return Err(invalid("invalid enum descriptor"));
+            }
+        }
+        for model in &self.models {
+            if model.name.is_empty()
+                || !names.insert(model.name.as_str())
+                || model.identity.is_empty()
+            {
+                return Err(invalid("invalid model descriptor"));
+            }
+            let mut fields = BTreeSet::new();
+            for field in &model.fields {
+                if field.name.is_empty() || !fields.insert(field.name.as_str()) {
+                    return Err(invalid("duplicate or empty field"));
+                }
+                self.validate_type(&field.value_type)?;
+                if matches!(field.value_type, ValueType::List { .. }) && field.nullable {
+                    return Err(invalid("lists cannot be nullable"));
+                }
+            }
+            let mut identities = BTreeSet::new();
+            for name in &model.identity {
+                let field = model
+                    .fields
+                    .iter()
+                    .find(|f| &f.name == name)
+                    .ok_or_else(|| invalid("identity field missing"))?;
+                if !identities.insert(name)
+                    || field.nullable
+                    || !matches!(field.value_type, ValueType::Scalar { .. })
+                {
+                    return Err(invalid("invalid identity descriptor"));
+                }
+            }
+        }
+        for requirement in &self.requirements {
+            let model = self.model(&requirement.model)?;
+            if !model.fields.iter().any(|f| f.name == requirement.field)
+                || !self
+                    .prerequisites
+                    .iter()
+                    .any(|p| p["name"] == requirement.name)
+            {
+                return Err(invalid("invalid prerequisite requirement"));
+            }
+            if requirement.arguments.values().any(|v| v != "self") {
+                return Err(invalid("unsupported prerequisite argument expression"));
+            }
+        }
+        for model in &self.models {
+            for fields in &model.unique {
+                if fields.is_empty()
+                    || fields.iter().collect::<BTreeSet<_>>().len() != fields.len()
+                    || fields
+                        .iter()
+                        .any(|name| !model.fields.iter().any(|f| &f.name == name))
+                {
+                    return Err(invalid("invalid unique constraint"));
+                }
+            }
+            let mut relations = BTreeSet::new();
+            for relation in &model.relations {
+                let target = self.model(&relation.target)?;
+                if relation.name.is_empty()
+                    || !relations.insert(&relation.name)
+                    || relation.fields.len() != target.identity.len()
+                    || relation.target_fields != target.identity
+                    || !["delete", "none"].contains(&relation.on_delete.as_str())
+                {
+                    return Err(invalid("invalid reference relation"));
+                }
+                for (local, remote) in relation.fields.iter().zip(&relation.target_fields) {
+                    let local = model
+                        .fields
+                        .iter()
+                        .find(|f| &f.name == local)
+                        .ok_or_else(|| invalid("reference field missing"))?;
+                    let remote = target
+                        .fields
+                        .iter()
+                        .find(|f| &f.name == remote)
+                        .ok_or_else(|| invalid("target field missing"))?;
+                    if serde_json::to_value(&local.value_type)?
+                        != serde_json::to_value(&remote.value_type)?
+                    {
+                        return Err(invalid("reference field type mismatch"));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+    fn validate_type(&self, ty: &ValueType) -> Result<()> {
+        match ty {
+            ValueType::Enum { name } if !self.enums.iter().any(|e| &e.name == name) => {
+                Err(invalid("unknown enum"))
+            }
+            ValueType::List { element } if !matches!(**element, ValueType::Scalar { .. }) => {
+                Err(invalid("list elements must be scalar"))
+            }
+            _ => Ok(()),
+        }
+    }
+    pub fn model(&self, name: &str) -> Result<&ModelDescriptor> {
+        self.models
+            .iter()
+            .find(|m| m.name == name)
+            .ok_or_else(|| invalid(format!("unknown model {name}")))
+    }
+    pub fn record_key(&self, name: &str, identity: &Value) -> Result<RecordKey> {
+        let model = self.model(name)?;
+        let input = identity
+            .as_object()
+            .ok_or_else(|| invalid("identity must be an object"))?;
+        if input.len() != model.identity.len() || input.keys().any(|k| !model.identity.contains(k))
+        {
+            return Err(invalid("identity must contain exactly identity fields"));
+        }
+        let mut result = Map::new();
+        for name in &model.identity {
+            let field = model
+                .fields
+                .iter()
+                .find(|f| &f.name == name)
+                .ok_or_else(|| invalid("identity descriptor missing"))?;
+            result.insert(
+                name.clone(),
+                self.normalize_value(
+                    field,
+                    input.get(name).ok_or_else(|| invalid("identity missing"))?,
+                )?,
+            );
+        }
+        Ok(RecordKey {
+            model: name.into(),
+            identity: Value::Object(result),
+        })
+    }
+    /// Loader output may contain identity and omit nullable fields. Wire state may not.
+    pub fn normalize_state(&self, model: &str, state: &Value) -> Result<Value> {
+        self.state(model, state, true)
+    }
+    pub fn validate_state(&self, model: &str, state: &Value) -> Result<Value> {
+        self.state(model, state, false)
+    }
+    fn state(&self, name: &str, state: &Value, loader: bool) -> Result<Value> {
+        let model = self.model(name)?;
+        let input = state
+            .as_object()
+            .ok_or_else(|| invalid("state must be an object"))?;
+        if input.keys().any(|k| {
+            (loader && !model.fields.iter().any(|f| &f.name == k))
+                || (!loader && model.identity.contains(k))
+        }) {
+            return Err(invalid("unknown or identity state field"));
+        }
+        let mut result = Map::new();
+        for field in model
+            .fields
+            .iter()
+            .filter(|f| !model.identity.contains(&f.name))
+        {
+            let value = match input.get(&field.name) {
+                Some(v) => v,
+                None if field.nullable => &Value::Null,
+                None => return Err(invalid(format!("missing state field {}", field.name))),
+            };
+            result.insert(field.name.clone(), self.normalize_value(field, value)?);
+        }
+        Ok(Value::Object(result))
+    }
+    pub fn validate_patch(&self, name: &str, patch: &Value) -> Result<Value> {
+        let model = self.model(name)?;
+        let input = patch
+            .as_object()
+            .ok_or_else(|| invalid("patch must be an object"))?;
+        let mut result = Map::new();
+        for (name, value) in input {
+            if model.identity.contains(name) {
+                return Err(invalid("identity is immutable"));
+            }
+            let field = model
+                .fields
+                .iter()
+                .find(|f| &f.name == name)
+                .ok_or_else(|| invalid("unknown patch field"))?;
+            result.insert(name.clone(), self.normalize_value(field, value)?);
+        }
+        Ok(Value::Object(result))
+    }
+    pub fn normalize_value(&self, field: &FieldDescriptor, value: &Value) -> Result<Value> {
+        if value.is_null() {
+            return if field.nullable {
+                Ok(Value::Null)
+            } else {
+                Err(invalid(format!("{} is not nullable", field.name)))
+            };
+        }
+        self.value(&field.value_type, value)
+    }
+    fn value(&self, ty: &ValueType, value: &Value) -> Result<Value> {
+        match ty {
+            ValueType::Scalar { name } => scalar(*name, value),
+            ValueType::Enum { name } => {
+                if value.as_str().is_some_and(|v| {
+                    self.enums
+                        .iter()
+                        .any(|en| &en.name == name && en.values.iter().any(|x| x == v))
+                }) {
+                    Ok(value.clone())
+                } else {
+                    Err(invalid("invalid enum value"))
+                }
+            }
+            ValueType::List { element } => {
+                let list = value.as_array().ok_or_else(|| invalid("expected list"))?;
+                Ok(Value::Array(
+                    list.iter()
+                        .map(|v| self.value(element, v))
+                        .collect::<Result<_>>()?,
+                ))
+            }
+        }
+    }
+}
+fn scalar(ty: ScalarType, v: &Value) -> Result<Value> {
+    match ty {
+        ScalarType::String if v.is_string() => Ok(v.clone()),
+        ScalarType::Boolean if v.is_boolean() => Ok(v.clone()),
+        ScalarType::Int => {
+            let f = v.as_f64().ok_or_else(|| invalid("expected integer"))?;
+            if f.is_finite() && f.fract() == 0.0 && f.abs() <= MAX_SAFE_INTEGER as f64 {
+                Ok(Value::from(f as i64))
+            } else {
+                Err(invalid("integer outside safe range"))
+            }
+        }
+        ScalarType::Float => {
+            let f = v
+                .as_f64()
+                .filter(|f| f.is_finite())
+                .ok_or_else(|| invalid("expected finite float"))?;
+            Ok(Value::from(if f == 0.0 { 0.0 } else { f }))
+        }
+        ScalarType::Uuid => {
+            let s = v.as_str().ok_or_else(|| invalid("expected UUID"))?;
+            let id = uuid::Uuid::parse_str(s).map_err(|_| invalid("invalid UUID"))?;
+            if s.len() != 36
+                || id.get_variant() != uuid::Variant::RFC4122
+                || !(1..=8).contains(&id.get_version_num())
+            {
+                return Err(invalid("invalid UUID format/version"));
+            }
+            Ok(Value::String(id.to_string()))
+        }
+        ScalarType::DateTime => {
+            let s = v
+                .as_str()
+                .ok_or_else(|| invalid("expected zoned dateTime"))?;
+            if s.len() < 20 || s.as_bytes().get(10) != Some(&b'T') {
+                return Err(invalid("invalid zoned dateTime"));
+            }
+            let t =
+                DateTime::parse_from_rfc3339(s).map_err(|_| invalid("invalid zoned dateTime"))?;
+            Ok(Value::String(
+                t.with_timezone(&chrono::Utc)
+                    .to_rfc3339_opts(SecondsFormat::Millis, true),
+            ))
+        }
+        _ => Err(invalid("invalid scalar type")),
+    }
+}

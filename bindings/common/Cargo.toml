@@ -1,0 +1,12 @@
+[package]
+name = "lfs-binding-runtime"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+[dependencies]
+lfs-core = { path = "../../crates/lfs-core" }
+lfs-client = { path = "../../crates/lfs-client" }
+lfs-sqlite = { path = "../../crates/lfs-sqlite" }
+serde_json.workspace = true
+[dev-dependencies]
+tempfile.workspace = true

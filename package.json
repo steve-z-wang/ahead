@@ -1,0 +1,18 @@
+{
+  "name": "local-first-state-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bash scripts/build.sh",
+    "test": "bash scripts/test.sh",
+    "typecheck": "tsc -p tsconfig.json",
+    "format": "prettier --write packages/client-js/*.mts packages/server/*.mts packages/persistence-prisma/*.mts"
+  },
+  "devDependencies": {
+    "typescript": "5.8.3",
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.0",
+    "prettier": "^3.6.0"
+  }
+}

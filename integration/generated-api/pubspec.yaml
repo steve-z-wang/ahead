@@ -1,0 +1,9 @@
+name: generated_api_tests
+publish_to: none
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+dependencies:
+  local_first_state:
+    path: ../../packages/dart
+dev_dependencies:
+  test: ^1.26.0

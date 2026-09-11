@@ -1,0 +1,1 @@
+{"name":"local-first-state-round-trip","version":"0.1.0","private":true,"type":"module","scripts":{"generate":"prisma generate","start":"node server.mts"},"dependencies":{"@prisma/client":"6.19.0"},"devDependencies":{"prisma":"6.19.0"}}

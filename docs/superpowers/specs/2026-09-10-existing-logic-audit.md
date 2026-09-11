@@ -6,6 +6,10 @@
 
 下列仓库内路径相对于 local-first-state 根目录；Oasis 路径另行标识。新代码从零实现，现有源码作为行为参考保留。
 
+> 范围更新：本轮只迁移现有行为。表中原先提出的改进、revision、epoch 和 failure-policy 变化均属 [Next things](../../next-things.md)，不是迁移任务；源码发现与风险继续保留。
+
+> 命名对照：本审查保留旧源码的术语与路径。新实现采用 Scope → Channel、Materializer → Loader、Uplink/Downlink → Push/Pull；Sync ID 按用途区分 Cursor/Checkpoint。见 [概念与命名](../../architecture/concepts-and-naming.md)。此处旧路径指参考提交，不指当前 worktree 中已有代码。
+
 ## 1. 真实的数据路径
 
 1. 生成的 Dart API 构造具名 mutation，包含按 schema 顺序排列的 create/update/delete。
@@ -32,39 +36,39 @@ before-image 不是永远不变的初始快照；dirty 期间，它是持续被 
 | slot 顺序、optional/list slot、patch 白名单 | `mutation/model_operation.dart`、`backend/slot-binding-precheck.ts` | 先保留结构化契约，再改善业务输入 API |
 | slot relation binding | `mutation/slot_binding_verifier.dart` | Rust；依赖 stored row 的验证在事务内 |
 | mutation 历史版本 | `compiler/lib/src/mutation_history.dart` | 保留历史输入形状；不按新 schema 重解释已持久化请求 |
-| schema compatibility fence | `compiler/lib/src/contract_fence.dart` | 扩展类型、identity、nullability 检查；该旧 fence 主要检查字段/model 消失 |
+| schema compatibility fence | `compiler/lib/src/contract_fence.dart` | 保留旧 fence 的字段/model 消失检查；更广的类型、identity、nullability 检查延后 |
 | 生成代码不承载算法 | `compiler/lib/src/emit/`、`tool/gate.sh` | 保留；生成层只输出类型、描述、转发 |
 | main + sparse before-image | `storage/before_image_store.dart`、`row_rebuilder.dart` | Rust client；clean row 不保留 before-image |
 | optimistic reducer | `projection/mutation_reducer.dart` | Rust；保留 absent/null 区别，明确冲突降级 |
 | 外层 local transaction / mutation savepoint | `mutation/transaction_executor.dart`、`mutation_scope_executor.dart` | Rust transaction session；多次读取/写入可顺序交互 |
 | 本地直接写入 | `storage/direct_model_writer.dart` | 保留，与 server fate 分开 |
 | 本地 companion | `mutation/companion_model_writer.dart` | 保留：同 mutation fate，不上传；不能把 wire optimism 当权威内容 |
-| cascade 扫描 main + before | `storage/cascade_expansion.dart`、`api/cascade_deleter.dart` | Rust；区分 scope removal 与真实删除 |
+| cascade 扫描 main + before | `storage/cascade_expansion.dart`、`api/cascade_deleter.dart` | 迁移既有 cascade；进一步区分 scope removal 与真实删除的方案延后 |
 | 顺序依赖 / 生命周期依赖 | `mutation/mutation_dependency_writer.dart` | Rust；不同拒绝传播和可同 batch 行为不能混为一谈 |
 | readiness ledger | `uplink/readiness_ledger.dart` | Rust durable 状态；无行=pending；引用归零清理 |
 | 媒体上传前置任务 | `uplink/prerequisite_runner.dart` | Rust 决策，宿主执行上传；ready/failed/retry 区分 |
 | 调度与独立任务超车 | `uplink/mutation_scheduler.dart` | Rust；不能悄悄退化成全局 FIFO |
-| frozen batch / 不确定结果重试 | `uplink/mutation_queue.dart`、`batch_executor.dart` | 保留不可改写；receipt 单位的新提议见设计 |
+| frozen batch / 不确定结果重试 | `uplink/mutation_queue.dart`、`batch_executor.dart` | 保留 frozen batch 与 batch receipt |
 | refusal、依赖传播、drop | `uplink/mutation_queue.dart` | Rust；已发未知结果不能当作取消成功 |
 | 持久化拒绝收件箱 | `storage/mutation_rejection_store.dart`、`api/local_sync_mutations.dart` | 保留 code、操作快照、显式 acknowledge |
 | identity 上传状态 | `uplink/uplink_status.dart` | Rust 派生，不另存易漂移状态 |
 | 动态 scope 订阅 | `downlink/scope_store.dart`、`scope_reconciler.dart` | Rust durable desired state，启动/重连恢复 |
 | optimistic scope 修改 | `downlink/transaction_scopes.dart` | 与所属 mutation 同 fate |
 | HTTP pull / WS live 统一应用 | `downlink/downlink_worker.dart`、`downlink_page_queue.dart` | Rust 协议状态机；平台只运输 bytes/events |
-| cursor/stale page | `downlink/downlink_page_processor.dart` | 失败不跳 cursor；引入 session/reset epoch 校验 |
+| cursor/stale page | `downlink/downlink_page_processor.dart` | 保留现有行为；失败策略与 epoch 改进延后 |
 | 多 scope settlement | `uplink_batch_checkpoints`、`_readBatchesReadyAfterAdvance` | 保留 barrier；不同 scope 数字不能互相比较 |
-| accepted prefix | `downlink/downlink_page_processor.dart` | 每 mutation 结算提议需同 row 顺序保护；不任意删中间层 |
+| accepted prefix | `downlink/downlink_page_processor.dart` | 保留 accepted-prefix 规则；独立结算延后 |
 | scope row claims | `downlink/scope_row_ledger.dart` | 保留 membership 信息；不替代 freshness |
-| 跨 scope record freshness | 当前无独立 record revision 仲裁 | 新增；建议先统一带 revision，不做懒升级 |
-| tombstone / remove-from-scope | 当前 `state:null` 混用 | 新协议分开；旧 null 不猜成全局删除 |
+| 跨 scope record freshness | 当前无独立 record revision 仲裁 | Next things；本轮不加入 |
+| tombstone / remove-from-scope | 当前 `state:null` 混用 | 本轮保留 null 语义；分开删除类型延后 |
 | server idempotency/owner fencing | `backend/uplink-executor.ts`、`uplink-receipt.ts` | Rust server + atomic persistence |
 | 显式 publish scopes | `backend/scope-ledger.ts` | 保留，不变成 ambient/model 自动路由 |
 | 前后端数据模型解耦 | `backend/model-binding.ts` | 保留，一个业务表可投影多个客户端 model |
-| materializer alignment | `backend/downlink-materializer.ts` | 改为按 identity 返回，框架匹配/恢复顺序 |
+| materializer alignment | `backend/downlink-materializer.ts` | 保留现有 identity 对齐及可见性；新 Loader 接口须适配旧语义 |
 | preparation 写入 | `prepareForViewer` | 迁移前保留事务要求；不能假设现有 loader 全是纯读 |
-| scope authorizer | `backend/backend-options.ts` | 非强制 primitive；materializer 控制内容可见性 |
+| scope authorizer | `backend/backend-options.ts` | 保留现有 authorizer 行为；是否改为可选延后讨论 |
 | transaction adapter | `backend/transactions.ts`、`storage.ts` | 用户拥有事务；官方 adapter 提供原子能力 |
-| commit wakeup | `backend/committed-changes.ts`、`downlink-subscription.ts` | 通知仅提示，durable head + polling 恢复 |
+| commit wakeup | `backend/committed-changes.ts`、`downlink-subscription.ts` | 保留现有通知/catch-up；新增 polling 等恢复策略延后 |
 | host/server | `backend/local-sync-host.ts` | 嵌入用户 server；独立 listener 仅示例便利功能 |
 | token/auth/lifecycle/cancel | `transport/` | 宿主凭证与 I/O；Rust 决策；旧 session 回调不能污染新 session |
 | query/get/watch/relations | `api/model_query.dart`、`projection/query_evaluator.dart` | Rust query IR/执行；SDK typed facade；commit 后通知 |
@@ -77,15 +81,15 @@ before-image 不是永远不变的初始快照；dirty 期间，它是持续被 
 
 ### Downlink 失败后仍推进 cursor
 
-`downlink_page_processor.dart` 在 decode 或 `_CanonicalChangeFailure` 后调用 `_commitSkip`，后者执行 `_settleAndAdvance`。所以 cursor 到达并不总能证明权威变更成功落地。新 runtime 默认 page 原子 apply；不兼容 schema、损坏数据、DB 失败保留 cursor 和 optimism，暴露 blocked 状态。不能静默跳过后再结算。
+`downlink_page_processor.dart` 在 decode 或 `_CanonicalChangeFailure` 后调用 `_commitSkip`，后者执行 `_settleAndAdvance`。所以 cursor 到达并不总能证明权威变更成功落地。整页原子 apply / 失败不推进 cursor 是待独立评审的修复提议，已延后；重写先刻画并保留原行为，不将保留视为正确性认证。
 
 ### Snapshot 隔离要求不显式
 
-`downlink-materializer.ts` 用 `transactions.write` 包住 head/scan/prepare/read；generic write 的接口本身没有说明 repeatable-read 保证。新 adapter 要明确保证 head、invalidation、record revision、materialized state 的一致性 snapshot。跨外部 API/数据库的 materializer 需要额外版本契约，不声称自动原子。
+`downlink-materializer.ts` 用 `transactions.write` 包住 head/scan/prepare/read；generic write 的接口本身没有说明 repeatable-read 保证。迁移时需刻画 head、invalidation、materialized state 的实际读取保证；增强 snapshot 与 record revision 的方案在 Next things。跨外部 API/数据库读取不声称自动原子。
 
 ### 用户外部事务可能没有 live wake
 
-Oasis `backend/src/local-sync/prisma-persistence.ts` 的 touched scopes 用 wrapper-owned WeakMap 记录。注释明确：自行开的外部事务可以存 invalidation，却未必产生 live wake。新设计要支持用户 commit 后提示，并用 polling 补偿漏发和跨实例通知丢失。
+Oasis `backend/src/local-sync/prisma-persistence.ts` 的 touched scopes 用 wrapper-owned WeakMap 记录。注释明确：自行开的外部事务可以存 invalidation，却未必产生 live wake。用户 commit 后提示、polling 补偿漏发与跨实例通知的扩展在 Next things；本轮先验证并记录原行为。
 
 ### 整数上限不一致
 

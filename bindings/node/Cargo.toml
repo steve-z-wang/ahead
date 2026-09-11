@@ -1,0 +1,16 @@
+[package]
+name = "lfs-node"
+version = "0.1.0"
+edition = "2021"
+publish = false
+[workspace]
+[lib]
+crate-type = ["cdylib"]
+[dependencies]
+lfs-binding-runtime = { path = "../common" }
+lfs-server = { path = "../../crates/lfs-server" }
+serde_json = "1"
+napi = { version = "=3.12.2", features = ["napi8", "tokio_rt"] }
+napi-derive = "=3.6.4"
+[build-dependencies]
+napi-build = "=2.4.2"

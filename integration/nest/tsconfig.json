@@ -1,0 +1,1 @@
+{"compilerOptions":{"target":"ES2022","module":"NodeNext","moduleResolution":"NodeNext","experimentalDecorators":true,"strict":true,"preserveSymlinks":true,"rewriteRelativeImportExtensions":true,"skipLibCheck":true,"outDir":"dist","rootDir":"../.."},"include":["nest.test.ts","../../packages/nest/index.ts","../../packages/server/index.mts"]}
