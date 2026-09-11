@@ -4,6 +4,8 @@ A local-first state framework with TypeScript and Dart clients, a TypeScript bac
 
 The first implementation runs local SQLite clients against an embedded Node backend with Prisma/PostgreSQL. Rust owns schema validation, optimistic state, durable mutation batches, channel cursors and ACK/Pull settlement. Business code supplies Handlers, Loaders and explicit channel publication inside application-owned transactions. Generated business types stay in Dart/TypeScript.
 
+[Documentation website setup and preview](website/README.md)
+
 ## Try it
 
 With Rust, Node 22.18+, Python 3 and PostgreSQL command-line tools installed:

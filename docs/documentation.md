@@ -12,4 +12,6 @@ The first version maintains one English edition of the README, SDK guides, archi
 
 ## Documentation website
 
-The website is maintained in a separate change from the English documentation conversion. It uses repository Markdown as its source, with an English quick start, concept explanations, client/backend guides, examples and search. Avoid independently maintained copies in GitHub Wiki. Website deployment and repository visibility are separate settings.
+The English website uses MkDocs Material. Existing README and guide files are staged during the build; edit those original files instead of generated copies. Website-only introductions live in `website/content`. The build rewrites links to included pages and sends other source references to GitHub.
+
+See [website setup](../website/README.md) for installation, preview, strict builds and the manual Pages deployment workflow. Avoid independently maintained copies in GitHub Wiki. Website deployment and repository visibility are separate settings.
