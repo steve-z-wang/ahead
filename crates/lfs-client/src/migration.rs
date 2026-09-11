@@ -22,9 +22,35 @@ pub(super) fn migrate(
             ));
         }
         for field in &model.fields {
-            if !next.fields.iter().any(|f| f.name == field.name) {
-                return Err(invalid("field removal requires explicit data conversion"));
+            let replacement = next
+                .fields
+                .iter()
+                .find(|f| f.name == field.name)
+                .ok_or_else(|| invalid("field removal requires explicit data conversion"))?;
+            if serde_json::to_value(&field.value_type)?
+                != serde_json::to_value(&replacement.value_type)?
+                || field.nullable != replacement.nullable
+            {
+                return Err(invalid(
+                    "field type/nullability migration requires explicit data conversion",
+                ));
             }
+        }
+    }
+    for previous in &old.enums {
+        let next = schema
+            .enums
+            .iter()
+            .find(|e| e.name == previous.name)
+            .ok_or_else(|| invalid("enum removal requires explicit data conversion"))?;
+        if previous
+            .values
+            .iter()
+            .any(|value| !next.values.contains(value))
+        {
+            return Err(invalid(
+                "enum value removal requires explicit data conversion",
+            ));
         }
     }
     let transform = |row: &mut StoredRecord| -> Result<()> {

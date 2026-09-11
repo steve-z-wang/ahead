@@ -90,6 +90,12 @@ export interface BackendOptions<T> {
 /** JSON cannot represent nonfinite values or undefined array items. Never turn either into null. */
 function callbackJson(value: unknown): string {
   return JSON.stringify(value, (_key, item) => {
+    if (typeof item === "bigint") {
+      const number = Number(item);
+      if (!Number.isSafeInteger(number))
+        throw new Error("bigint outside safe integer range");
+      return number;
+    }
     if (typeof item === "number" && !Number.isFinite(item))
       throw new Error("nonfinite callback value");
     if (item === undefined) throw new Error("undefined callback value");

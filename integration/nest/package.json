@@ -1,1 +1,21 @@
-{"private":true,"type":"module","scripts":{"test":"tsc -p tsconfig.json && node --preserve-symlinks --test dist/integration/nest/nest.test.js"},"dependencies":{"@local-first/nest":"file:../../packages/nest","@local-first/server":"file:../../packages/server","@nestjs/common":"11.1.6","@nestjs/core":"11.1.6","reflect-metadata":"0.2.2","rxjs":"7.8.2","ws":"^8.21.3"},"devDependencies":{"@types/node":"24.3.1","@types/ws":"8.18.1","typescript":"5.9.2"}}
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "tsc -p tsconfig.json && node --preserve-symlinks --test dist/integration/nest/nest.test.js && bash negative.sh"
+  },
+  "dependencies": {
+    "@local-first/nest": "file:../../packages/nest",
+    "@local-first/server": "file:../../packages/server",
+    "@nestjs/common": "11.1.6",
+    "@nestjs/core": "11.1.6",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.3.1",
+    "@types/ws": "8.18.1",
+    "typescript": "5.9.2"
+  }
+}

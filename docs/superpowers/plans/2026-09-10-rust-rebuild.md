@@ -335,3 +335,7 @@ M1 只是可验证 alpha 核心，不宣布全部旧能力已替代。
 - 命名改变只影响新 API 与内部符号；旧 wire/storage 字段不批量改名。
 - 未定问题均有明确的负责阶段、验收场景和发布门槛。
 - 下一次开始实施，先确认 M0 的默认架构选择，再逐个执行；当前已获实施授权，按验证结果更新进度。
+
+## Implementation evidence
+
+This document preserves the original roadmap and its broader platform/release checklist. The current implementation and exact verified versus unverified coverage are recorded in [implementation-progress](../../implementation-progress.md); unchecked roadmap items must not be read as verified. Dedicated performance diagnostics live in `integration/rust/examples/capacity.rs`; host CI reuses `scripts/test.sh`. Public release, browser runtime, original-database importing and additional platform support require their own evidence.

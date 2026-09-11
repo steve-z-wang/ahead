@@ -39,6 +39,7 @@ Use `sync`, `edit TEXT`, `show`, and `status` to observe offline edits, server n
 
 - [Concepts and accepted naming](docs/architecture/concepts-and-naming.md)
 - [Code organization and language boundary](docs/architecture/code-organization.md)
+- [Compatibility and recovery](docs/architecture/compatibility-and-recovery.md)
 - [Next things](docs/next-things.md)
 - [Architecture decisions](docs/superpowers/specs/2026-09-10-rust-core-design.md)
 - [Implementation roadmap](docs/superpowers/plans/2026-09-10-rust-rebuild.md)

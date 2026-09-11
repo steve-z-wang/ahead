@@ -773,3 +773,43 @@ fn record_status_and_rejection_context_survive_restart_until_dismissed() {
             .is_empty()
     );
 }
+
+#[test]
+fn migration_rejects_identity_conversion_without_changing_durable_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut c = open(&path);
+    let identity = json!({"id":"01890F47-1234-7123-8123-123456789ABC"});
+    let key = schema().record_key("Entry", &identity).unwrap();
+    let mut initial = page("book", 0, 1, Some("A"));
+    initial.changes[0].identity = identity.clone();
+    c.apply_page(initial).unwrap();
+    c.transaction(|tx| {
+        let mut operation = update("B");
+        operation.identity = identity;
+        tx.enqueue(Mutation::new("Edit", vec![operation]))?;
+        Ok(())
+    })
+    .unwrap();
+    let frozen = c.freeze().unwrap().unwrap();
+    drop(c);
+    let mut descriptor = serde_json::to_value(schema()).unwrap();
+    descriptor["models"][0]["fields"][0]["type"]["name"] = json!("uuid");
+    let result = Client::open_with_migration(
+        SqliteStore::open(&path).unwrap(),
+        Schema::from_value(descriptor).unwrap(),
+        "owner".into(),
+        Some(SchemaMigration {
+            defaults: json!({}),
+            replay_pull: true,
+        }),
+    );
+    assert!(
+        result.is_err(),
+        "implicit identity conversion must fail before rewriting keys"
+    );
+    let mut original = open(&path);
+    assert_eq!(original.cursor("book"), 1);
+    assert_eq!(original.read(&key).unwrap().unwrap()["text"], "B");
+    assert_eq!(original.freeze().unwrap().unwrap(), frozen);
+}

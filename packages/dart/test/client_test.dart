@@ -153,4 +153,40 @@ void main() {
       }
     },
   );
+  test(
+    'client close waits for connection setup and remains idempotent',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('lfs-dart-close-');
+      final schema =
+          jsonDecode(
+                await File('../../fixtures/schemas/entry.json').readAsString(),
+              )
+              as Map<String, dynamic>;
+      final client = await Client.open(
+        path: '${dir.path}/db',
+        schema: schema,
+        owner: 'u',
+        libraryPath: Platform.environment['LFS_LIBRARY']!,
+      );
+      final errors = <Object>[];
+      try {
+        final starting = client.connect(
+          (_, __) async => throw StateError('no requests expected'),
+          onError: errors.add,
+        );
+        await Future.wait([starting, client.close()]);
+        await Future<void>.delayed(Duration.zero);
+        expect(errors, isEmpty);
+        await client.close();
+        await (await starting).close();
+        await expectLater(
+          client.connect((_, __) async => ''),
+          throwsStateError,
+        );
+      } finally {
+        await client.close();
+        await dir.delete(recursive: true);
+      }
+    },
+  );
 }

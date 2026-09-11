@@ -22,6 +22,8 @@ export class Client {
   #tasks: Promise<void> | undefined;
   #connection: Connection | undefined;
   #connecting = false;
+  #started: Promise<void> | undefined;
+  #closing: Promise<void> | undefined;
   #handle: number;
   #closed = false;
   #tail: Promise<unknown> = Promise.resolve();
@@ -137,9 +139,14 @@ export class Client {
     transport: Transport,
     options: ConnectionOptions = {},
   ): Promise<Connection> {
+    if (this.#closed || this.#closing) throw Error("client_closed");
     if (this.#connecting || this.#connection)
       throw Error("connection already active");
     this.#connecting = true;
+    let finished!: () => void;
+    this.#started = new Promise<void>((resolve) => {
+      finished = resolve;
+    });
     try {
       const connection = await startConnection(
         (event) =>
@@ -164,13 +171,14 @@ export class Client {
         close: async () => {
           this.#events.off("work", wake);
           await connection.close();
-          this.#connection = undefined;
+          if (this.#connection === result) this.#connection = undefined;
         },
       };
       this.#connection = result;
       return result;
     } finally {
       this.#connecting = false;
+      finished();
     }
   }
   sync(
@@ -283,17 +291,20 @@ export class Client {
       this.#events.off("change", refresh);
     };
   }
-  close() {
-    return (this.#connection?.close() ?? Promise.resolve()).then(() =>
-      this.#exclusive(async () => {
-        if (this.#closed) return;
-        try {
-          await this.#send({ op: "close" });
-        } finally {
-          this.#closed = true;
-          this.#events.removeAllListeners();
-        }
-      }),
-    );
+  close(): Promise<void> {
+    return (this.#closing ??= this.#finishClose());
+  }
+  async #finishClose(): Promise<void> {
+    await this.#started;
+    await this.#connection?.close();
+    await this.#exclusive(async () => {
+      if (this.#closed) return;
+      try {
+        await this.#send({ op: "close" });
+      } finally {
+        this.#closed = true;
+        this.#events.removeAllListeners();
+      }
+    });
   }
 }

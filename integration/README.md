@@ -15,3 +15,7 @@ bash scripts/test.sh
 ```
 
 Requires Rust, Node 22.18+ (tested with Node 26.4), Dart 3.12+, Python 3 and PostgreSQL command-line tools on PATH. The scripts install repository-local JS/Dart dependencies, build native artifacts, and create their own temporary PostgreSQL clusters. They do not use a personal database or the Oasis checkout. Platform-specific simulator tests are separate from the normal host gate.
+
+`.github/workflows/verify.yml` runs the same host gate on macOS and Linux, followed by optimized native artifacts and a binding smoke. A workflow definition is not itself proof that either hosted runner passed; see the evidence ledger for observed runs. The action setup follows the official [checkout](https://github.com/actions/checkout), [Node](https://github.com/actions/setup-node), [Dart](https://github.com/dart-lang/setup-dart) and [Rust](https://github.com/dtolnay/rust-toolchain) action documentation.
+
+[Capacity diagnostic](rust/README.md) is a separate manual measurement, not a flaky performance threshold in the correctness gate.

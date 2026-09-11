@@ -62,6 +62,8 @@ class Client {
   bool _closed = false;
   RuntimeConnection? _connection;
   bool _connecting = false;
+  Completer<void>? _started;
+  Future<void>? _closing;
   final _work = StreamController<void>.broadcast();
   final _changes = StreamController<void>.broadcast();
   Client._(this._worker, this._isolate, this._handle, this.clientId);
@@ -236,9 +238,12 @@ class Client {
     void Function(Object)? onError,
     Future<void> Function()? refreshAuth,
   }) async {
+    if (_closed || _closing != null) throw StateError('client_closed');
     if (_connecting || _connection != null)
       throw StateError('connection already active');
     _connecting = true;
+    final started = Completer<void>();
+    _started = started;
     try {
       final connection = await RuntimeConnection.start(
         control: (event, now, entropy) => _exclusive(
@@ -271,6 +276,7 @@ class Client {
       return connection;
     } finally {
       _connecting = false;
+      started.complete();
     }
   }
 
@@ -396,7 +402,10 @@ class Client {
     });
   }
 
-  Future<void> close() async {
+  Future<void> close() => _closing ??= _finishClose();
+
+  Future<void> _finishClose() async {
+    await _started?.future;
     await _connection?.close();
     await _exclusive(() async {
       if (_closed) return;

@@ -2,8 +2,7 @@
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$root/scripts/env.sh"
-node "$root/bindings/node/build.mjs"
-(cd "$root" && cargo build -p lfs-dart)
+bash "$root/scripts/build.sh"
 (cd "$root/packages/dart" && dart pub get)
 (cd "$root/examples/rust-round-trip" && npm ci && PRISMA_GENERATE_SKIP_AUTOINSTALL=true npm run generate)
 cluster="$(mktemp -d "${TMPDIR:-/tmp}/lfs-e2e-pg.XXXXXX")"

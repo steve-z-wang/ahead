@@ -45,4 +45,22 @@ void main() {
     expect(events, isNot(contains('success')));
     expect(events, isNot(contains('failure')));
   });
+  test('closed controls cannot alter a replacement driver', () async {
+    final events = <String>[];
+    final connection = await RuntimeConnection.start(
+      control: (event, now, entropy) async {
+        events.add(event);
+        return {'type': 'idle'};
+      },
+      sync: (_) async {},
+      transport: (_, __) async => '',
+    );
+    await connection.close();
+    final ended = events.length;
+    await connection.pause();
+    await connection.resume();
+    await connection.wake();
+    await connection.close();
+    expect(events.length, ended);
+  });
 }

@@ -101,6 +101,7 @@ export async function startConnection(
   });
   return {
     async pause() {
+      if (stopped) return;
       paused = true;
       abort.abort();
       await control("pause");
@@ -108,6 +109,7 @@ export async function startConnection(
       notify();
     },
     async resume() {
+      if (stopped) return;
       paused = false;
       await control("resume");
       notify();

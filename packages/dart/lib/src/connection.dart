@@ -130,6 +130,7 @@ class RuntimeConnection {
   }
 
   Future<void> pause() async {
+    if (_stopped) return;
     _paused = true;
     _cancelRequests();
     await _command('pause');
@@ -140,6 +141,7 @@ class RuntimeConnection {
   }
 
   Future<void> resume() async {
+    if (_stopped) return;
     _paused = false;
     await _command('resume');
     _notify();

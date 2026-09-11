@@ -184,3 +184,31 @@ test('live transport negotiates, wakes only after commit, reconnects, and cleans
  reconnected.close();await new Promise(resolve=>reconnected.addEventListener('close',resolve,{once:true}));
  await live.close();await new Promise(resolve=>http.close(resolve));
 });
+
+test('loader safely converts PostgreSQL BigInt scalar and list values without widening wire range', async () => {
+  const int = {kind: 'scalar', name: 'int'};
+  let value = 9007199254740991n;
+  const bigintBackend = createBackend({
+    config: {mutations: [], schema: {enums: [], models: [{name: 'Counter', identity: ['id'], fields: [
+      {name: 'id', type: {kind: 'scalar', name: 'string'}, nullable: false},
+      {name: 'count', type: int, nullable: false},
+      {name: 'counts', type: {kind: 'list', element: int}, nullable: false},
+    ]}]}},
+    transaction: prismaTransactions(db), persistence: tx => new PrismaPersistence(tx),
+    principalChannel: () => 'bigints', authorize: async () => true, handlers: {},
+    loaders: {Counter: {load: async ({transaction}) => transaction.$queryRawUnsafe(
+      'SELECT $1::bigint AS count, ARRAY[$1::bigint,(-$1)::bigint] AS counts', value,
+    )}},
+  });
+  await db.$transaction(tx => bigintBackend.publish(tx, [{model: 'Counter', identity: {id: 'one'}}], ['bigints']));
+  const request = JSON.stringify({clientId: 'bigint-reader', scope: 'bigints', fromCursor: 0});
+  let page = JSON.parse(await bigintBackend.pull('alice', request));
+  assert.deepEqual(page.changes[0].state, {count: Number.MAX_SAFE_INTEGER, counts: [Number.MAX_SAFE_INTEGER, -Number.MAX_SAFE_INTEGER]});
+  value = -9007199254740991n;
+  page = JSON.parse(await bigintBackend.pull('alice', request));
+  assert.equal(page.changes[0].state.count, -Number.MAX_SAFE_INTEGER);
+  for (const overflow of [9007199254740992n, -9007199254740992n]) {
+    value = overflow;
+    await assert.rejects(bigintBackend.pull('alice', request), /bigint outside safe integer range/);
+  }
+});

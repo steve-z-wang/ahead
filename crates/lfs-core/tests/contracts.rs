@@ -175,3 +175,22 @@ fn receipt_distinguishes_missing_checkpoints_from_explicit_empty() {
     );
     assert!(PushReceipt::decode(br#"{"requiredScope":"s","requiredSyncId":0,"rejections":[],"requiredCheckpoints":[{"scope":"s","syncId":0},{"scope":"s","syncId":1}]}"#).is_err());
 }
+
+#[test]
+fn shared_wire_fixtures_preserve_counter_and_checkpoint_boundaries() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/protocol/counter-and-checkpoint.json"
+    ))
+    .unwrap();
+    for kind in ["pull", "receipt"] {
+        for case in fixture[kind].as_array().unwrap() {
+            let wire = case["wire"].as_str().unwrap().as_bytes();
+            let valid = if kind == "pull" {
+                PullPage::decode(wire).is_ok()
+            } else {
+                PushReceipt::decode(wire).is_ok()
+            };
+            assert_eq!(valid, case["valid"].as_bool().unwrap(), "{}", case["name"]);
+        }
+    }
+}
