@@ -1,5 +1,6 @@
 .DS_Store
 .worktrees/
+/target/
 .dart_tool/
 .pub/
 node_modules/

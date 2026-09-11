@@ -15,7 +15,7 @@
 - publish 必须明确 scopes；不引入 ambient scope 或强制 scope/model 一对一。
 - 共同算法放在 Rust；SDK 不能自己实现 ACK settlement、record conflict 或 replay。
 - 不在本轮执行重写；本计划是架构提案配套的实施路线。
-- 不删除参考源码，不改 Oasis，不清空客户端旧队列，不修改生产 DB。
+- 旧参考源码保存在 main 和历史提交；用户已授权在新分支删除旧实现。不改 Oasis，不清空实际客户端队列，不修改生产 DB。
 - 所有新测试使用临时 SQLite 和本轮创建的隔离 Postgres，不能读取生产 DATABASE_URL。
 - 大的未定协议先通过场景定稿；每个后续 milestone 单独细化为可执行任务，不用虚构完整代码掩盖未定设计。
 
@@ -27,7 +27,7 @@
 2. 用 [逻辑覆盖表](../specs/2026-09-10-existing-logic-audit.md) 检查遗漏。
 3. 按此计划的 gate 顺序执行，不先从头翻译 compiler。
 
-当前 isolated worktree：`/Users/stevewang/Github/local first state/.worktrees/backend-api`，branch `codex/backend-api`。它原名描述 backend API，不影响本次设计文档；实际 Rust 实现开始前可以另建清晰命名的 branch/worktree，不在规划时自动追加一个。
+当前实现 worktree：`/Users/stevewang/Github/local first state/.worktrees/rust-rebuild`，branch `codex/rust-rebuild`。用户已授权从零实现并在该分支清除旧代码；旧实现以 main/参考提交保存。目录边界以 [代码组织](../../architecture/code-organization.md) 为准。
 
 以下新路径相对该 worktree 根目录；都是未来创建位置，当前只交付文档。
 
@@ -38,8 +38,8 @@ crates/lfs-core/src/               schema、value、identity、operation、proto
 crates/lfs-client/src/             projection、queue、scope、settlement、query
 crates/lfs-server/src/             mutation、publish、materialize、host ports
 crates/lfs-sqlite/src/             local DB actor/session/storage
-crates/lfs-node/src/               Node binding
-crates/lfs-dart/src/               Dart binding
+bindings/node/src/               Node binding
+bindings/dart/src/               Dart binding
 crates/lfs-compiler/src/           后期 compiler 迁移
 packages/server/src/              TypeScript facade / host dispatcher
 packages/persistence-prisma/src/   transactional Postgres adapter
@@ -52,7 +52,7 @@ fixtures/scenarios/                人类可读交错时序及预期状态
 integration/                      真实 DB / bridge / E2E
 ```
 
-不要因为目录列出就一次 scaffold 所有 package。每个新 crate/package 随其第一个可验证交付创建。
+不要因为目录列出就一次 scaffold 所有 package。每个新 crate/package 随其第一个可验证交付创建。Rust runtime 只读取通用 schema metadata，不生成或链接业务 model 类型；代码组织文档定义了新增 model 不重编 Rust 的验收测试。
 
 ## 2. 总体阶段与退出条件
 
@@ -88,7 +88,7 @@ integration/                      真实 DB / bridge / E2E
 
 ### Task 0.2 — Node bridge 加入真实 Prisma transaction
 
-**Create:** `crates/lfs-node/src/transaction_probe.rs`、`packages/persistence-prisma/src/transaction-session.ts`、`integration/node/transaction-bridge.test.ts`、`integration/node/schema.prisma`。
+**Create:** `bindings/node/src/transaction_probe.rs`、`packages/persistence-prisma/src/transaction-session.ts`、`integration/node/transaction-bridge.test.ts`、`integration/node/schema.prisma`。
 
 **接口形状（spike 专用，不是正式 SDK）:**
 
@@ -131,7 +131,7 @@ expect(await prisma.frameworkProbe.count()).toBe(0);
 
 ### Task 0.3 — Dart ↔ Rust SQLite transaction session
 
-**Create:** `crates/lfs-sqlite/src/session.rs`、`crates/lfs-dart/src/api.rs`、`integration/dart/transaction_bridge_test.dart`。
+**Create:** `crates/lfs-sqlite/src/session.rs`、`bindings/dart/src/api.rs`、`integration/dart/transaction_bridge_test.dart`。
 
 **接口契约:** open runtime；begin session；session 内 query/apply；commit/rollback；watch committed changes；close。session 必须有唯一 handle 与结束状态。
 

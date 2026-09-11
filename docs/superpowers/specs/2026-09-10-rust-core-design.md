@@ -287,7 +287,7 @@ scope 允许订阅不代表记录一定可见。materializer 是内容授权边�
 
 ## 13. 迁移与发布边界
 
-先交付新 app 示例，Oasis 不切换。参考源码留在现有路径，新代码进入 `crates/`、`packages/`、`examples/rust-round-trip/`；不要强制把旧代码挪到 legacy 制造无意义 diff。
+先交付新 app 示例，Oasis 不切换。用户于 2026-09-10 明确要求独立空白实现分支：旧源码在 main/历史提交保留，在 `codex/rust-rebuild` 删除。新代码进入 `crates/`、`bindings/`、`packages/`、`examples/rust-round-trip/`，不在新工作目录复制 legacy 实现。
 
 旧客户端排队 mutation 不能丢弃：Oasis 迁移要么先排空可确定的旧队列再切换，要么专门实现队列/companion/local-only 迁移和旧 wire bridge。不能以清空数据库作为通用升级方案。
 
@@ -311,3 +311,9 @@ scope 允许订阅不代表记录一定可见。materializer 是内容授权边�
 - [SQLx Transaction](https://docs.rs/sqlx/latest/sqlx/struct.Transaction.html)、[SeaORM ConnectionTrait](https://docs.rs/sea-orm/latest/sea_orm/trait.ConnectionTrait.html)：未来 Rust host 的事务接入。
 - [River transactional enqueueing](https://riverqueue.com/docs/transactional-enqueueing)：同业务事务写框架记录的先例。
 - [unadapter 源码](https://github.com/productdevbook/unadapter/tree/84c3eea488d1c174d4178ae30d7ad55c7e96f0c1)：本轮检查的版本；支持 CRUD 不等于提供完整并发协议。
+
+## 16. 后续确认：schema 驱动的通用 runtime
+
+用户已确认 Rust 与宿主语言边界，并明确 Rust runtime 不依赖业务生成类型。`Entry`、`Book` 等由各语言 generator 生成；Rust 接收经过验证的 schema 描述和通用操作。更换应用 schema 不要求重编框架 binary。compiler 输出的 Rust descriptor 一词仅指通用描述数据，不指生成业务 Rust struct。
+
+用户已授权新建空白实现 worktree/branch 并删除该分支旧代码。具体目录与依赖方向见 [代码组织](../../architecture/code-organization.md)。此前 per-mutation receipt 等被标为待评审的协议选择，尚未因此自动定稿。

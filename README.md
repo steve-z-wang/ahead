@@ -1,93 +1,22 @@
-# LocalSync
+# local-first-state
 
-A schema-driven, offline-first synchronization framework for Dart clients and
-TypeScript servers. LocalSync keeps reads in a local SQLite database, records
-optimistic writes as durable named mutations, and reconciles them with an
-authoritative server over HTTP and WebSocket.
+A local-first state framework with a schema-driven Rust runtime and typed language SDKs.
 
-**Status:** experimental standalone source preparation. Package publication is
-disabled. A license has not yet been selected; this checkout is not yet a licensed
-open-source release. See [release preparation](docs/preparation.md).
+This branch starts a new implementation from scratch. It currently contains design documents only; there is no runnable runtime or package release yet.
 
-## Try it
+The runtime loads a language-neutral schema as data. It does not compile application-specific types such as `Entry` or `Book`. Language generators provide those types and idiomatic APIs for Dart and TypeScript.
 
-Install Dart and Node.js with npm on your PATH. Package manifests declare Dart
-`^3.10.3`; the imported CI configuration uses Dart 3.10.3 and Node 26.
-First-run dependency resolution and SQLite native assets require internet access.
+## Design
 
-From the repository root:
+- [Code organization and language boundary](docs/architecture/code-organization.md)
+- [Rust runtime architecture proposal](docs/superpowers/specs/2026-09-10-rust-core-design.md)
+- [Implementation roadmap](docs/superpowers/plans/2026-09-10-rust-rebuild.md)
+- [Reference behavior inventory](docs/superpowers/specs/2026-09-10-existing-logic-audit.md)
 
-```bash
-./examples/round-trip/run.sh
-```
+## Reference implementation
 
-The walkthrough starts an in-memory TypeScript server on loopback, runs a real
-Dart client against it, reads the result from SQLite, and checks each result.
-It demonstrates multi-scope synchronization, a held optimistic mutation, and
-rejection rollback. It requires no cloud account or application credentials.
-Read the [walkthrough](examples/round-trip/README.md) for the code and output.
+The original exported implementation remains in commit `989c4c769b1d41b4b3276f8c97f6bd8ef9eb4fb8` and on `main`. The planning baseline is commit `370e1f1` on `codex/backend-api`.
 
-Run the full framework checks:
+Old source, tests, examples and build configuration have been removed from this branch. Their behavior inventory guides the new implementation; this is not a claim of backward compatibility.
 
-```bash
-./tool/gate.sh
-```
-
-## What it provides
-
-- **Schema compiler:** `.model` definitions generate typed Dart models, TypeScript
-  server bindings, SQL schema statements, and a model contract.
-- **Local reads and writes:** SQLite stores the visible view. A transaction can
-  make device-local changes or enqueue named mutations with optimistic state.
-- **Durable delivery:** mutation queues, dependency scheduling, retries and frozen
-  batches preserve intent across interrupted connections and process restarts.
-- **Server authority:** application resolvers accept or refuse named mutations;
-  the client reconciles canonical state with pending changes.
-- **Scoped synchronization:** applications choose opaque scope strings. Each scope
-  has its own durable cursor; HTTP catch-up and live WebSocket delivery use the
-  same page application path.
-
-The framework does not supply your production authentication system, server
-persistence adapter, model loaders, business rules, or schema migration policy.
-The example uses test-only authentication and in-memory server storage.
-
-## Structure
-
-| Directory | Responsibility |
-|---|---|
-| [compiler](compiler/) | Schema parser, semantic analysis and code generation |
-| [client/local_sync](client/local_sync/) | Dart runtime, optimistic state, uplink and downlink |
-| [client/local_sync_database](client/local_sync_database/) | Database abstraction |
-| [client/local_sync_database_sqlite](client/local_sync_database_sqlite/) | SQLite implementation |
-| [server](server/) | TypeScript runtime, host and persistence contracts |
-| [conformance](conformance/) | Five executable contracts spanning the layers |
-| [examples/round-trip](examples/round-trip/) | Guided executable walkthrough |
-
-There is no dependency on the original application's mobile or backend code.
-Internal package dependencies remain relative paths within this repository.
-
-## Generate models
-
-The conformance definitions provide a complete, executable schema to inspect:
-
-```bash
-cd compiler
-dart pub get
-dart run bin/local_sync_compiler.dart \
-  --definitions ../conformance/definitions \
-  --mutation-history ../conformance/definitions/mutation-contract.json \
-  --dart-out ../conformance/lib/src/generated \
-  --contract-out ../conformance/generated/model-contract.json \
-  --typescript-backend-out ../conformance/generated/backend
-```
-
-Consumers own their schema and migration history. Generated declarations describe
-models; handwritten runtime code implements transactions and the sync protocol.
-To understand a complete integration, start with the
-[example reading guide](examples/round-trip/README.md#read-the-code).
-
-## Development
-
-See [contributing](CONTRIBUTING.md) and [test ownership](docs/testing.md).
-The first standalone release is a source repository; npm and pub.dev releases,
-a production server adapter, and a separate starter application are future work.
+The repository remains private. No license grant or registry release has been added.
