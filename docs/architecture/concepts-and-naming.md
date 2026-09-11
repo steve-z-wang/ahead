@@ -1,41 +1,43 @@
-# 概念与命名
+# Concepts and Naming
 
-2026-09-10：用户已确认以下命名。用于新 Rust 实现、语言 SDK、拟议接口与当前设计文档。命名调整不改变参考实现的行为；本分支当前只有文档。
+> Historical design record (2026-09-10): status statements and proposed APIs below reflect the original planning stage. See [implementation evidence](../implementation-progress.md) for the current delivered scope and verified limitations.
 
-## 统一术语
+2026-09-10: The user has confirmed the following names. They apply to the new Rust implementation, language SDKs, proposed interfaces, and current design documents. Naming changes do not alter the reference implementation's behavior; this branch currently contains documentation only.
 
-| 旧名称 | 确认名称 | 含义 |
+## Unified terminology
+
+| Old name | Confirmed name | Meaning |
 |---|---|---|
-| Model | Model | 客户端数据模型，不要求对应后端的一张表。 |
-| Record | Record | 某个 Model 的一条数据。 |
-| Identity | Identity | 单字段或复合身份；同一 Model 内识别 Record。 |
-| Mutation | Mutation | 客户端提交的业务操作，可先在本地乐观呈现。 |
-| Handler | Handler | 业务作者提供的 Mutation 后端实现。 |
-| Materializer | Loader | 给定上下文与 identities，读取、聚合或转换当前后端数据，返回客户端权威状态。 |
-| Scope | Channel | 应用显式命名、可动态订阅的数据分发范围，有独立的接收进度。 |
-| Publish | Publish | 显式向 Channels 声明哪些 Records 发生变化；在用户事务内持久化 invalidation。 |
-| Client | Client | 前端查询、监听、修改本地状态的入口。 |
-| Persistence | Persistence | 持久化契约；PrismaPersistence、SqlitePersistence 等名称表达具体实现。 |
-| Uplink / Downlink | Push / Pull | 发送待处理操作 / 获取权威变化的路径与内部模块。 |
-| Sync ID | Cursor / Checkpoint | Cursor 表达当前位置；Checkpoint 表达操作结算要求达到的位置。 |
+| Model | Model | A client data model; it does not have to correspond to one backend table. |
+| Record | Record | One item of data for a Model. |
+| Identity | Identity | A single-field or composite identity that identifies a Record within one Model. |
+| Mutation | Mutation | A business operation submitted by the client that may be shown optimistically first. |
+| Handler | Handler | The backend implementation of a Mutation supplied by the application author. |
+| Materializer | Loader | Given context and identities, reads, aggregates, or transforms current backend data and returns authoritative client state. |
+| Scope | Channel | An explicitly named, dynamically subscribable distribution scope with independent receive progress. |
+| Publish | Publish | Explicitly declares to Channels which Records changed and persists the invalidation within the user's transaction. |
+| Client | Client | The entry point for querying, observing, and modifying local state on the frontend. |
+| Persistence | Persistence | The persistence contract; names such as PrismaPersistence and SqlitePersistence identify concrete implementations. |
+| Uplink / Downlink | Push / Pull | The paths and internal modules for sending pending operations / fetching authoritative changes. |
+| Sync ID | Cursor / Checkpoint | Cursor represents the current position; Checkpoint represents a position required for operation settlement. |
 
-## API 与模块命名
+## API and module naming
 
-- 单数 `channel`，复数 `channels`，业务构造函数例如 `bookChannel(bookId)`。
-- 回调称为 `Loader`，拟议注册入口为 `Entry.loader(...)`；调度接口为 `LoaderDispatcher`。若实现可选 Nest decorator，采用 `@Loads`，与操作的 `@Handles` 对应。
-- 路径使用 `push` / `pull`，类型使用 `Push…` / `Pull…`；例如 `PullPage`。
-- `ChannelCursor` 表达某个 Channel 的当前位置；`ChannelCheckpoint` 表达需要到达的位置。必须携带或通过上下文确定 Channel，不能只比较脱离 Channel 的数字。
-- `requiredCheckpoints` 是结算条件；概念命名不决定具体 wire 属性拼写。
-- `ServerPersistence` / `TransactionPersistence` 和 `ClientStore` / `ClientTransaction` 保留职责区分。默认客户端 SQLite adapter 的 crate 仍是 `lfs-sqlite`；无需为符合词表把所有存储接口强行改名。
+- Use singular `channel` and plural `channels`; an application constructor might be `bookChannel(bookId)`.
+- Call the callback a `Loader`; the proposed registration entry point is `Entry.loader(...)`, and the dispatch interface is `LoaderDispatcher`. If the optional Nest decorator is implemented, use `@Loads`, corresponding to the operation decorator `@Handles`.
+- Paths use `push` / `pull`, and types use `Push…` / `Pull…`; for example, `PullPage`.
+- `ChannelCursor` represents the current position in a Channel; `ChannelCheckpoint` represents a position that must be reached. The Channel must be carried explicitly or determined from context; bare numbers detached from their Channels cannot be compared.
+- `requiredCheckpoints` are settlement conditions; the conceptual name does not determine the exact wire-property spelling.
+- `ServerPersistence` / `TransactionPersistence` and `ClientStore` / `ClientTransaction` retain their distinct responsibilities. The default client SQLite adapter crate remains `lfs-sqlite`; storage interfaces do not all need to be forcibly renamed merely to match the glossary.
 
-以下仅示意名称，完整 callback 签名、注册机制按实现阶段确定：
+The following only illustrates the names. Complete callback signatures and registration mechanisms will be determined during implementation:
 
 ```ts
 Entry.loader(async (ctx, identities) => {
   return entries.readVisible(ctx, identities);
 });
 
-// store 已绑定应用当前事务；完整 Handler 的 batch 去重与 receipt 流程另见架构。
+// store is bound to the application transaction; see the architecture for Handler batch deduplication and receipts.
 await publisher.publish(store, {
   channels: [bookChannel(bookId)],
   model: Entry,
@@ -43,18 +45,18 @@ await publisher.publish(store, {
 });
 ```
 
-## 语义边界
+## Semantic boundaries
 
-Channel 用于分发，不参与 Record Identity 的组成。同一 Channel 可以包含多个 Model；同一 Record 的现有多 Channel 行为按参考实现保留，不因为改名承诺解决跨 Channel 乱序。
+Channel is used for distribution and is not part of Record Identity. One Channel may contain multiple Models. The existing behavior for one Record in multiple Channels is preserved from the reference implementation; renaming does not promise to solve cross-Channel reordering.
 
-Publish 声明变化，Pull 通过 Loader 读取当前完整权威状态。Channel 不是保证交付每次历史变更的事件日志。Loader 名称也不新增只读限制：原 prepareForViewer 的行为、身份对齐、可见性与事务契约都保留。
+Publish declares changes, while Pull uses a Loader to read the current complete authoritative state. A Channel is not an event log that guarantees delivery of every historical change. The Loader name also adds no new read-only restriction: existing prepareForViewer behavior, identity alignment, visibility, and transaction contracts are preserved.
 
-Push/Pull 表示数据流方向，不限制 HTTP/WS 或通知驱动的调度方式；不因为叫 Pull 就改成仅轮询。Mutation ACK 仍需结合 required checkpoints 与原 accepted-prefix 规则才能撤下 optimism。
+Push/Pull describes the direction of data flow; it does not restrict scheduling to HTTP/WS or notification-driven approaches. Calling it Pull does not change it to polling only. A Mutation ACK must still be combined with required checkpoints and the original accepted-prefix rule before optimism can be removed.
 
-Cursor 与 Checkpoint 可以使用同一位置数值，但用途不同。发布时递增的是每 Channel 的持久化 counter/head；它不是新的全局计数器，也不是 Record Revision。不同 Channel 的 Cursor 不能比较新旧。
+Cursor and Checkpoint may use the same position value, but serve different purposes. Publishing increments the persistent counter/head for each Channel; it is neither a new global counter nor a Record Revision. Cursors from different Channels cannot be compared for recency.
 
-## 旧名称与兼容边界
+## Old names and compatibility boundaries
 
-本轮更新设计、拟议 API 与未来模块名。旧源码审查中的真实路径、符号和引用保留原名，便于在参考提交定位。旧 wire 字段、数据库列名、持久化数据和历史 fixtures 不自动重命名；新 API/内部符号在边界映射到既有表示。未来若改 wire/storage，需要单独列出兼容与迁移方案。
+This round updates designs, proposed APIs, and future module names. Real paths, symbols, and references in reviews of the old source retain their original names so they remain locatable in the reference commit. Old wire fields, database columns, persisted data, and historical fixtures are not renamed automatically; new API/internal symbols map to the existing representations at the boundary. Any future wire/storage change must separately document compatibility and migration.
 
-新的 record revision、跨 Channel 仲裁及其他语义变化见 [Next things / TODO](../next-things.md)，不是此次改名的一部分。
+New record revision, cross-Channel arbitration, and other semantic changes appear in [Next things / TODO](../next-things.md); they are not part of this renaming.
