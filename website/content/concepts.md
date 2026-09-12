@@ -8,7 +8,7 @@ A **Model** describes client data. A **Record** is one instance, identified by a
 
 These are client-facing shapes. A Loader may assemble one Record from several backend tables, or expose several Models from the same business data. The Rust runtime receives schema descriptors; generated TypeScript and Dart types provide the language-facing API.
 
-See the [compiler guide](crates/lfs-compiler/README.md) for supported declarations and generated types.
+See the [compiler guide](crates/compiler/README.md) for supported declarations and generated types.
 
 ## Mutation and local state
 

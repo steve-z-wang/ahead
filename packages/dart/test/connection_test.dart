@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'package:local_first_state/local_first_state.dart';
+import 'package:otter_sync/otter_sync.dart';
 import 'package:test/test.dart';
 
 void main() {

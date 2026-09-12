@@ -14,7 +14,7 @@ export { Transaction, type QuerySpec } from "./transaction.mts";
 import { createRequire } from "node:module";
 import { EventEmitter } from "node:events";
 const native = createRequire(import.meta.url)(
-  "../../bindings/node/lfs-node.node",
+  "../../bindings/node/otter-node.node",
 ) as { clientCall(request: string): Promise<string> };
 export type RecordValue = Record<string, unknown>;
 export class Client {

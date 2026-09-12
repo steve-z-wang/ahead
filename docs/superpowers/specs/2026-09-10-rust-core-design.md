@@ -1,4 +1,4 @@
-# local-first-state: Rust Core Architecture Proposal
+# otter-sync: Rust Core Architecture Proposal
 
 > Historical design record (2026-09-10): status statements and proposed APIs below reflect the original planning stage. See [implementation evidence](../../implementation-progress.md) for the current delivered scope and verified limitations.
 
@@ -18,7 +18,7 @@ The [existing logic coverage table](2026-09-10-existing-logic-audit.md) is the f
 
 ### Existing agreement
 
-- The project is named `local-first-state` and positioned as a local-first state framework.
+- The project is named `otter-sync` and positioned as a local-first state framework.
 - Build the new implementation from scratch, using the existing source as a reference; the private repository remains private.
 - A channel is an explicit, dynamic, business-defined string; publish must carry channels.
 - A handler performs business writes; a loader projects real backend data into client models; publish is a framework-provided method used within a transaction.
@@ -67,12 +67,12 @@ flowchart TD
 
 Organize modules by responsibility in a Cargo workspace; split crates only when different targets or dependencies require it:
 
-- `lfs-core`: schema descriptions, identity, value types, operation validation, protocol types/codecs, and error classification. No SQL, sockets, Node, or Dart.
-- `lfs-client`: projection, queue, readiness, channel state, pull, settlement, and query plans; accesses storage through ClientStore.
-- `lfs-server`: deduplication, handler dispatch, publish, loading, and page/receipt construction; requests I/O through host ports.
-- `lfs-sqlite`: native client persistence, local transactions, read-only queries, and change notifications after commit.
-- `lfs-node` / `lfs-dart`: bindings and error/handle conversion, without duplicating state machines.
-- `lfs-compiler`: later migrate existing compiler semantics and generators, emitting Rust descriptors + Dart/TS facades.
+- `otter-core`: schema descriptions, identity, value types, operation validation, protocol types/codecs, and error classification. No SQL, sockets, Node, or Dart.
+- `otter-client`: projection, queue, readiness, channel state, pull, settlement, and query plans; accesses storage through ClientStore.
+- `otter-server`: deduplication, handler dispatch, publish, loading, and page/receipt construction; requests I/O through host ports.
+- `otter-sqlite`: native client persistence, local transactions, read-only queries, and change notifications after commit.
+- `otter-node` / `otter-dart`: bindings and error/handle conversion, without duplicating state machines.
+- `otter-compiler`: later migrate existing compiler semantics and generators, emitting Rust descriptors + Dart/TS facades.
 - Keep TypeScript `server`, `prisma`, and `nest` packages separate; the HTTP adapter handles requests/responses, and the Nest adapter handles DI discovery.
 
 Initially, a Node test endpoint driven by a native Rust client is sufficient to validate JS bindings; a complete browser TS client is a separate later deliverable.

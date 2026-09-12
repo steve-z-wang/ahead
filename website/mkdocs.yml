@@ -1,8 +1,8 @@
-site_name: local-first-state
+site_name: Otter Sync
 site_description: TypeScript and Dart clients, a TypeScript backend SDK, and a shared Rust runtime.
-site_url: https://steve-z-wang.github.io/local-first-state/
-repo_url: https://github.com/steve-z-wang/local-first-state
-repo_name: steve-z-wang/local-first-state
+site_url: https://steve-z-wang.github.io/otter-sync/
+repo_url: https://github.com/steve-z-wang/otter-sync
+repo_name: steve-z-wang/otter-sync
 edit_uri: ''
 docs_dir: .generated
 site_dir: site
@@ -59,7 +59,7 @@ nav:
       - Nest: packages/nest/README.md
   - Project:
       - Overview: project.md
-      - Compiler: crates/lfs-compiler/README.md
+      - Compiler: crates/compiler/README.md
       - Testing: integration/README.md
       - Capacity: integration/rust/README.md
       - Platforms: integration/platform/README.md

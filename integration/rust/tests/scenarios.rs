@@ -1,8 +1,8 @@
 //! Cross-runtime scenarios. Host persistence is deliberately simple; real database contracts live in integration/persistence.
-use lfs_client::{Client, Mutation, Operation, OperationKind};
-use lfs_core::{PullPage, PullRequest, PushReceipt, Schema};
-use lfs_server::{Config, Host};
-use lfs_sqlite::SqliteStore;
+use otter_client::{Client, Mutation, Operation, OperationKind};
+use otter_core::{PullPage, PullRequest, PushReceipt, Schema};
+use otter_server::{Config, Host};
+use otter_sqlite::SqliteStore;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -48,7 +48,13 @@ impl Backend {
     }
     fn push(&self, body: &[u8]) -> String {
         let before = self.0.lock().unwrap().clone();
-        match run(lfs_server::process_push(&config(), "u", "book", body, self)) {
+        match run(otter_server::process_push(
+            &config(),
+            "u",
+            "book",
+            body,
+            self,
+        )) {
             Ok(r) => r,
             Err(e) => {
                 *self.0.lock().unwrap() = before;
@@ -65,7 +71,7 @@ impl Backend {
         .encode()
         .unwrap();
         PullPage::decode(
-            run(lfs_server::process_pull(&config(), "u", &body, self))
+            run(otter_server::process_pull(&config(), "u", &body, self))
                 .unwrap()
                 .as_bytes(),
         )
@@ -76,7 +82,7 @@ impl Host for Backend {
     fn call(
         &self,
         r: Value,
-    ) -> Pin<Box<dyn Future<Output = lfs_server::Result<Value>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = otter_server::Result<Value>> + Send + '_>> {
         Box::pin(async move {
             let mut db = self.0.lock().unwrap();
             Ok(match r["op"].as_str().unwrap(){
@@ -171,7 +177,9 @@ fn deterministic_interleavings_preserve_local_priority_and_eventually_converge()
         if seed & 16 != 0 {
             edit(&mut client, "reject");
             let body = client.freeze().unwrap().unwrap();
-            let seq = lfs_core::PushRequest::decode(&body).unwrap().batch_sequence;
+            let seq = otter_core::PushRequest::decode(&body)
+                .unwrap()
+                .batch_sequence;
             let ack = server.push(&body);
             client
                 .acknowledge(seq, PushReceipt::decode(ack.as_bytes()).unwrap())

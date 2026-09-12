@@ -20,8 +20,8 @@ void _nativeWorker(List<Object?> args) {
         : Platform.isIOS
         ? DynamicLibrary.process()
         : throw StateError('libraryPath is required outside iOS');
-    final call = library.lookupFunction<_CallNative, _Call>('lfs_call');
-    final free = library.lookupFunction<_FreeNative, _Free>('lfs_free');
+    final call = library.lookupFunction<_CallNative, _Call>('otter_call');
+    final free = library.lookupFunction<_FreeNative, _Free>('otter_free');
     final port = ReceivePort();
     ready.send(port.sendPort);
     port.listen((dynamic raw) {

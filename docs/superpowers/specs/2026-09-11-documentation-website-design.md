@@ -2,7 +2,7 @@
 
 The user approved a separate website PR following the English-only documentation PR, using the webtask developer-documentation experience as the reference.
 
-Build an English MkDocs Material site for developers evaluating or integrating local-first-state. Its main job is to get a reader from the framework's behavior to the runnable example and the right client/backend guide. The homepage states TypeScript and Dart clients, a TypeScript backend SDK, and the shared Rust runtime. Source-alpha and platform limitations stay visible.
+Build an English MkDocs Material site for developers evaluating or integrating otter-sync. Its main job is to get a reader from the framework's behavior to the runnable example and the right client/backend guide. The homepage states TypeScript and Dart clients, a TypeScript backend SDK, and the shared Rust runtime. Source-alpha and platform limitations stay visible.
 
 Navigation: Start (home, quick start, concepts), Clients (TypeScript, Dart), Backend (server SDK, Prisma, Nest), Project (compiler, testing, compatibility/recovery, implementation status, architecture, roadmap). Curate public entry points; historical design documents remain available through repository links instead of filling the main navigation with implementation plans.
 

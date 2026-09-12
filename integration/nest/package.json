@@ -5,8 +5,8 @@
     "test": "tsc -p tsconfig.json && node --preserve-symlinks --test dist/integration/nest/nest.test.js && bash negative.sh"
   },
   "dependencies": {
-    "@local-first/nest": "file:../../packages/nest",
-    "@local-first/server": "file:../../packages/server",
+    "@ottersync/nest": "file:../../packages/nest",
+    "@ottersync/server": "file:../../packages/server",
     "@nestjs/common": "11.2.3",
     "@nestjs/core": "11.2.3",
     "reflect-metadata": "0.2.2",

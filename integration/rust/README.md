@@ -1,11 +1,11 @@
 # Rust integration
 
-`cargo test -p lfs-integration` runs 64 deterministic combinations of lost ACK, local edits, Pull/ACK ordering, rejection and restart. Expected visible values are asserted independently of the client reducer; the backend Host fixture supplies controlled persistence. Actual PostgreSQL transaction behavior is tested under `integration/persistence`.
+`cargo test -p otter-integration` runs 64 deterministic combinations of lost ACK, local edits, Pull/ACK ordering, rejection and restart. Expected visible values are asserted independently of the client reducer; the backend Host fixture supplies controlled persistence. Actual PostgreSQL transaction behavior is tested under `integration/persistence`.
 
 For a small capacity diagnostic:
 
 ```sh
-cargo run -p lfs-integration --example capacity --release
+cargo run -p otter-integration --example capacity --release
 ```
 
 It enqueues 10 and 1,000 updates to one record, with one real SQLite commit per mutation, then applies an authoritative page and checks that pending replay preserves the latest local value. It reports enqueue p50/p95 and a single page/replay duration. The temporary database is removed at exit.

@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
-import 'package:local_first_state/local_first_state.dart';
+import 'package:otter_sync/otter_sync.dart';
 Future<void> main(List<String> args)async{
  final schema=jsonDecode(await File('../../fixtures/schemas/entry.json').readAsString()) as Map<String,dynamic>;
- final client=await Client.open(path:'${args[1]}/dart.sqlite',schema:schema,owner:'demo-user',libraryPath:Platform.environment['LFS_LIBRARY']!);
+ final client=await Client.open(path:'${args[1]}/dart.sqlite',schema:schema,owner:'demo-user',libraryPath:Platform.environment['OTTER_LIBRARY']!);
  final http=HttpClient();
  Future<String> transport(String kind,String body)async{final request=await http.postUrl(Uri.parse('${args[0]}/sync/${kind=='push'?'mutations':'pull'}'));request.headers.set('authorization','Bearer demo-user');request.headers.contentType=ContentType.json;request.write(body);final response=await request.close();final text=await utf8.decoder.bind(response).join();if(response.statusCode!=200)throw StateError('HTTP ${response.statusCode}: $text');return text;}
  try{

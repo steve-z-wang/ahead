@@ -1,0 +1,15 @@
+# Rust schema compiler
+
+`cargo run -p otter-compiler -- compile INPUT_DIR OUTPUT_DIR` reads sorted `.model` files and emits `schema.json`, `backend.json`, `generated.ts`, `generated.dart`, and `mutation-history.json`. Generated APIs contain conversions and forwarding only; state transitions remain in the Rust runtime. The Dart output imports `package:otter_sync/otter_sync.dart`. TypeScript accepts the structural `ClientPort` implemented by the JS package.
+
+Supported declarations are models, enums, prerequisites, named mutations, scalar and nullable scalar fields, scalar lists, composite identities, unique groups, references (including named references and cascade deletion), inverse metadata, prerequisite invocations, mutation slot bindings, optional/list slots, restricted update fields, mutation versions, and sequence paths. Unknown syntax is an error with source location. Schema descriptors carry normalized requirements, prerequisites and client policies for the runtime.
+
+Dart patches use `Present<T>`: omission means unchanged, `Present(null)` explicitly clears a nullable field. TypeScript uses optional properties with `exactOptionalPropertyTypes`; omitted fields are removed from generated wire values. Identity is separate from state. UUIDs stay strings and DateTime values convert to/from UTC wire strings. Mutation builders emit operations in declared slot order.
+
+The default output history is retained between runs. Backend descriptors include all historical versions, each with an input schema and known field set. Same-version changes must be backward compatible: nullable create fields and additional permitted patch/enum values can be added, while required create fields, removed fields, altered types, reordered slots, changed bindings, or changed dependency policy require a new version. Versions cannot decrease and retained mutations cannot disappear.
+
+`--mutation-history FILE` chooses committed history; a missing explicitly selected file requires `--initialize-mutation-history`, which only accepts version 1 declarations. `--schema-fence FILE` chooses a published schema to check; the default is the existing output `schema.json`. Published model/field names cannot be removed. Broader identity/type/nullability fences remain deferred. All checks happen before replacing generated files.
+
+`integration/generated-api/verify.sh` runs Rust parser/history/CLI tests, TypeScript positive and expected-error type fixtures, JS native-addon integration, Dart analysis, and Dart native-library integration. Build the root native libraries first.
+
+The history JSON is the Rust descriptor format, not an importer for the old Dart compiler's history encoding. Typed query options and forward/inverse accessors are emitted for both languages. Singular inverses require unique foreign keys. Generic source conversions expect validated complete records from the runtime. Semantic diagnostic locations currently identify the parser position after resolution, while lexical/syntax errors identify the offending token.

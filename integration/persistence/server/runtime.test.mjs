@@ -8,7 +8,7 @@ import {createBackend,MutationRejected} from '../../../packages/server/index.mts
 import {PrismaPersistence,prismaTransactions} from '../../../packages/persistence-prisma/index.mts';
 const require=createRequire(import.meta.url);
 const {PrismaClient}=require('../../bindings/node/generated/client');
-const native=require('../../../bindings/node/lfs-node.node');
+const native=require('../../../bindings/node/otter-node.node');
 const db=new PrismaClient();
 const schema={enums:[],models:[{name:'Task',identity:['id'],fields:[{name:'id',type:{kind:'scalar',name:'string'},nullable:false},{name:'title',type:{kind:'scalar',name:'string'},nullable:false}]}]};
 const config={schema,mutations:[{name:'edit',version:1,slots:[{name:'task',model:'Task',operation:'update',cardinality:'single',allowedPatchFields:['title']}]}]};
@@ -56,7 +56,7 @@ test('explicit rejection rolls back only mutation and its publication',async()=>
 test('unknown error rolls back entire batch including earlier effects and client claim',async()=>{
  const head=(await pull()).toCursor;
  await assert.rejects(()=>backend.push('alice',push('crash',1,[mutation(1,'before','e'),mutation(2,'crash','f')])),/business crash/);
- assert.equal(await count('business_task'),3);assert.equal((await pull()).toCursor,head);assert.equal((await db.$queryRawUnsafe("SELECT * FROM lfs_client WHERE client_id='crash'")).length,0);
+ assert.equal(await count('business_task'),3);assert.equal((await pull()).toCursor,head);assert.equal((await db.$queryRawUnsafe("SELECT * FROM otter_client WHERE client_id='crash'")).length,0);
 });
 test('unsupported versions abort before handlers, invalid bodies settle, all refused fallback principal',async()=>{
  const before=called;await assert.rejects(()=>backend.push('alice',push('version',1,[mutation(1,'ignored','v'),{...mutation(2,'bad','w'),version:2}])),/mutation_version_unsupported/);assert.equal(called,before);
@@ -82,7 +82,7 @@ test('loader defects abort pull instead of silently advancing its cursor',async(
 test('registered translator rejects one mutation; malformed translator code aborts transaction',async()=>{
  const make=code=>createBackend({config,transaction:fn=>db.$transaction(fn),persistence:tx=>new PrismaPersistence(tx),principalChannel:x=>x,authorize:async()=>true,translateRejection:()=>code,handlers:{edit:{1:async c=>{await c.transaction.$executeRawUnsafe("INSERT INTO business_task(id,title) VALUES('translated','temporary')");throw new Error('product refusal');}}},loaders:{Task:{load:async()=>[]}}});
  const receipt=JSON.parse(await make('product.denied').push('alice',push('translated',1,[mutation(1,'x')])));assert.deepEqual(receipt.rejections,[{ordinal:1,code:'product.denied'}]);assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='translated'")).length,0);
- await assert.rejects(()=>make('Not a machine code').push('alice',push('bad-translator',1,[mutation(1,'x')])),/stable machine code/);assert.equal((await db.$queryRawUnsafe("SELECT * FROM lfs_client WHERE client_id='bad-translator'")).length,0);
+ await assert.rejects(()=>make('Not a machine code').push('alice',push('bad-translator',1,[mutation(1,'x')])),/stable machine code/);assert.equal((await db.$queryRawUnsafe("SELECT * FROM otter_client WHERE client_id='bad-translator'")).length,0);
 });
 
 test('HTTP adapter authenticates and serves the real native persistence path',async()=>{
@@ -103,7 +103,7 @@ test('undefined loader entries remain defects and never become tombstones',async
 test('caught publication failures poison push and roll back business writes',async()=>{
  const broken=createBackend({config,transaction:fn=>db.$transaction(fn),persistence:tx=>new PrismaPersistence(tx),principalChannel:x=>x,authorize:async()=>true,handlers:{edit:{1:async c=>{await c.transaction.$executeRawUnsafe("INSERT INTO business_task(id,title) VALUES('caught','bad')");try{await c.publish([{model:'Unknown',identity:{id:'caught'}}],['shared']);}catch{} }}},loaders:{Task:{load:async()=>[]}}});
  await assert.rejects(()=>broken.push('alice',push('caught',1,[mutation(1,'x')])),/unregistered loader|failed|poison/);
- assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='caught'")).length,0);assert.equal((await db.$queryRawUnsafe("SELECT * FROM lfs_client WHERE client_id='caught'")).length,0);
+ assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='caught'")).length,0);assert.equal((await db.$queryRawUnsafe("SELECT * FROM otter_client WHERE client_id='caught'")).length,0);
 });
 test('nonfinite nullable loader values are defects rather than null clears',async()=>{
  const expanded=structuredClone(config);expanded.schema.models[0].fields.push({name:'score',type:{kind:'scalar',name:'float'},nullable:true});

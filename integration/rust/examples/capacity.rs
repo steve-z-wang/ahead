@@ -1,7 +1,7 @@
 //! Reproducible diagnostic, not a throughput guarantee. Each enqueue is a real SQLite commit.
-use lfs_client::{Client, Mutation, Operation, OperationKind};
-use lfs_core::{PullPage, RecordChange, Schema};
-use lfs_sqlite::SqliteStore;
+use otter_client::{Client, Mutation, Operation, OperationKind};
+use otter_core::{PullPage, RecordChange, Schema};
+use otter_sqlite::SqliteStore;
 use serde_json::json;
 use std::time::Instant;
 fn main() {

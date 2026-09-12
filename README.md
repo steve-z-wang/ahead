@@ -1,4 +1,4 @@
-# local-first-state
+# Otter Sync
 
 A local-first state framework with TypeScript and Dart clients, a TypeScript backend SDK, and a shared Rust runtime.
 
@@ -26,11 +26,11 @@ Use `sync`, `edit TEXT`, `show`, and `status` to observe offline edits, server n
 
 | Area | Implementation |
 | --- | --- |
-| Shared values and protocol | `crates/lfs-core` |
-| Client state and scheduling | `crates/lfs-client` |
-| Server state machine | `crates/lfs-server` |
-| Local persistence and read-only SQL | `crates/lfs-sqlite` |
-| Schema compiler and language generators | `crates/lfs-compiler` |
+| Shared values and protocol | `crates/core` |
+| Client state and scheduling | `crates/client` |
+| Server state machine | `crates/server` |
+| Local persistence and read-only SQL | `crates/sqlite` |
+| Schema compiler and language generators | `crates/compiler` |
 | Native boundary | `bindings/common`, `bindings/node`, `bindings/dart` |
 | Frontend APIs | [TypeScript](packages/client-js/README.md), [Dart](packages/dart/README.md) |
 | Embedded backend | [Server](packages/server/README.md), [Prisma](packages/persistence-prisma/README.md), [Nest](packages/nest/README.md) |
