@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
-import 'package:local_first_state/local_first_state.dart';
+import 'package:otter_sync/otter_sync.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -21,7 +21,7 @@ void main() {
   test(
     'Dart callbacks read their writes, rollback and reopen through native Rust',
     () async {
-      final dir = await Directory.systemTemp.createTemp('lfs-dart-test-');
+      final dir = await Directory.systemTemp.createTemp('otter-dart-test-');
       final schema =
           jsonDecode(
                 await File('../../fixtures/schemas/entry.json').readAsString(),
@@ -32,7 +32,7 @@ void main() {
         path: path,
         schema: schema,
         owner: 'u',
-        libraryPath: Platform.environment['LFS_LIBRARY']!,
+        libraryPath: Platform.environment['OTTER_LIBRARY']!,
       );
       try {
         await client.transaction((tx) async {
@@ -141,7 +141,7 @@ void main() {
           path: path,
           schema: schema,
           owner: 'u',
-          libraryPath: Platform.environment['LFS_LIBRARY']!,
+          libraryPath: Platform.environment['OTTER_LIBRARY']!,
         );
         expect(await client.freeze(), frozen);
         expect((await client.read('Entry', {'id': 'e'}))!['text'], 'offline');
@@ -156,7 +156,7 @@ void main() {
   test(
     'client close waits for connection setup and remains idempotent',
     () async {
-      final dir = await Directory.systemTemp.createTemp('lfs-dart-close-');
+      final dir = await Directory.systemTemp.createTemp('otter-dart-close-');
       final schema =
           jsonDecode(
                 await File('../../fixtures/schemas/entry.json').readAsString(),
@@ -166,7 +166,7 @@ void main() {
         path: '${dir.path}/db',
         schema: schema,
         owner: 'u',
-        libraryPath: Platform.environment['LFS_LIBRARY']!,
+        libraryPath: Platform.environment['OTTER_LIBRARY']!,
       );
       final errors = <Object>[];
       try {

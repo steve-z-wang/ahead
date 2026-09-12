@@ -1,10 +1,10 @@
 [package]
-name = "lfs-dart"
+name = "otter-dart"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 [lib]
 crate-type = ["cdylib", "staticlib"]
 [dependencies]
-lfs-binding-runtime = { path = "../common" }
+otter-binding = { path = "../common" }
 serde_json.workspace = true

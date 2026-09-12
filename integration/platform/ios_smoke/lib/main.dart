@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:local_first_state/local_first_state.dart';
+import 'package:otter_sync/otter_sync.dart';
 
 const _schema = {
   'enums': <Object>[],
@@ -33,13 +33,13 @@ const _schema = {
 
 Future<void> main() async {
   final storage = Directory.systemTemp;
-  final stageFile = File('${storage.path}/lfs-smoke-stage.txt');
-  final resultFile = File('${storage.path}/lfs-smoke-result.txt');
-  final expectedFile = File('${storage.path}/lfs-smoke-freeze.txt');
-  final databasePath = '${storage.path}/lfs-smoke.sqlite';
+  final stageFile = File('${storage.path}/otter-smoke-stage.txt');
+  final resultFile = File('${storage.path}/otter-smoke-result.txt');
+  final expectedFile = File('${storage.path}/otter-smoke-freeze.txt');
+  final databasePath = '${storage.path}/otter-smoke.sqlite';
 
   void stage(String value) {
-    print('LFS_SMOKE_STAGE $value temp=${storage.path}');
+    print('OTTER_SMOKE_STAGE $value temp=${storage.path}');
     stageFile.writeAsStringSync(value, flush: true);
   }
 
@@ -77,7 +77,7 @@ Future<void> main() async {
           frozen != expectedFile.readAsStringSync()) {
         throw StateError('restart state mismatch');
       }
-      result = 'LFS_SMOKE_RESTART_OK';
+      result = 'OTTER_SMOKE_RESTART_OK';
     } else {
       await bounded(
         'DIRECT_TX',
@@ -134,7 +134,7 @@ Future<void> main() async {
         throw StateError('close and reopen state mismatch');
       }
       expectedFile.writeAsStringSync(frozen, flush: true);
-      result = 'LFS_SMOKE_PHASE1_OK';
+      result = 'OTTER_SMOKE_PHASE1_OK';
     }
   } catch (error, stack) {
     result = 'FAIL: $error\n$stack';

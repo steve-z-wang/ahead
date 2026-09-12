@@ -6,7 +6,7 @@ import shutil
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 ROOT = Path(__file__).resolve().parents[1]
-GITHUB = 'https://github.com/steve-z-wang/local-first-state/blob/main'
+GITHUB = 'https://github.com/steve-z-wang/otter-sync/blob/main'
 PAGES = {
     'website/content/index.md': 'index.md',
     'website/content/concepts.md': 'concepts.md',
@@ -15,7 +15,7 @@ PAGES = {
         'examples/rust-round-trip/README.md',
         'packages/client-js/README.md', 'packages/dart/README.md',
         'packages/server/README.md', 'packages/persistence-prisma/README.md',
-        'packages/nest/README.md', 'crates/lfs-compiler/README.md',
+        'packages/nest/README.md', 'crates/compiler/README.md',
         'integration/README.md', 'integration/rust/README.md',
         'integration/platform/README.md',
         'docs/architecture/compatibility-and-recovery.md',

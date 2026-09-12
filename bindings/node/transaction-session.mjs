@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-const { runProbe } = createRequire(import.meta.url)('./lfs-node.node');
+const { runProbe } = createRequire(import.meta.url)('./otter-node.node');
 const scopes = new WeakMap();
 
 /** Spike capability: only an active caller-owned transaction can bind it. */

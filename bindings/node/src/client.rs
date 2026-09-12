@@ -1,7 +1,7 @@
 use napi::{Error,Result};
 use napi_derive::napi;
 use std::sync::{Mutex,OnceLock};
-use lfs_binding_runtime::RuntimeHost;
+use otter_binding::RuntimeHost;
 static HOST:OnceLock<Mutex<RuntimeHost>>=OnceLock::new();
 #[napi]
 pub async fn client_call(request:String)->Result<String>{

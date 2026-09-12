@@ -1,0 +1,11 @@
+[package]
+name = "otter-compiler"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+[dependencies]
+otter-core = { path = "../core" }
+serde_json.workspace = true
+[[bin]]
+name = "otter-sync"
+path = "src/main.rs"

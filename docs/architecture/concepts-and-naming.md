@@ -28,7 +28,7 @@
 - Paths use `push` / `pull`, and types use `Push…` / `Pull…`; for example, `PullPage`.
 - `ChannelCursor` represents the current position in a Channel; `ChannelCheckpoint` represents a position that must be reached. The Channel must be carried explicitly or determined from context; bare numbers detached from their Channels cannot be compared.
 - `requiredCheckpoints` are settlement conditions; the conceptual name does not determine the exact wire-property spelling.
-- `ServerPersistence` / `TransactionPersistence` and `ClientStore` / `ClientTransaction` retain their distinct responsibilities. The default client SQLite adapter crate remains `lfs-sqlite`; storage interfaces do not all need to be forcibly renamed merely to match the glossary.
+- `ServerPersistence` / `TransactionPersistence` and `ClientStore` / `ClientTransaction` retain their distinct responsibilities. The default client SQLite adapter crate remains `otter-sqlite`; storage interfaces do not all need to be forcibly renamed merely to match the glossary.
 
 The following only illustrates the names. Complete callback signatures and registration mechanisms will be determined during implementation:
 

@@ -14,7 +14,7 @@
 - Preserve executable examples and accurate source-alpha/platform/transaction semantics.
 - Reuse repository Markdown; keep generated staging and HTML untracked.
 - Search, copy buttons, dark/light mode, keyboard navigation and responsive mobile layout must work.
-- Site routes must work under `/local-first-state/` on GitHub Pages.
+- Site routes must work under `/otter-sync/` on GitHub Pages.
 - Build on PRs; only an explicit main-branch workflow dispatch can deploy. Do not change repository settings or deploy during this task.
 - Open the website PR against `codex/english-docs`, making its dependency on the English-docs PR explicit.
 

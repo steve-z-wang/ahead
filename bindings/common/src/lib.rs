@@ -1,7 +1,7 @@
 //! One command/value contract shared by native language bridges.
-use lfs_client::*;
-use lfs_core::*;
-use lfs_sqlite::SqliteStore;
+use otter_client::*;
+use otter_core::*;
+use otter_sqlite::SqliteStore;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 #[derive(Default)]

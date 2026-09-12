@@ -3,25 +3,25 @@ hide:
   - toc
 ---
 
-<div class="lfs-intro" markdown="1">
+<div class="otter-intro" markdown="1">
 
-<p class="lfs-kicker">LOCAL-FIRST STATE FRAMEWORK</p>
+<p class="otter-kicker">LOCAL-FIRST STATE FRAMEWORK</p>
 
 # State lives here.<br>Your backend stays yours.
 
-<p class="lfs-lead">Read and edit local data. Keep it through restarts. Let the framework reconcile your changes with your application’s backend.</p>
+<p class="otter-lead">Read and edit local data. Keep it through restarts. Let the framework reconcile your changes with your application’s backend.</p>
 
-<p class="lfs-platforms">TypeScript and Dart clients · TypeScript backend SDK · Shared Rust runtime</p>
+<p class="otter-platforms">TypeScript and Dart clients · TypeScript backend SDK · Shared Rust runtime</p>
 
 [Run the example](examples/rust-round-trip/README.md){ .md-button .md-button--primary }
 [Understand the model](concepts.md){ .md-button }
 
 </div>
 
-<div class="lfs-flow" role="group" aria-label="How a local edit reaches authoritative settlement">
-  <div class="lfs-flow-step"><span class="lfs-state">LOCAL EDIT</span><strong>Visible immediately</strong><span>Your query reads the optimistic result.</span></div>
-  <div class="lfs-flow-step"><span class="lfs-state">DURABLE MUTATION</span><strong>Ready when connected</strong><span>Queued intent survives a restart.</span></div>
-  <div class="lfs-flow-step"><span class="lfs-state">AUTHORITATIVE STATE</span><strong>Reconciled through Pull</strong><span>Accepted edits settle at their checkpoints.</span></div>
+<div class="otter-flow" role="group" aria-label="How a local edit reaches authoritative settlement">
+  <div class="otter-flow-step"><span class="otter-state">LOCAL EDIT</span><strong>Visible immediately</strong><span>Your query reads the optimistic result.</span></div>
+  <div class="otter-flow-step"><span class="otter-state">DURABLE MUTATION</span><strong>Ready when connected</strong><span>Queued intent survives a restart.</span></div>
+  <div class="otter-flow-step"><span class="otter-state">AUTHORITATIVE STATE</span><strong>Reconciled through Pull</strong><span>Accepted edits settle at their checkpoints.</span></div>
 </div>
 
 ## Try a complete round trip
@@ -40,7 +40,7 @@ node examples/rust-round-trip/client.mts
 
 Try `sync`, `edit hello`, and `show`. Edit while offline, reopen the client, then reconnect to see the queued change reach the backend. The [quick start](examples/rust-round-trip/README.md) also walks through server normalization and rejection.
 
-<div class="lfs-guide-grid" markdown="1">
+<div class="otter-guide-grid" markdown="1">
 
 <div markdown="1">
 
@@ -66,7 +66,7 @@ Implement Handlers and Loaders. Publish changes to explicit Channels within tran
 
 Generate language types from a schema. Client models can differ from backend tables; the Rust runtime reads generic schema data.
 
-[Schema compiler](crates/lfs-compiler/README.md) · [Architecture](docs/architecture/code-organization.md)
+[Schema compiler](crates/compiler/README.md) · [Architecture](docs/architecture/code-organization.md)
 
 </div>
 

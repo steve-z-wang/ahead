@@ -3,8 +3,8 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 source "$root/scripts/env.sh"
 cd "$root"
-cargo test -p lfs-compiler
-cargo run -p lfs-compiler -- compile fixtures/compiler integration/generated-api
+cargo test -p otter-compiler
+cargo run -p otter-compiler -- compile fixtures/compiler integration/generated-api
 "$root/node_modules/.bin/tsc" -p integration/generated-api
 node integration/generated-api/test.ts
 node integration/generated-api/native.mts

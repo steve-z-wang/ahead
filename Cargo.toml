@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/lfs-core", "crates/lfs-server", "crates/lfs-client", "crates/lfs-sqlite", "bindings/common", "bindings/dart", "crates/lfs-compiler", "integration/rust"]
+members = ["crates/core", "crates/server", "crates/client", "crates/sqlite", "bindings/common", "bindings/dart", "crates/compiler", "integration/rust"]
 exclude = ["bindings/node"]
 resolver = "3"
 

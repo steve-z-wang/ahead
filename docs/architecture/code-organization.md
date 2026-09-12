@@ -11,16 +11,16 @@ This is the recommended layout for this phase. The code directories below are cr
 ## 1. Recommended directories
 
 ```text
-local-first-state/
+otter-sync/
 ├── crates/
-│   ├── lfs-core/             Generic schema, value, identity, operation, wire
-│   ├── lfs-client/           Local state, queue, replay, query, settlement
+│   ├── otter-core/             Generic schema, value, identity, operation, wire
+│   ├── otter-client/           Local state, queue, replay, query, settlement
 │   │   └── src/storage/     ClientStore / ClientTransaction interfaces
-│   ├── lfs-server/           Dispatch, deduplication, publication, loading
+│   ├── otter-server/           Dispatch, deduplication, publication, loading
 │   │   └── src/persistence/ ServerPersistence / TransactionPersistence interfaces
-│   ├── lfs-sqlite/           Client storage adapter: SQLite / transaction session
-│   ├── lfs-persistence-sqlx/ Future Rust backend adapter, created when needed
-│   └── lfs-compiler/         Schema compiler implemented in Rust
+│   ├── otter-sqlite/           Client storage adapter: SQLite / transaction session
+│   ├── otter-persistence-sqlx/ Future Rust backend adapter, created when needed
+│   └── otter-compiler/         Schema compiler implemented in Rust
 │       └── src/
 │           ├── syntax/      Schema parsing and syntax diagnostics
 │           ├── semantic/    Schema validation and shared intermediate representation
@@ -29,8 +29,8 @@ local-first-state/
 │               ├── dart/    Dart source generator
 │               └── typescript/ TypeScript source generator
 ├── bindings/
-│   ├── node/                Rust ↔ Node; Cargo package lfs-node
-│   ├── dart/                Rust ↔ Dart; Cargo package lfs-dart
+│   ├── node/                Rust ↔ Node; Cargo package otter-node
+│   ├── dart/                Rust ↔ Dart; Cargo package otter-dart
 │   └── wasm/                Future browser bridge, created when validation needs it
 ├── packages/
 │   ├── dart/                Public Dart client and typed facade support
@@ -82,10 +82,10 @@ Adding a model requires only regenerating language code and schema metadata and 
 
 | Layer | Responsibilities | What must stay out |
 |---|---|---|
-| lfs-core | Validate schema/identity/operation; wire encoding and decoding | SQLite, HTTP, Prisma, business model structs |
-| lfs-client | State rules, query IR, queue/replay/settlement; define client storage interfaces | Flutter widgets, React hooks, replay of host business callbacks |
-| lfs-server | Deduplication, publish semantics, downlink and receipts; define backend persistence interfaces | Nest DI, application domain services, independently created user DB transactions |
-| lfs-sqlite | ClientStore implementation, native local transactions, commit notifications | Redefining protocol or optimistic rules |
+| otter-core | Validate schema/identity/operation; wire encoding and decoding | SQLite, HTTP, Prisma, business model structs |
+| otter-client | State rules, query IR, queue/replay/settlement; define client storage interfaces | Flutter widgets, React hooks, replay of host business callbacks |
+| otter-server | Deduplication, publish semantics, downlink and receipts; define backend persistence interfaces | Nest DI, application domain services, independently created user DB transactions |
+| otter-sqlite | ClientStore implementation, native local transactions, commit notifications | Redefining protocol or optimistic rules |
 | bindings | Handles, owned values, errors, async calls | Independent scheduler or conflict resolver |
 | language client | Typed API, model conversion, Stream/subscription | A second set of queue/reducer/cursor rules |
 | server facade | Invoke TS handlers/loaders and return completion results | Independently deciding an ACK can settle |
@@ -96,15 +96,15 @@ Dart/JS code still connects its own Streams, subscription lifecycles and platfor
 
 ## 4. Dependency direction
 
-- `lfs-client` and `lfs-server` both depend on `lfs-core`, not on each other.
-- `lfs-sqlite` implements the client's storage interface; `lfs-client` does not depend back on a concrete SQLite crate.
+- `otter-client` and `otter-server` both depend on `otter-core`, not on each other.
+- `otter-sqlite` implements the client's storage interface; `otter-client` does not depend back on a concrete SQLite crate.
 - Bindings compose core/runtime/store; language packages call through bindings.
 - The compiler depends on generic schema definitions; the runtime does not depend on the compiler.
 - Nest depends on the server facade; the server facade does not depend on Nest.
 - The backend runtime depends on the ServerPersistence / TransactionPersistence traits, not concrete Prisma or SQLx implementations.
 - The Prisma adapter implements the corresponding TypeScript contract and connects to Rust through the Node binding; the Prisma tx stays in TypeScript.
 - A native Rust adapter can implement the same backend trait directly; the SQLx adapter does not go through Node.
-- Client storage and backend persistence interfaces belong to lfs-client and lfs-server respectively; do not extract a single combined interface.
+- Client storage and backend persistence interfaces belong to otter-client and otter-server respectively; do not extract a single combined interface.
 - Adapters may reuse generic SQL/driver tools; the framework defines trait concurrency and transaction guarantees, which must not change with the driver.
 - Examples may combine all these layers, but framework code does not import examples or Oasis.
 
@@ -152,7 +152,7 @@ Consistent reads must ensure heads, invalidations and related business reads by 
 
 ### Client: a separate local storage contract
 
-`ClientStore` / `ClientTransaction` cover visible records, the authoritative base, pending queue, readiness, channel cursors/claims, queries and post-commit change notifications. The default `lfs-sqlite` implements them, and the Rust client manages local transaction flow.
+`ClientStore` / `ClientTransaction` cover visible records, the authoritative base, pending queue, readiness, channel cursors/claims, queries and post-commit change notifications. The default `otter-sqlite` implements them, and the Rust client manages local transaction flow.
 
 They do not share a large class with server persistence: the backend participates in user transactions, while the client owns its local database by default; their storage objects and query needs also differ. Future client storage adapters need only implement the client contract.
 
@@ -188,7 +188,7 @@ Implementations may use templates or source builders; embedding Dart/TypeScript 
 
 TypeScript interfaces provide static types only, without automatic runtime decoding. Dart classes also require explicit construction; conversion functions handle null, numbers, time, bytes and other mappings. Rust retains generic schema validation; generated code does not duplicate queue, replay or settlement algorithms.
 
-The compiler may reuse lfs-core schema data structures and validation rules; the runtime does not depend back on the compiler or any language emitter. Initially, emitters live in separate lfs-compiler modules; split them into crates only if independent distribution is needed.
+The compiler may reuse otter-core schema data structures and validation rules; the runtime does not depend back on the compiler or any language emitter. Initially, emitters live in separate otter-compiler modules; split them into crates only if independent distribution is needed.
 
 ## 7. Testing layers
 
@@ -229,7 +229,7 @@ Each language chooses its test runner; Rust need not implement Dart/TypeScript c
 
 ## 8. First implementation scope
 
-First establish minimal `lfs-core` schema/operation descriptions and tests, while validating the Node transaction bridge and Dart SQLite session. Entry initially exists only as schema data in fixtures, proving the runtime has no compile-time business-type dependency.
+First establish minimal `otter-core` schema/operation descriptions and tests, while validating the Node transaction bridge and Dart SQLite session. Entry initially exists only as schema data in fixtures, proving the runtime has no compile-time business-type dependency.
 
 A required regression test loads schema A into one instance of the compiled Rust runtime, then schema B containing an additional model into another instance. Both must perform valid queries/writes without recompiling Rust. If schema B requires unsupported runtime capabilities, return an explicit compatibility error.
 
@@ -245,7 +245,7 @@ Next, complete a full single-channel loop. Fill in existing multi-channel behavi
 
 ## First implementation layout
 
-The executable Rust workspace is now `crates/{lfs-core,lfs-client,lfs-server,lfs-sqlite,lfs-compiler}` plus `bindings/{common,dart}`; `bindings/node` has its own N-API build manifest. Public host packages are `packages/{client-js,dart,server,persistence-prisma,nest}`. Cross-component tests live in `integration/{rust,bindings,persistence,generated-api,nest,e2e,platform}`, and reusable inputs remain in `fixtures/`. `scripts/test.sh` runs the native host gate; platform simulator tests have separate scripts.
+The executable Rust workspace is now `crates/{otter-core,otter-client,otter-server,otter-sqlite,otter-compiler}` plus `bindings/{common,dart}`; `bindings/node` has its own N-API build manifest. Public host packages are `packages/{client-js,dart,server,persistence-prisma,nest}`. Cross-component tests live in `integration/{rust,bindings,persistence,generated-api,nest,e2e,platform}`, and reusable inputs remain in `fixtures/`. `scripts/test.sh` runs the native host gate; platform simulator tests have separate scripts.
 
 The Rust client contains generic records and schema descriptors. Language generators emit business types, encoding/decoding, typed query options, relation accessors and mutation builders. They do not emit replay, settlement or scheduling algorithms. Host connection classes supply timers/network cancellation; Rust selects actions and retry delays. Backend registration remains available as ordinary functions or Nest decorators, and HTTP/WebSocket attach to an application-owned server.
 

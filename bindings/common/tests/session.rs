@@ -1,4 +1,4 @@
-use lfs_binding_runtime::RuntimeHost;
+use otter_binding::RuntimeHost;
 use serde_json::{Value, json};
 #[test]
 fn language_commands_preserve_transaction_isolation_and_closed_handles() {

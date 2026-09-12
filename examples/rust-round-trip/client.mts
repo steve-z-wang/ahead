@@ -4,7 +4,7 @@ import { stdin, stdout } from "node:process";
 import { Client } from "../../packages/client-js/index.mts";
 import { schema, GeneratedClient } from "./generated/generated.ts";
 const client = await Client.open({
-  path: resolve(process.env.LFS_DATABASE ?? "example-client.sqlite"),
+  path: resolve(process.env.OTTER_DATABASE ?? "example-client.sqlite"),
   schema,
   owner: "demo-user",
 });
@@ -12,7 +12,7 @@ const model = new GeneratedClient(client);
 await client.subscribe("book:demo");
 const transport = async (kind: string, body: string) => {
   const response = await fetch(
-    `${process.env.LFS_URL ?? "http://127.0.0.1:4242"}/sync/${kind === "push" ? "mutations" : "pull"}`,
+    `${process.env.OTTER_URL ?? "http://127.0.0.1:4242"}/sync/${kind === "push" ? "mutations" : "pull"}`,
     {
       method: "POST",
       headers: {

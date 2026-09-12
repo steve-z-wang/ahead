@@ -24,12 +24,12 @@ export class PrismaPersistence {
     switch (r.op) {
       case "claim": {
         await tx.$executeRawUnsafe(
-          "INSERT INTO lfs_client (client_id, owner_id) VALUES ($1,$2) ON CONFLICT (client_id) DO NOTHING",
+          "INSERT INTO otter_client (client_id, owner_id) VALUES ($1,$2) ON CONFLICT (client_id) DO NOTHING",
           r.clientId,
           r.owner,
         );
         const rows = await tx.$queryRawUnsafe<any[]>(
-          "SELECT client_id, owner_id, sequence, request_hash, receipt FROM lfs_client WHERE client_id=$1 FOR UPDATE",
+          "SELECT client_id, owner_id, sequence, request_hash, receipt FROM otter_client WHERE client_id=$1 FOR UPDATE",
           r.clientId,
         );
         if (rows.length !== 1) throw new Error("Failed to lock client");
@@ -44,7 +44,7 @@ export class PrismaPersistence {
       }
       case "saveReceipt": {
         const count = await tx.$executeRawUnsafe(
-          "UPDATE lfs_client SET sequence=$3, request_hash=$4, receipt=$5 WHERE client_id=$1 AND owner_id=$2",
+          "UPDATE otter_client SET sequence=$3, request_hash=$4, receipt=$5 WHERE client_id=$1 AND owner_id=$2",
           r.clientId,
           r.owner,
           BigInt(r.sequence),
@@ -56,14 +56,14 @@ export class PrismaPersistence {
       }
       case "head": {
         const rows = await tx.$queryRawUnsafe<any[]>(
-          "SELECT head FROM lfs_channel WHERE channel=$1",
+          "SELECT head FROM otter_channel WHERE channel=$1",
           r.channel,
         );
         return rows.length ? safe(rows[0].head) : 0;
       }
       case "scan": {
         const rows = await tx.$queryRawUnsafe<any[]>(
-          "SELECT channel, cursor, model, identity_key, identity FROM lfs_invalidation WHERE channel=$1 AND cursor>$2 ORDER BY cursor LIMIT $3",
+          "SELECT channel, cursor, model, identity_key, identity FROM otter_invalidation WHERE channel=$1 AND cursor>$2 ORDER BY cursor LIMIT $3",
           r.channel,
           BigInt(r.after),
           r.limit,
@@ -78,12 +78,12 @@ export class PrismaPersistence {
       }
       case "publish": {
         const rows = await tx.$queryRawUnsafe<any[]>(
-          "INSERT INTO lfs_channel(channel,head) VALUES($1,1) ON CONFLICT(channel) DO UPDATE SET head=lfs_channel.head+1 RETURNING head",
+          "INSERT INTO otter_channel(channel,head) VALUES($1,1) ON CONFLICT(channel) DO UPDATE SET head=otter_channel.head+1 RETURNING head",
           r.channel,
         );
         const cursor = safe(rows[0].head);
         await tx.$executeRawUnsafe(
-          "INSERT INTO lfs_invalidation(channel,model,identity_key,identity,cursor) VALUES($1,$2,$3,$4::jsonb,$5) ON CONFLICT(channel,model,identity_key) DO UPDATE SET identity=EXCLUDED.identity,cursor=EXCLUDED.cursor",
+          "INSERT INTO otter_invalidation(channel,model,identity_key,identity,cursor) VALUES($1,$2,$3,$4::jsonb,$5) ON CONFLICT(channel,model,identity_key) DO UPDATE SET identity=EXCLUDED.identity,cursor=EXCLUDED.cursor",
           r.channel,
           r.model,
           r.identityKey,
@@ -97,7 +97,7 @@ export class PrismaPersistence {
       case "release": {
         if (!Number.isSafeInteger(r.ordinal) || r.ordinal < 1)
           throw new Error("Invalid savepoint ordinal");
-        const name = `lfs_mutation_${r.ordinal}`;
+        const name = `otter_mutation_${r.ordinal}`;
         const command =
           r.op === "savepoint"
             ? "SAVEPOINT"

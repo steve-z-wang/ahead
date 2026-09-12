@@ -247,89 +247,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lfs-binding-runtime"
-version = "0.1.0"
-dependencies = [
- "lfs-client",
- "lfs-core",
- "lfs-sqlite",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "lfs-client"
-version = "0.1.0"
-dependencies = [
- "lfs-core",
- "serde",
- "serde_json",
- "uuid",
-]
-
-[[package]]
-name = "lfs-compiler"
-version = "0.1.0"
-dependencies = [
- "lfs-core",
- "serde_json",
-]
-
-[[package]]
-name = "lfs-core"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_jcs",
- "serde_json",
- "sha2",
- "thiserror",
- "uuid",
-]
-
-[[package]]
-name = "lfs-dart"
-version = "0.1.0"
-dependencies = [
- "lfs-binding-runtime",
- "serde_json",
-]
-
-[[package]]
-name = "lfs-integration"
-version = "0.1.0"
-dependencies = [
- "lfs-client",
- "lfs-core",
- "lfs-server",
- "lfs-sqlite",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "lfs-server"
-version = "0.1.0"
-dependencies = [
- "lfs-core",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "lfs-sqlite"
-version = "0.1.0"
-dependencies = [
- "lfs-client",
- "lfs-core",
- "rusqlite",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -378,6 +295,89 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+
+[[package]]
+name = "otter-binding"
+version = "0.1.0"
+dependencies = [
+ "otter-client",
+ "otter-core",
+ "otter-sqlite",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "otter-client"
+version = "0.1.0"
+dependencies = [
+ "otter-core",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "otter-compiler"
+version = "0.1.0"
+dependencies = [
+ "otter-core",
+ "serde_json",
+]
+
+[[package]]
+name = "otter-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_jcs",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
+name = "otter-dart"
+version = "0.1.0"
+dependencies = [
+ "otter-binding",
+ "serde_json",
+]
+
+[[package]]
+name = "otter-integration"
+version = "0.1.0"
+dependencies = [
+ "otter-client",
+ "otter-core",
+ "otter-server",
+ "otter-sqlite",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "otter-server"
+version = "0.1.0"
+dependencies = [
+ "otter-core",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "otter-sqlite"
+version = "0.1.0"
+dependencies = [
+ "otter-client",
+ "otter-core",
+ "rusqlite",
+ "serde_json",
+ "tempfile",
+]
 
 [[package]]
 name = "pin-project-lite"

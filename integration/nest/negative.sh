@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
-result="$(mktemp "${TMPDIR:-/tmp}/lfs-nest-types.XXXXXX")"
+result="$(mktemp "${TMPDIR:-/tmp}/otter-nest-types.XXXXXX")"
 trap 'rm -f "$result"' EXIT
 if ./node_modules/.bin/tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck --allowImportingTsExtensions wrong-input.ts >"$result" 2>&1; then
   echo 'Invalid handler input unexpectedly typechecked.' >&2

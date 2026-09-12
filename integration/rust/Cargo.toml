@@ -1,12 +1,12 @@
 [package]
-name = "lfs-integration"
+name = "otter-integration"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 [dependencies]
-lfs-core = { path = "../../crates/lfs-core" }
-lfs-client = { path = "../../crates/lfs-client" }
-lfs-server = { path = "../../crates/lfs-server" }
-lfs-sqlite = { path = "../../crates/lfs-sqlite" }
+otter-core = { path = "../../crates/core" }
+otter-client = { path = "../../crates/client" }
+otter-server = { path = "../../crates/server" }
+otter-sqlite = { path = "../../crates/sqlite" }
 serde_json.workspace = true
 tempfile.workspace = true

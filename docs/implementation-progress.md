@@ -16,7 +16,7 @@ The user approved end-to-end implementation on 2026-09-10. The Rust rewrite now 
 
 ## Verification
 
-`bash scripts/test.sh` passed locally on macOS arm64. The final [GitHub verification run](https://github.com/steve-z-wang/local-first-state/actions/runs/34555679980) passed on fresh `macos-14` and `ubuntu-24.04` runners for code commit `92bf410`, including the complete gate, optimized Rust/Node builds and the optimized binding smoke. A clean-install Nest dependency omission found in the first CI run was corrected before this successful run. The complete gate includes:
+`bash scripts/test.sh` passed locally on macOS arm64. The final [GitHub verification run](https://github.com/steve-z-wang/otter-sync/actions/runs/34555679980) passed on fresh `macos-14` and `ubuntu-24.04` runners for code commit `92bf410`, including the complete gate, optimized Rust/Node builds and the optimized binding smoke. A clean-install Nest dependency omission found in the first CI run was corrected before this successful run. The complete gate includes:
 
 | Check | Observed result |
 | --- | --- |

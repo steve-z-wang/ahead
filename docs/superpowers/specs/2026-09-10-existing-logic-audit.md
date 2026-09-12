@@ -1,4 +1,4 @@
-# local-first-state: existing logic audit and coverage matrix
+# otter-sync: existing logic audit and coverage matrix
 
 > Historical design record (2026-09-10): status statements and proposed APIs below reflect the original planning stage. See [implementation evidence](../../implementation-progress.md) for the current delivered scope and verified limitations.
 
@@ -6,7 +6,7 @@ Date: 2026-09-10. Status: source review, without running the complete tests; thi
 
 Standalone repository reference commit: `989c4c769b1d41b4b3276f8c97f6bd8ef9eb4fb8`. Original Oasis export source: `78e64a9bc93d3dab4bf256eed0a3051702f58882`.
 
-Repository paths below are relative to the local-first-state root; Oasis paths are identified separately. New code is implemented from scratch, with existing source retained as a behavioral reference.
+Repository paths below are relative to the otter-sync root; Oasis paths are identified separately. New code is implemented from scratch, with existing source retained as a behavioral reference.
 
 > Scope update: this phase migrates existing behavior only. Previously proposed improvements, revisions, epochs and failure-policy changes in the matrix all belong in [Next things](../../next-things.md), not migration tasks; source findings and risks remain documented.
 

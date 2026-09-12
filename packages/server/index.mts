@@ -163,7 +163,7 @@ class Session {
 }
 export function createBackend<T>(options: BackendOptions<T>) {
   const native =
-    options.native ?? (require("../../bindings/node/lfs-node.node") as Native);
+    options.native ?? (require("../../bindings/node/otter-node.node") as Native);
   const config = JSON.stringify({
     ...options.config,
     loaders: Object.keys(options.loaders),

@@ -1,6 +1,6 @@
 import 'dart:io';
 import 'package:test/test.dart';
-import 'package:local_first_state/local_first_state.dart';
+import 'package:otter_sync/otter_sync.dart';
 import 'generated.dart';
 void main(){
  const id='123e4567-e89b-42d3-a456-426614174000';
@@ -14,7 +14,7 @@ void main(){
  });
  test('generated mutations and query use real native client',()async{
   final temp=await Directory.systemTemp.createTemp('generated-api-');
-  final client=await Client.open(path:'${temp.path}/state.sqlite',schema:schema,owner:'test',libraryPath:Platform.environment['LFS_DART_LIBRARY'] ?? '../../target/debug/liblfs_dart.dylib');
+  final client=await Client.open(path:'${temp.path}/state.sqlite',schema:schema,owner:'test',libraryPath:Platform.environment['OTTER_DART_LIBRARY'] ?? '../../target/debug/libotter_dart.dylib');
   try{
    final api=GeneratedClient(client);
    expect(await api.mutate(createEntry(entry:row)),1);

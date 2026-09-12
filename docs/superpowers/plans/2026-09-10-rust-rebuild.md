@@ -1,4 +1,4 @@
-# local-first-state Rust Rebuild Implementation Plan
+# otter-sync Rust Rebuild Implementation Plan
 
 > Historical design record (2026-09-10): status statements and proposed APIs below reflect the original planning stage. See [implementation evidence](../../implementation-progress.md) for the current delivered scope and verified limitations.
 
@@ -6,7 +6,7 @@
 
 > Current implementation scope: preserve the reference implementation's logic. New record revisions, cross-channel arbitration, and other behavioral changes belong in [Next things](../../next-things.md), outside the milestones below. Naming follows [Concepts and naming](../../architecture/concepts-and-naming.md).
 
-**Goal:** Deliver local-first-state from scratch with a shared Rust protocol and state machine, while preserving natural Dart/TypeScript business interfaces and user control of transactions.
+**Goal:** Deliver otter-sync from scratch with a shared Rust protocol and state machine, while preserving natural Dart/TypeScript business interfaces and user control of transactions.
 
 **Architecture:** The Rust client/server runtimes share schema, wire format, and operation semantics. The host executes business handlers/loaders, persistence within transactions, and network I/O through typed ports. The first complete round trip uses Dart native, Rust SQLite, a Node binding, and Prisma/PostgreSQL.
 
@@ -14,7 +14,7 @@
 
 ## Global Constraints
 
-- The project name is `local-first-state`; keep GitHub private; do not automatically publish packages.
+- The project name is `otter-sync`; keep GitHub private; do not automatically publish packages.
 - The user owns the backend transaction; the framework uses only persistence bound to that transaction.
 - Publish must specify channels explicitly; introduce neither ambient channels nor a mandatory one-to-one channel/model mapping.
 - Shared algorithms belong in Rust; SDKs must not implement ACK settlement, record conflict handling, or replay independently.
@@ -38,13 +38,13 @@ The following paths are relative to that worktree's root and will be created inc
 ```text
 Cargo.toml                         workspace, created with the first Rust test
 rust-toolchain.toml                pin the toolchain after the spike passes
-crates/lfs-core/src/               schema, value, identity, operation, protocol
-crates/lfs-client/src/             projection, queue, channel, settlement, query
-crates/lfs-server/src/             mutation, publish, load, host ports
-crates/lfs-sqlite/src/             local DB actor/session/storage
+crates/core/src/               schema, value, identity, operation, protocol
+crates/client/src/             projection, queue, channel, settlement, query
+crates/server/src/             mutation, publish, load, host ports
+crates/sqlite/src/             local DB actor/session/storage
 bindings/node/src/               Node binding
 bindings/dart/src/               Dart binding
-crates/lfs-compiler/src/           later compiler migration
+crates/compiler/src/           later compiler migration
 packages/server/src/              TypeScript facade / host dispatcher
 packages/persistence-prisma/src/   transactional Postgres adapter
 packages/nest/src/                decorators / provider discovery
@@ -135,7 +135,7 @@ expect(await prisma.frameworkProbe.count()).toBe(0);
 
 ### Task 0.3 — Dart ↔ Rust SQLite Transaction Session
 
-**Create:** `crates/lfs-sqlite/src/session.rs`, `bindings/dart/src/api.rs`, `integration/dart/transaction_bridge_test.dart`.
+**Create:** `crates/sqlite/src/session.rs`, `bindings/dart/src/api.rs`, `integration/dart/transaction_bridge_test.dart`.
 
 **Interface contract:** Open runtime; begin session; query/apply within the session; commit/rollback; watch committed changes; close. Each session must have a unique handle and terminal state.
 
@@ -156,7 +156,7 @@ First example: two viewers share one Book channel; one Entry business table; an 
 
 ### Task 1.1 — Shared Value/Identity/Protocol Kernel
 
-**Create:** `crates/lfs-core/src/{value,identity,operation,protocol,error}.rs`, `crates/lfs-core/tests/wire_vectors.rs`, `fixtures/protocol/`.
+**Create:** `crates/core/src/{value,identity,operation,protocol,error}.rs`, `crates/core/tests/wire_vectors.rs`, `fixtures/protocol/`.
 
 **Output:** Generic record identity, batch envelope/receipt, channel checkpoint, pull page/change, and typed errors. Use the reference protocol's concrete fields without redefining their meanings; internal Rust type names are not wire field names.
 
@@ -167,11 +167,11 @@ Extract real JSON fixtures from the reference implementation for success, reject
 - [ ] Implement codec/normalization; unit tests and Node/Dart ABI tests read the same vectors.
 - [ ] Commit the kernel and vectors; do not duplicate parsing rules in SDKs.
 
-**Verification:** `cargo test -p lfs-core`; also run value tests for both M0 bindings.
+**Verification:** `cargo test -p otter-core`; also run value tests for both M0 bindings.
 
 ### Task 1.2 — Local Apply/Replay and a Durable Queue
 
-**Create:** `crates/lfs-client/src/{projection,queue,mutation}.rs`, `crates/lfs-sqlite/src/{schema,client_store}.rs`, `crates/lfs-client/tests/optimistic_replay.rs`.
+**Create:** `crates/client/src/{projection,queue,mutation}.rs`, `crates/sqlite/src/{schema,client_store}.rs`, `crates/client/tests/optimistic_replay.rs`.
 
 **Input:** Core operations and the M0 ClientStore session. **Output:** Apply visible state + base + durable pending intent within one SQLite transaction.
 
@@ -182,11 +182,11 @@ Extract real JSON fixtures from the reference implementation for success, reject
 - [ ] Assign different fates to direct local writes and mutation writes to prevent accidental transmission of local operations.
 - [ ] Commit the SQLite schema and tests; verify database contents instead of merely asserting that internal functions were called.
 
-**Verification:** `cargo test -p lfs-client --test optimistic_replay`, `cargo test -p lfs-sqlite`.
+**Verification:** `cargo test -p otter-client --test optimistic_replay`, `cargo test -p otter-sqlite`.
 
 ### Task 1.3 — Server Persistence and Explicit Publish
 
-**Create:** `crates/lfs-server/src/{ports,publish}.rs`, `packages/persistence-prisma/src/{index,publication,receipt,snapshot}.ts`, `integration/postgres/publish.test.ts`.
+**Create:** `crates/server/src/{ports,publish}.rs`, `packages/persistence-prisma/src/{index,publication,receipt,snapshot}.ts`, `integration/postgres/publish.test.ts`.
 
 **Input:** A transaction-bound host session. **Output:** Per-channel publication positions persisted in the same transaction.
 
@@ -202,7 +202,7 @@ Extract real JSON fixtures from the reference implementation for success, reject
 
 ### Task 1.4 — Business Handlers and Durable Receipts
 
-**Create:** `crates/lfs-server/src/{mutation,receipt}.rs`, `packages/server/src/{mutation-context,dispatch}.ts`, `integration/postgres/mutation-receipt.test.ts`.
+**Create:** `crates/server/src/{mutation,receipt}.rs`, `packages/server/src/{mutation-context,dispatch}.ts`, `integration/postgres/mutation-receipt.test.ts`.
 
 **Input:** Batch envelope, typed dispatcher, and bound persistence. **Output:** A batch receipt containing mutation acceptance/rejection results, sendable only after the outer commit succeeds.
 
@@ -214,11 +214,11 @@ Extract real JSON fixtures from the reference implementation for success, reject
 - [ ] The wrapper returns a branded completion; an unbound transaction, incomplete callback, or closed transaction must fail.
 - [ ] Commit runtime/SDK/tests; keep business handlers in TS.
 
-**Verification:** `cargo test -p lfs-server` and mutation-receipt integration against a real database.
+**Verification:** `cargo test -p otter-server` and mutation-receipt integration against a real database.
 
 ### Task 1.5 — Loader, Pull, and Settlement
 
-**Create:** `crates/lfs-server/src/loader.rs`, `crates/lfs-client/src/{pull,settlement}.rs`, `packages/server/src/loader.ts`, `crates/lfs-client/tests/settlement_orders.rs`.
+**Create:** `crates/server/src/loader.rs`, `crates/client/src/{pull,settlement}.rs`, `packages/server/src/loader.ts`, `crates/client/tests/settlement_orders.rs`.
 
 **Input:** Snapshot port, loader dispatcher, and receipt/cursor. **Output:** Authoritative pages and client apply/settle behavior using the existing per-change rules.
 
@@ -230,7 +230,7 @@ Extract real JSON fixtures from the reference implementation for success, reject
 - [ ] Test repeated/empty/gapped pages, cursor-ahead, and late stale responses.
 - [ ] Clean up sparse before-images/queues after success, with correct base state for remaining mutations.
 
-**Verification:** `cargo test -p lfs-client --test settlement_orders`, with assertions reading back from SQLite.
+**Verification:** `cargo test -p otter-client --test settlement_orders`, with assertions reading back from SQLite.
 
 ### Task 1.6 — SDKs and a Real Example
 
@@ -262,7 +262,7 @@ M1 is only a verifiable alpha core; it does not establish replacement of all old
 
 ## 5. M2: Preserve Existing Multi-Channel Behavior
 
-**Files:** `crates/lfs-client/src/{membership,channel,settlement}.rs`, `crates/lfs-server/src/{publish,loader}.rs`, `integration/e2e/channel-overlap.test.ts`.
+**Files:** `crates/client/src/{membership,channel,settlement}.rs`, `crates/server/src/{publish,loader}.rs`, `integration/e2e/channel-overlap.test.ts`.
 
 - [ ] Each channel has independent head/cursor values; numbers from different channels are incomparable.
 - [ ] Port channel row claims, upsert, null release, and existing authority cascade; introduce no new deletion actions.
@@ -276,7 +276,7 @@ M1 is only a verifiable alpha core; it does not establish replacement of all old
 
 ## 6. M3: Complete Client Behavior and Performance
 
-**Files:** `crates/lfs-client/src/{dependencies,readiness,cascade,companion,query,lifecycle}.rs` and corresponding `tests/`; `packages/dart/`, `integration/e2e/`.
+**Files:** `crates/client/src/{dependencies,readiness,cascade,companion,query,lifecycle}.rs` and corresponding `tests/`; `packages/dart/`, `integration/e2e/`.
 
 Deliver each item in this order, first porting independent expectation tests, then implementing:
 
@@ -293,7 +293,7 @@ Deliver each item in this order, first porting independent expectation tests, th
 
 ## 7. M4: Compiler, API, and Nest
 
-**Files:** `crates/lfs-compiler/src/{syntax,semantic,history,emit}/`, `packages/nest/src/{decorators,discovery,module}.ts`, `fixtures/schema-evolution/`.
+**Files:** `crates/compiler/src/{syntax,semantic,history,emit}/`, `packages/nest/src/{decorators,discovery,module}.ts`, `fixtures/schema-evolution/`.
 
 - [ ] First normalize existing compiler output into Rust runtime descriptors and remove dependencies on generated algorithms.
 - [ ] Incrementally port the parser, semantic analysis, relation graph, slot binding, and version history; old/new compilers produce semantically equivalent results for the same valid definitions.
