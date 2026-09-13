@@ -8,7 +8,7 @@ import type {Handler} from '../../packages/server/index.mts';
 
 type Tx={seen:string[]};type EditInput={task:{identity:{id:string};patch:{title:string}}};
 const config={schema:{enums:[],models:[{name:'Task',identity:['id'],fields:[{name:'id',type:{kind:'scalar',name:'string'},nullable:false},{name:'title',type:{kind:'scalar',name:'string'},nullable:false}]}]},mutations:[{name:'edit',version:1,slots:[]}]};
-const native={validateConfig:()=>{},processPush:async(_c:string,owner:string,_p:string,_r:string,callback:(r:string)=>Promise<string>)=>callback(JSON.stringify({op:'handle',name:'edit',version:1,owner,arguments:{task:{identity:{id:'a'},patch:{title:'hello'}}}})),processPull:async()=>'',publish:async()=>'',negotiateLive:async()=>'',pullLive:async()=>''};
+const native={validateConfig:()=>{},processPush:async(_c:string,owner:string,_r:string,callback:(r:string)=>Promise<string>)=>callback(JSON.stringify({op:'handle',name:'edit',version:1,owner,arguments:{task:{identity:{id:'a'},patch:{title:'hello'}}}})),processPull:async()=>'',publish:async()=>'',negotiateLive:async()=>'',pullLive:async()=>''};
 @Injectable()
 class Business {
  private readonly prefix='saved:';
