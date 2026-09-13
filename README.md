@@ -35,9 +35,6 @@ const client = await GeneratedClient.open({
   }),
 });
 
-// Subscribe to the channels you want to sync.
-await client.channels.subscribe("todos");
-
 // Read.
 const open = await client.models.todo.query({ where: { done: false } });
 
@@ -50,6 +47,9 @@ await client.transaction(async (tx) => {
     todo: { id: "t1", title: "Buy milk", done: false },
   });
 });
+
+// Subscribe to the channels you want to sync.
+await client.channels.subscribe("todos");
 ```
 
 The connection sends queued mutations when the network allows, retries on its own, and pulls every record the backend notified about.
