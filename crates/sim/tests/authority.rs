@@ -220,6 +220,17 @@ fn a5_batches_settle_in_accepted_prefix_order() {
     })
     .unwrap();
     sim.drain();
+    let fast_cursor = sim.clients[0].receipts[&2]
+        .required_checkpoints
+        .iter()
+        .find(|cp| cp.channel == "fast")
+        .expect("batch 2's receipt requires a fast checkpoint")
+        .cursor;
+    assert_eq!(
+        sim.client(0).cursor("fast").unwrap(),
+        fast_cursor,
+        "batch 2's checkpoint is genuinely reached before batch 1's"
+    );
     assert_eq!(
         sim.client(0).pending_count().unwrap(),
         2,

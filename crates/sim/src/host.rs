@@ -405,6 +405,7 @@ impl Host for MemHost {
                 }
                 "load" => {
                     let model = r["model"].as_str().unwrap();
+                    let channel = r["channel"].as_str();
                     Value::Array(
                         r["identities"]
                             .as_array()
@@ -412,7 +413,20 @@ impl Host for MemHost {
                             .iter()
                             .map(|identity| {
                                 let key = key_of(model, identity);
-                                match s.tables.records.get(&encoded(&key)) {
+                                let k = encoded(&key);
+                                // A channel-blind load would let a stale request from a
+                                // channel that no longer claims this record see another
+                                // channel's newer content. Membership set explicitly
+                                // (even if the requesting channel isn't in it) is
+                                // authoritative for that channel's view; membership
+                                // never set at all keeps the old, channel-blind lookup.
+                                if let (Some(channel), Some(members)) =
+                                    (channel, s.membership.get(&k))
+                                    && !members.iter().any(|m| m == channel)
+                                {
+                                    return Value::Null;
+                                }
+                                match s.tables.records.get(&k) {
                                     Some(v) => {
                                         let mut m: Map<String, Value> =
                                             v.as_object().unwrap().clone();
@@ -563,5 +577,41 @@ mod tests {
         let page = PullPage::decode(host.pull("u", &req).unwrap().as_bytes()).unwrap();
         assert_eq!(page.changes.len(), 2);
         assert!(page.changes.iter().all(|c| c.state.is_null()));
+    }
+
+    #[test]
+    fn load_is_channel_aware_once_membership_is_set() {
+        let host = MemHost::new();
+        host.set_membership(&entry_key("e1"), &["b"]);
+        host.set_state(
+            &entry_key("e1"),
+            Some(json!({"id":"e1","text":"in b","note":null})),
+        );
+        // Notify both channels directly (as ServerChange does in the sim): only
+        // channel b is in e1's membership, so a's page must see nothing.
+        host.notify(&entry_key("e1"), &["a", "b"]);
+        let req_a = PullRequest {
+            channel: "a".into(),
+            client_id: "c1".into(),
+            from_cursor: 0,
+        }
+        .encode()
+        .unwrap();
+        let page_a = PullPage::decode(host.pull("u", &req_a).unwrap().as_bytes()).unwrap();
+        assert_eq!(page_a.changes.len(), 1);
+        assert!(
+            page_a.changes[0].state.is_null(),
+            "a is not in e1's membership"
+        );
+        let req_b = PullRequest {
+            channel: "b".into(),
+            client_id: "c1".into(),
+            from_cursor: 0,
+        }
+        .encode()
+        .unwrap();
+        let page_b = PullPage::decode(host.pull("u", &req_b).unwrap().as_bytes()).unwrap();
+        assert_eq!(page_b.changes.len(), 1);
+        assert_eq!(page_b.changes[0].state["text"], "in b");
     }
 }

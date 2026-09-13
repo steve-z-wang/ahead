@@ -79,15 +79,18 @@ fn d1_two_clients_on_one_channel_converge() {
 fn d2_delayed_page_from_another_channel_cannot_regress_newer_content() {
     let mut sim = Sim::new(12, 1);
     subscribe(&mut sim, 0, &["a", "b"]);
-    // The record lives on both channels. Notify a first (older stamp), then b (newer).
+    // The record lives on both channels. Snapshot a's page while the shared record
+    // still holds "old" - a's pull request must be delivered (host.pull() reads the
+    // live record at that point) before b's later change overwrites it, or a's page
+    // would carry b's content instead of a genuinely stale copy.
     change(&mut sim, "Entry:e1", Some("old"), &["a"]);
-    change(&mut sim, "Entry:e1", Some("new"), &["b"]);
-    // Request both pages, then deliver b's before a's.
     pull(&mut sim, 0, "a");
-    pull(&mut sim, 0, "b");
-    sim.apply(Action::Deliver).unwrap(); // a's request -> a's page queued
-    sim.apply(Action::Deliver).unwrap(); // b's request -> b's page queued
-    sim.apply(Action::Swap { i: 0, j: 1 }).unwrap();
+    sim.apply(Action::Deliver).unwrap(); // a's request -> a's page queued, snapshotting "old"
+    change(&mut sim, "Entry:e1", Some("new"), &["b"]);
+    pull(&mut sim, 0, "b"); // queue: [a's page, b's request]
+    sim.apply(Action::Swap { i: 0, j: 1 }).unwrap(); // queue: [b's request, a's page]
+    sim.apply(Action::Deliver).unwrap(); // b's request -> b's page queued (after a's page)
+    sim.apply(Action::Swap { i: 0, j: 1 }).unwrap(); // queue: [b's page, a's page]
     sim.apply(Action::Deliver).unwrap(); // b's page
     assert_eq!(sim.read_text(0, &entry_key("e1")).as_deref(), Some("new"));
     sim.apply(Action::Deliver).unwrap(); // a's page, stale content
@@ -99,10 +102,12 @@ fn d2_delayed_page_from_another_channel_cannot_regress_newer_content() {
     sim.check().unwrap();
 }
 
-/// D3: one notify fanning out to two channels shares one stamp; each channel's cursor
-/// advances on its own.
+/// D3: each (channel, record) publish allocates the next stamp - a notify that fans
+/// out to two channels allocates one stamp per channel it touches, matching
+/// packages/persistence-prisma/index.mts and the record-stamp spec; each channel's
+/// cursor still advances on its own.
 #[test]
-fn d3_one_notify_shares_one_stamp_across_channels() {
+fn d3_each_channel_publish_allocates_its_own_stamp() {
     let mut sim = Sim::new(13, 1);
     subscribe(&mut sim, 0, &["a", "b"]);
     change(&mut sim, "Entry:e1", Some("x"), &["a"]); // a:1 stamp 1
@@ -116,6 +121,8 @@ fn d3_one_notify_shares_one_stamp_across_channels() {
     );
     sim.settle();
     assert_eq!(sim.read_text(0, &entry_key("e1")).as_deref(), Some("y"));
+    assert_eq!(sim.client(0).cursor("a").unwrap(), 2);
+    assert_eq!(sim.client(0).cursor("b").unwrap(), 1);
     sim.check().unwrap();
 }
 
@@ -128,9 +135,10 @@ fn d4_move_between_channels_and_back() {
     change(&mut sim, "Entry:e1", Some("in a"), &["a"]);
     sim.settle();
     // Move to b: b gets the upsert, a gets a delete (loader returns null for a's row
-    // because membership moved). Model that as: state stays, a is notified after the
-    // state is set, but a's load must return null. Use set_state None for a's view by
-    // notifying a with the record absent, then restoring it for b.
+    // because membership moved). Membership is now explicit and channel-aware
+    // (MemHost's "load" arm), so a's page genuinely sees the record as absent once
+    // membership excludes it - not merely a stale copy of a's own delete.
+    sim.host.set_membership(&entry_key("e1"), &["b"]);
     change(&mut sim, "Entry:e1", None, &["a"]); // a: delete (stamp 2)
     change(&mut sim, "Entry:e1", Some("in b"), &["b"]); // b: upsert (stamp 3)
     pull(&mut sim, 0, "a");
@@ -142,15 +150,10 @@ fn d4_move_between_channels_and_back() {
     assert_eq!(sim.read_text(0, &entry_key("e1")).as_deref(), Some("in b"));
     assert_eq!(
         sim.client(0).claims_of(&entry_key("e1")).unwrap(),
-        vec!["a".to_string(), "b".to_string()],
-        "a's claim is not released: MemHost::pull's `load` reads the current shared \
-         record row, not the content as of a's own invalidation stamp, so by the time \
-         a's stale (stamp 2) page is delivered its state has already been overwritten \
-         by b's later upsert; the page therefore carries non-null content and the \
-         client's apply_change takes the `claim_add` arm of the stale (!newer) branch \
-         instead of `claim_remove`"
+        vec!["b".to_string()]
     );
     // Move back to a.
+    sim.host.set_membership(&entry_key("e1"), &["a"]);
     change(&mut sim, "Entry:e1", None, &["b"]); // b: delete (stamp 4)
     change(&mut sim, "Entry:e1", Some("back in a"), &["a"]); // a: upsert (stamp 5)
     sim.settle();
@@ -160,11 +163,7 @@ fn d4_move_between_channels_and_back() {
     );
     assert_eq!(
         sim.client(0).claims_of(&entry_key("e1")).unwrap(),
-        vec!["a".to_string(), "b".to_string()],
-        "same trace as above, mirrored: settle() pulls channel a (stamp 5, the upsert) \
-         before channel b (stamp 4, the delete); by the time b's page is delivered the \
-         shared record row already holds a's later upsert, so b's stale page also \
-         carries non-null content and the client claim_adds b instead of releasing it"
+        vec!["a".to_string()]
     );
     sim.check().unwrap();
 }
