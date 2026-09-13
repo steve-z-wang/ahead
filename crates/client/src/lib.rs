@@ -406,6 +406,10 @@ impl<S: ClientStore> Client<S> {
     pub fn cursor(&mut self, channel: &str) -> Result<u64> {
         self.view(|e| Ok(e.cursor(channel)?.unwrap_or(0)))
     }
+    /// Channels currently claiming a record, sorted by name. Test and diagnostic surface.
+    pub fn claims_of(&mut self, key: &RecordKey) -> Result<Vec<String>> {
+        self.view(|e| e.claims(key))
+    }
     pub fn subscriptions(&mut self) -> Result<Vec<(String, u64)>> {
         self.view(|e| e.subscriptions())
     }

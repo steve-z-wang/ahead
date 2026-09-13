@@ -36,7 +36,7 @@ pub fn page(channel: &str, from: u64, to: u64, text: Option<&str>) -> PullPage {
             cursor: to,
             model: "Entry".into(),
             identity: json!({"id":"e"}),
-            stamp: None,
+            stamp: to,
             state: text
                 .map(|t| json!({"text":t,"note":null}))
                 .unwrap_or(Value::Null),

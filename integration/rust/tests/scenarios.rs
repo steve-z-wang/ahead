@@ -84,7 +84,7 @@ impl Host for Backend {
  "saveReceipt"=>{db.clients.insert(r["clientId"].as_str().unwrap().into(),json!({"clientId":r["clientId"],"owner":r["owner"],"sequence":r["sequence"],"receipt":r["receipt"]}));Value::Null},
  "head"=>json!(db.head),"authorize"=>json!(true),"savepoint"|"release"|"rollback"=>Value::Null,
  "handle"=>{db.calls+=1;let text=r["arguments"]["entry"]["patch"]["text"].as_str().unwrap();if text=="reject"{json!({"rejection":"entry.denied"})}else{db.text=text.trim().into();db.head+=1;json!({"channel":"book"})}},
- "scan"=>if r["after"].as_u64().unwrap()<db.head{json!([{"channel":"book","cursor":db.head,"model":"Entry","identity":{"id":"e"},"identityKey":"{\"id\":\"e\"}"}])}else{json!([])},
+ "scan"=>if r["after"].as_u64().unwrap()<db.head{json!([{"channel":"book","cursor":db.head,"model":"Entry","identity":{"id":"e"},"identityKey":"{\"id\":\"e\"}","stamp":db.head}])}else{json!([])},
  "load"=>json!([{"id":"e","text":db.text,"note":null}]),other=>return Err(format!("unsupported {other}"))
  })
         })
@@ -132,6 +132,7 @@ fn deterministic_interleavings_preserve_local_priority_and_eventually_converge()
         let server = Backend::new();
         let mut client = open(&path);
         let page = server.pull(&mut client);
+        assert_eq!(page.changes[0].stamp, 1, "seed {seed}");
         client.apply_page(page).unwrap();
         edit(&mut client, "  first  ");
         let request = client.freeze().unwrap().unwrap();

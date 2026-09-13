@@ -40,7 +40,7 @@ fn rust_selects_transport_actions_and_reuses_frozen_request_on_retry() {
     host.call(json!({"op":"startSync","handle":id})).unwrap();
     let action = host.call(json!({"op":"next","handle":id})).unwrap()["value"].clone();
     assert_eq!(action["kind"], "pull");
-    host.call(json!({"op":"complete","handle":id,"response":{"scope":"book","fromCursor":0,"toCursor":1,"changes":[{"syncId":1,"model":"Entry","identity":{"id":"e"},"state":{"text":"A","note":null}}]}})).unwrap();
+    host.call(json!({"op":"complete","handle":id,"response":{"scope":"book","fromCursor":0,"toCursor":1,"changes":[{"syncId":1,"model":"Entry","identity":{"id":"e"},"stamp":1,"state":{"text":"A","note":null}}]}})).unwrap();
     assert!(host.call(json!({"op":"next","handle":id})).unwrap()["value"].is_null());
     host.call(json!({"op":"enqueue","handle":id,"mutation":{"name":"Edit","operations":[{"model":"Entry","op":"update","identity":{"id":"e"},"values":{"text":"B"}}]}})).unwrap();
     host.call(json!({"op":"startSync","handle":id})).unwrap();

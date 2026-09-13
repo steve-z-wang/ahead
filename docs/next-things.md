@@ -10,11 +10,10 @@ Implement a schema-driven Rust client/server runtime, language SDKs, generators,
 
 ## Later work
 
-- [x] **Cross-channel record revision**: compare content versions when the same record arrives from different channels; do not use the channel cursor as a cross-channel recency measure.
-- [ ] Consistent reads of recordRevision and loaded state; distribute the same version to multiple channels from one publication.
-- [ ] Tests for same-version idempotence, conflict diagnostics, late old pages, and Move A→B→A.
-- [ ] When extending cross-channel semantics, explicitly distinguish remove-from-channel from true delete, and design tombstone/watermark retention and safe cleanup.
-- [ ] Evaluate the upgrade/fencing cost of optional revisions; there is currently no decision that every record must carry one or that revisions are enabled on demand.
+- [x] **Cross-channel record revision**: compare content versions when the same record arrives from different channels; do not use the channel cursor as a cross-channel recency measure. Shipped as the per-record stamp; see `docs/superpowers/specs/2026-09-12-record-stamp-design.md`.
+- [x] Every record carries a stamp from creation; the stamp is allocated per `notify` and delivered from the invalidation row. Optional revisions and the "one stamp per publication" variant were rejected.
+- [x] Tests for same-stamp idempotence, conflict diagnostics, late old pages, delete across channels and Move A→B→A.
+- [ ] Tombstone retention is bounded by claims (dropped when every claiming channel has delivered the delete); channel generation / snapshot reset remain future work.
 - [ ] Review separately the current behavior that skips/advances the cursor after a pull failure; record the risk, and do not casually turn it into atomic whole-page apply during the rewrite.
 - [ ] If needed, revisit per-mutation receipts / independent transactions and removal of accepted-prefix blocking; the current scope preserves batch transactions, batch receipts, and prefix settlement.
 - [ ] A new wire version, decimal-string counters, epoch/reset, and automatic GC; these are separately designed protocol changes and are not enabled by default with the Rust migration.
@@ -29,6 +28,8 @@ Implement a schema-driven Rust client/server runtime, language SDKs, generators,
 Use the names in [Concepts and Naming](architecture/concepts-and-naming.md). The names themselves are settled and are no longer TODOs. Current documentation and new APIs use Channel, Loader, Push/Pull, and Cursor/Checkpoint; old source and wire/storage fields retain their original names for comparison.
 
 ## Earlier record-revision proposal for future review
+
+Superseded by the record stamp design; kept for history.
 
 The earlier technical draft is retained below with terminology updated to the current names; example action names are not enabled wire fields. Expressions such as “recommended” and “first version/alpha” refer to the design of a future capability, not a decision for the current Rust rewrite. Optionality, deletion semantics, authorization, and GC still require confirmation.
 

@@ -61,7 +61,7 @@ export class PrismaPersistence {
       }
       case "scan": {
         const rows = await tx.$queryRawUnsafe<any[]>(
-          "SELECT channel, cursor, model, identity_key, identity FROM otter_invalidation WHERE channel=$1 AND cursor>$2 ORDER BY cursor LIMIT $3",
+          "SELECT channel, cursor, model, identity_key, identity, stamp FROM otter_invalidation WHERE channel=$1 AND cursor>$2 ORDER BY cursor LIMIT $3",
           r.channel,
           BigInt(r.after),
           r.limit,
@@ -72,23 +72,33 @@ export class PrismaPersistence {
           model: row.model,
           identityKey: row.identity_key,
           identity: row.identity,
+          stamp: safe(row.stamp),
         }));
       }
       case "publish": {
+        // The record row is locked first, so concurrent notifies of one record
+        // serialise here and never allocate the same stamp.
+        const stamped = await tx.$queryRawUnsafe<any[]>(
+          "INSERT INTO otter_record(model,identity_key,stamp) VALUES($1,$2,1) ON CONFLICT(model,identity_key) DO UPDATE SET stamp=otter_record.stamp+1 RETURNING stamp",
+          r.model,
+          r.identityKey,
+        );
+        const stamp = safe(stamped[0].stamp);
         const rows = await tx.$queryRawUnsafe<any[]>(
           "INSERT INTO otter_channel(channel,head) VALUES($1,1) ON CONFLICT(channel) DO UPDATE SET head=otter_channel.head+1 RETURNING head",
           r.channel,
         );
         const cursor = safe(rows[0].head);
         await tx.$executeRawUnsafe(
-          "INSERT INTO otter_invalidation(channel,model,identity_key,identity,cursor) VALUES($1,$2,$3,$4::jsonb,$5) ON CONFLICT(channel,model,identity_key) DO UPDATE SET identity=EXCLUDED.identity,cursor=EXCLUDED.cursor",
+          "INSERT INTO otter_invalidation(channel,model,identity_key,identity,cursor,stamp) VALUES($1,$2,$3,$4::jsonb,$5,$6) ON CONFLICT(channel,model,identity_key) DO UPDATE SET identity=EXCLUDED.identity,cursor=EXCLUDED.cursor,stamp=EXCLUDED.stamp",
           r.channel,
           r.model,
           r.identityKey,
           JSON.stringify(r.identity),
           BigInt(cursor),
+          BigInt(stamp),
         );
-        return cursor;
+        return { cursor, stamp };
       }
       case "savepoint":
       case "rollback":

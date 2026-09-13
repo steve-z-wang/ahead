@@ -6,7 +6,7 @@ This source alpha uses a new local SQLite layout. Open a new database path; do n
 
 | Boundary | First-version contract |
 | --- | --- |
-| Wire names | Legacy `scope`, `syncId`, `requiredScope`, `requiredSyncId` and `requiredCheckpoints`; public APIs use Channel, Cursor and Checkpoint. |
+| Wire names | Legacy `scope`, `syncId`, `requiredScope`, `requiredSyncId` and `requiredCheckpoints`; `stamp` on every pull change; public APIs use Channel, Cursor, Stamp and Checkpoint. |
 | Numbers | JSON integers within the JavaScript safe range. Counter encoding is unchanged. |
 | Mutation versions | The compiler retains historical input snapshots; the backend registers every supported name/version. Unsupported versions fail before handlers execute. |
 | Additive schema evolution | New nullable fields can be received by old schemas. Unknown received fields are ignored; Loader output is validated against its declared schema. |

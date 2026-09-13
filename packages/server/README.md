@@ -50,6 +50,10 @@ A Handler receives a `HandlerCall<Tx, Input>`: `{ input, tx, userId, notify }`. 
 
 `notify({ channel, records })` declares that `records` (an array of slot arguments or `{ model, identity }` refs, such as those returned by the generated `Entry({ id })` constructor) changed and should be invalidated on `channel`, a non-empty string. A Handler may call `notify` zero, one, or several times before it returns.
 
+Every `notify` allocates a new **stamp** for each record, a per-record counter that Pull delivers with the record's content. The client applies content strictly by stamp, so the order of `notify` calls decides which channel's content wins when channels return different views of the same record.
+
+Notify every channel that provides a record whenever that record changes, including when a loader starts returning `null` for it on one channel. A channel that is not notified keeps delivering its old stamp, and the client will not pick up the change through it. The framework does not detect a missing notification.
+
 The receipt's checkpoint is chosen from what was notified: if exactly one channel was notified, that channel is the checkpoint automatically. If several channels were notified, the Handler must `return { channel }` to pick one explicitly. The returned channel must be one the handler notified. If no channel was notified, the batch aborts with `handler.no_channel`; if several were notified and the Handler did not disambiguate, it aborts with `handler.ambiguous_checkpoint`.
 
 ## Authentication

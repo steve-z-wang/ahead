@@ -21,7 +21,7 @@ fn main() {
                 cursor: to,
                 model: "Entry".into(),
                 identity: json!({"id":"one"}),
-                stamp: None,
+                stamp: to,
                 state: json!({"text":"authority","note":null}),
             }],
         };

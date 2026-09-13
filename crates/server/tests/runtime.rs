@@ -62,7 +62,7 @@ fn live_page_progression_uses_wire_cursor_and_fifty_row_boundary() {
     let full = json!({
         "scope":"shared", "fromCursor":7, "toCursor":57,
         "changes": (8..=57).map(|sync_id| json!({
-            "syncId":sync_id,"model":"Task","identity":{"id":sync_id},"state":null
+            "syncId":sync_id,"model":"Task","identity":{"id":sync_id},"stamp":sync_id,"state":null
         })).collect::<Vec<_>>()
     });
     let progress = otter_server::live::page_progress(&full.to_string(), "shared", 7).unwrap();

@@ -72,7 +72,7 @@ fn independent_schemas_load_without_business_rust_types() {
 
 #[test]
 fn wire_names_remain_legacy_and_counters_are_safe() {
-    let page=PullPage::decode(br#"{"scope":"book:1","fromCursor":0,"toCursor":2,"changes":[{"syncId":2,"model":"Entry","identity":{"id":"x"},"state":null}],"future":true}"#).unwrap();
+    let page=PullPage::decode(br#"{"scope":"book:1","fromCursor":0,"toCursor":2,"changes":[{"syncId":2,"model":"Entry","identity":{"id":"x"},"stamp":2,"state":null}],"future":true}"#).unwrap();
     assert_eq!(page.channel, "book:1");
     assert_eq!(page.to_cursor, 2);
     let wire: Value = serde_json::from_slice(&page.encode().unwrap()).unwrap();
@@ -212,17 +212,16 @@ fn field_default_and_record_stamp_round_trip_and_otter_prefix_is_rejected() {
         br#"{"scope":"c","fromCursor":0,"toCursor":1,"changes":[{"syncId":1,"model":"E","identity":{"id":"e"},"stamp":7,"state":null}]}"#,
     )
     .unwrap();
-    assert_eq!(page.changes[0].stamp, Some(7));
-    let unstamped_page = PullPage::decode(
-        br#"{"scope":"c","fromCursor":0,"toCursor":1,"changes":[{"syncId":1,"model":"E","identity":{"id":"e"},"state":null}]}"#,
-    )
-    .unwrap();
-    assert_eq!(unstamped_page.changes[0].stamp, None);
+    assert_eq!(page.changes[0].stamp, 7);
     assert!(
-        !String::from_utf8(unstamped_page.encode().unwrap())
+        String::from_utf8(page.encode().unwrap())
             .unwrap()
-            .contains("stamp")
+            .contains(r#""stamp":7"#)
     );
+    let unstamped = PullPage::decode(
+        br#"{"scope":"c","fromCursor":0,"toCursor":1,"changes":[{"syncId":1,"model":"E","identity":{"id":"e"},"state":null}]}"#,
+    );
+    assert!(unstamped.unwrap_err().to_string().contains("stamp"));
     let bad = Schema::from_value(
         json!({"enums":[],"models":[{"name":"otter_x","identity":["id"],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}}]}]}),
     );

@@ -58,7 +58,7 @@ test('push commits business + compacted publication + exact durable receipt toge
  assert.equal(await backend.push('alice',push('dedup',1,[mutation(1,'changed')])),receipt);assert.equal(called,calls);
  await assert.rejects(()=>backend.push('bob',request),/owner_mismatch/);
  await assert.rejects(()=>backend.push('alice',push('dedup',3,[mutation(1,'gap')])),/gap/);
- const page=await pull();assert.deepEqual(page,{scope:'shared',fromCursor:0,toCursor:1,changes:[{syncId:1,model:'Task',identity:{id:'a'},state:{title:'first'}}]});assert.equal(prepared,1);
+ const page=await pull();assert.deepEqual(page,{scope:'shared',fromCursor:0,toCursor:1,changes:[{syncId:1,model:'Task',identity:{id:'a'},stamp:1,state:{title:'first'}}]});assert.equal(prepared,1);
 });
 test('explicit rejection rolls back only mutation and its publication',async()=>{
  const result=JSON.parse(await backend.push('alice',push('refusal',1,[mutation(1,'good','b'),mutation(2,'refuse','c'),mutation(3,'last','d')])));
@@ -173,7 +173,7 @@ test('live transport negotiates, wakes only after commit, reconnects, and cleans
  }finally{session.close();}});
  await started;await delay(80);assert.equal(frames.length,1,'uncommitted publication must stay silent');release();await committing;await delay(50);assert.equal(frames.length,1,'commit alone requires the explicit external after-commit hook');notify();
  while(frames.length<2)await delay(5);
- assert.deepEqual(frames[1].changes.at(-1),{syncId:frames[1].toCursor,model:'Task',identity:{id:'live-external'},state:{title:'committed'}});
+ assert.deepEqual(frames[1].changes.at(-1),{syncId:frames[1].toCursor,model:'Task',identity:{id:'live-external'},stamp:1,state:{title:'committed'}});
 
  const pageStart=frames.length;let notifyPages;
  await db.$transaction(async tx=>{const session=backend.bindTransaction(tx);try{for(let i=0;i<51;i++){const id=`live-page-${i}`;await tx.$executeRawUnsafe('INSERT INTO business_task(id,title) VALUES($1,$2)',id,'paged');await session.notify({channel:'shared',records:[{model:'Task',identity:{id}}]});}await session.assertCommittable();notifyPages=session.afterCommit();}finally{session.close();}},{timeout:20000});notifyPages();
@@ -292,4 +292,22 @@ test('handler awaiting the tx after notify still drains pending publication befo
 test('an all-rejected batch settles with no checkpoints',async()=>{
  const receipt=JSON.parse(await backend.push('alice',push('allrej',1,[mutation(1,'refuse','rej-a')])));
  assert.deepEqual(receipt.requiredCheckpoints,[]);assert.equal(receipt.requiredScope,'');assert.equal(receipt.rejections.length,1);
+});
+test('publish allocates one stamp per notify and stores it on the invalidation row',async()=>{
+ const stamps=await db.$transaction(async tx=>{const storage=new PrismaPersistence(tx);const ref={model:'Task',identity:{id:'stamped'},identityKey:'{"id":"stamped"}'};
+  const a=await storage.call({op:'publish',channel:'stamp-a',...ref});const b=await storage.call({op:'publish',channel:'stamp-b',...ref});const a2=await storage.call({op:'publish',channel:'stamp-a',...ref});return [a,b,a2];});
+ assert.deepEqual(stamps.map(s=>s.stamp),[1,2,3]);assert.deepEqual(stamps.map(s=>s.cursor),[1,1,2]);
+ const record=await db.$queryRawUnsafe(`SELECT stamp FROM otter_record WHERE model='Task' AND identity_key='{"id":"stamped"}'`);assert.equal(Number(record[0].stamp),3);
+ const rows=await db.$queryRawUnsafe(`SELECT channel, cursor, stamp FROM otter_invalidation WHERE identity_key='{"id":"stamped"}' ORDER BY channel`);
+ assert.deepEqual(rows.map(r=>[r.channel,Number(r.cursor),Number(r.stamp)]),[['stamp-a',2,3],['stamp-b',1,2]]);
+});
+test('scan returns the stamp of each row',async()=>{
+ const rows=await db.$transaction(tx=>new PrismaPersistence(tx).call({op:'scan',channel:'stamp-a',after:0,limit:50}));
+ assert.deepEqual(rows.map(r=>[r.cursor,r.stamp]),[[2,3]]);
+});
+test('concurrent notifies of one record receive distinct stamps',async()=>{
+ const notify=()=>db.$transaction(async tx=>{await backend.notify(tx,{channel:'race-stamp',records:[{model:'Task',identity:{id:'stamp-race'}}]});});
+ await Promise.all([notify(),notify(),notify(),notify()]);
+ const record=await db.$queryRawUnsafe(`SELECT stamp FROM otter_record WHERE model='Task' AND identity_key='{"id":"stamp-race"}'`);assert.equal(Number(record[0].stamp),4);
+ const page=await pull('race-stamp',0);assert.equal(page.changes.length,1);assert.equal(page.changes[0].stamp,4);
 });

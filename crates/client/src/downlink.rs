@@ -24,22 +24,22 @@ impl<S: ClientStore> Engine<'_, S> {
                 &self.schema.validate_state(&change.model, &change.state)?,
             ))
         };
-        let newer = match change.stamp {
-            None => true,
-            Some(stamp) if stamp > local => true,
-            Some(stamp) if stamp < local => false,
-            Some(stamp) => {
-                // equal stamp: idempotent when content matches, diagnostic otherwise
-                let current = self.truth(&key)?;
-                if current != incoming {
-                    report.conflicts += 1;
-                    report.diagnostics.push(json!({
-                        "model": key.model, "identity": key.identity, "stamp": stamp, "channel": channel,
-                        "local": current, "incoming": incoming,
-                    }));
-                }
-                false
+        let stamp = change.stamp;
+        let newer = if stamp > local {
+            true
+        } else if stamp < local {
+            false
+        } else {
+            // equal stamp: idempotent when content matches, diagnostic otherwise
+            let current = self.truth(&key)?;
+            if current != incoming {
+                report.conflicts += 1;
+                report.diagnostics.push(json!({
+                    "model": key.model, "identity": key.identity, "stamp": stamp, "channel": channel,
+                    "local": current, "incoming": incoming,
+                }));
             }
+            false
         };
         if !newer {
             if is_delete {
@@ -56,32 +56,19 @@ impl<S: ClientStore> Engine<'_, S> {
             return Ok(());
         }
         if is_delete {
-            match change.stamp {
-                // An unstamped delete carries no order, and the server emits one both
-                // for a true delete and for a record that merely left this channel.
-                // It may therefore release only the delivering channel's claim; the
-                // record goes when the last claim does. No stamp is written.
-                None => {
-                    self.claim_remove(channel, &key)?;
-                    if self.claims(&key)?.is_empty() {
-                        self.set_authority(&key, None)?;
-                        self.drop_record(&key)?;
-                    }
-                }
-                Some(stamp) => {
-                    self.set_authority(&key, None)?;
-                    self.claim_remove(channel, &key)?;
-                    if self.claims(&key)?.is_empty() {
-                        self.drop_record(&key)?;
-                    } else {
-                        self.set_record_stamp(&key, stamp)?;
-                    }
-                }
+            // A newer delete removes the record regardless of remaining claims; the
+            // claims left are the channels whose copy of this delete has not arrived.
+            self.set_authority(&key, None)?;
+            self.claim_remove(channel, &key)?;
+            if self.claims(&key)?.is_empty() {
+                self.drop_record(&key)?;
+            } else {
+                self.set_record_stamp(&key, stamp)?;
             }
         } else {
             self.set_authority(&key, incoming)?;
             self.claim_add(channel, &key)?;
-            self.set_record_stamp(&key, change.stamp.unwrap_or(local))?;
+            self.set_record_stamp(&key, stamp)?;
         }
         Ok(())
     }
