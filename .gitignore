@@ -15,7 +15,7 @@ coverage/
 *.sqlite-shm
 *.sqlite-wal
 
-.tools/
+.tools
 artifacts/
 
 # Documentation website build environment and generated output

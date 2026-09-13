@@ -7,6 +7,7 @@
   ],
   "receipt": [
     {"name": "legacy fallback", "wire": "{\"requiredScope\":\"book\",\"requiredSyncId\":0,\"rejections\":[]}", "valid": true},
-    {"name": "explicit empty rejected", "wire": "{\"requiredScope\":\"book\",\"requiredSyncId\":0,\"requiredCheckpoints\":[],\"rejections\":[]}", "valid": false}
+    {"name": "explicit empty rejected", "wire": "{\"requiredScope\":\"book\",\"requiredSyncId\":0,\"requiredCheckpoints\":[],\"rejections\":[]}", "valid": false},
+    {"name": "empty checkpoints with rejections", "wire": "{\"requiredScope\":\"\",\"requiredSyncId\":0,\"requiredCheckpoints\":[],\"rejections\":[{\"ordinal\":1,\"code\":\"denied\"}]}", "valid": true}
   ]
 }

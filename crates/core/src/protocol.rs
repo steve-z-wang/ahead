@@ -122,7 +122,7 @@ impl PushReceipt {
     }
     fn validate(&self) -> Result<()> {
         counter(self.required_cursor)?;
-        if self.required_checkpoints.is_empty() {
+        if self.required_checkpoints.is_empty() && self.rejections.is_empty() {
             return Err(invalid("empty checkpoint set"));
         }
         let mut channels = BTreeSet::new();

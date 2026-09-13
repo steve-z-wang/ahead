@@ -141,3 +141,14 @@ export function prismaTransactions<T extends PrismaTransaction>(
     }
   };
 }
+
+/** Bundle the transaction runner and the persistence factory for `createBackend({ database })`. */
+export function prisma<T extends PrismaTransaction>(
+  client: Parameters<typeof prismaTransactions<T>>[0],
+  options: { retries?: number; timeout?: number } = {},
+) {
+  return {
+    transaction: prismaTransactions<T>(client, options),
+    persistence: (tx: T) => new PrismaPersistence(tx),
+  };
+}

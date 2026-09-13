@@ -20,7 +20,7 @@ Try `sync`, then `edit   hello   `, then `show`. The local optimistic text retai
 
 - `models/entry.model`: the source schema and mutation contract.
 - `generated/`: generated schema, mutation history, and language-specific facades.
-- `server.mts`: application-owned database operations and transaction participation, Loader, Handler and explicit channel publication. HTTP and WebSocket attach to the same server.
+- `server.mts`: handlers and loaders implementing the generated `Handlers` and `Loaders` interfaces; `createBackend` from `generated/backend.ts`; `listen` serves HTTP and WebSocket on one port.
 - `client.mts`: generated TypeScript API over the generic Rust client.
 - `integration/e2e/dart_client.dart` (repository root): real Dart client exercising the same backend.
 

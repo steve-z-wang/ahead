@@ -34,14 +34,12 @@ pub fn validate_config(config_json: String) -> Result<()> {
 pub async fn process_push(
     config_json: String,
     owner: String,
-    channel: String,
     request_json: String,
     callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
 ) -> Result<String> {
     otter_server::process_push(
         &config(&config_json)?,
         &owner,
-        &channel,
         request_json.as_bytes(),
         &CallbackHost(callback),
     )

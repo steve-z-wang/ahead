@@ -65,3 +65,37 @@ fn singular_inverse_requires_a_unique_foreign_key() {
     assert!(compile("model Parent { id String child Child? @@id(id) } model Child { id String parentId String parent Parent @reference(via:[parentId]) @@id(id) }").is_err());
     assert!(compile("model Parent { id String child Child? @@id(id) } model Child { id String parentId String parent Parent @reference(via:[parentId]) @@id(id) @@unique(parentId) }").is_ok());
 }
+#[test]
+fn backend_emitter_declares_handlers_loaders_and_references() {
+    let v = compile(include_str!("../../../fixtures/compiler/relations.model")).unwrap();
+    let ts = otter_compiler::backend_typescript(&v, "@ottersync/server");
+    assert!(ts.contains("from \"@ottersync/server\""));
+    assert!(ts.contains("export interface Handlers<Tx> {"));
+    assert!(ts.contains(
+        " addBook(call: HandlerCall<Tx, AddBookInput>): Promise<void | { channel: string }>;"
+    ));
+    assert!(ts.contains(
+        " addComment(call: HandlerCall<Tx, AddCommentInput>): Promise<void | { channel: string }>;"
+    ));
+    assert!(ts.contains("export interface Loaders<Tx> {"));
+    assert!(
+        ts.contains(
+            " book(call: LoaderCall<Tx, BookIdentity>): Promise<readonly (Book | null)[]>;"
+        )
+    );
+    assert!(ts.contains("export function Book(identity: BookIdentity): RecordRef { return { model: \"Book\", identity }; }"));
+    assert!(ts.contains("export interface AddBookInput {\n book: Book;\n}"));
+    assert!(ts.contains("export function createBackend<Tx>("));
+    assert!(!otter_compiler::typescript(&v).contains("backendConfig"));
+}
+#[test]
+fn backend_emitter_suffixes_older_mutation_versions() {
+    let v = compile("model A { id String title String @@id(id) } mutation Edit { a A.update<title> @@version(2) }").unwrap();
+    let mut with_history = v.clone();
+    let mut old = v["mutations"][0].clone();
+    old["version"] = serde_json::json!(1);
+    with_history["backendMutations"] = serde_json::json!([old, v["mutations"][0].clone()]);
+    let ts = otter_compiler::backend_typescript(&with_history, "@ottersync/server");
+    assert!(ts.contains(" edit(call: HandlerCall<Tx, EditInput>)"));
+    assert!(ts.contains(" editV1(call: HandlerCall<Tx, EditV1Input>)"));
+}

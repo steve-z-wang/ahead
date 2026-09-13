@@ -48,13 +48,7 @@ impl Backend {
     }
     fn push(&self, body: &[u8]) -> String {
         let before = self.0.lock().unwrap().clone();
-        match run(otter_server::process_push(
-            &config(),
-            "u",
-            "book",
-            body,
-            self,
-        )) {
+        match run(otter_server::process_push(&config(), "u", body, self)) {
             Ok(r) => r,
             Err(e) => {
                 *self.0.lock().unwrap() = before;

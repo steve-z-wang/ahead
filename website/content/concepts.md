@@ -18,7 +18,7 @@ For example, editing a title while offline makes that title visible locally. If 
 
 Direct local writes and local companions have their own roles. A direct write is separate from a server mutation's fate; a companion participates in a mutation's fate without being uploaded. The framework does not rerun arbitrary application callbacks to reconstruct optimistic state.
 
-## Handler, Loader and Publish
+## Handler, Loader and Notify
 
 The TypeScript backend SDK connects three operations to your application:
 
@@ -26,13 +26,13 @@ The TypeScript backend SDK connects three operations to your application:
 | --- | --- |
 | **Handler** | Execute a named Mutation against your business data, including business authorization. |
 | **Loader** | Return current, complete, visible state for the requested identities, in their supplied order. Return null for missing or unauthorized rows. |
-| **Publish** | Explicitly identify changed Records and the Channels that should receive invalidations. |
+| **Notify** | Explicitly identify changed Records and the Channels that should receive invalidations. |
 
-The application provides the transaction runner. Batch processing uses one outer transaction with per-mutation savepoints; business writes, publication and receipts participate in that transaction. A business rejection can roll back one mutation's savepoint. Unexpected failures abort the batch.
+The application provides the transaction runner. Batch processing uses one outer transaction with per-mutation savepoints; business writes, notification and receipts participate in that transaction. A business rejection can roll back one mutation's savepoint. Unexpected failures abort the batch.
 
-Background jobs can also publish inside an existing application transaction. A publication inside that transaction is not proof of commit: use the SDK's completion check and invoke the returned notification hook only after the transaction resolves.
+Background jobs can also notify inside an existing application transaction. A notification inside that transaction is not proof of commit: use the SDK's completion check and invoke the returned notification hook only after the transaction resolves.
 
-The [backend SDK guide](packages/server/README.md) shows both registration and transaction-bound publication. The first adapter targets [Prisma/PostgreSQL](packages/persistence-prisma/README.md); [Nest decorators](packages/nest/README.md) are optional.
+The [backend SDK guide](packages/server/README.md) shows both registration and transaction-bound notification. The first adapter targets [Prisma/PostgreSQL](packages/persistence-prisma/README.md).
 
 ## Channel, Cursor and Checkpoint
 

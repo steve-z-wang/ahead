@@ -55,9 +55,9 @@ Query, watch and mutate local SQLite through typed APIs. Rust owns the durable q
 
 ### Connect your backend
 
-Implement Handlers and Loaders. Publish changes to explicit Channels within transactions your application owns.
+Implement Handlers and Loaders. Notify explicit Channels of changed records within transactions your application owns.
 
-[Backend SDK](packages/server/README.md) · [Prisma adapter](packages/persistence-prisma/README.md) · [Nest integration](packages/nest/README.md)
+[Backend SDK](packages/server/README.md) · [Prisma adapter](packages/persistence-prisma/README.md)
 
 </div>
 <div markdown="1">

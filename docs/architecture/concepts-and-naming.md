@@ -21,10 +21,12 @@
 | Uplink / Downlink | Push / Pull | The paths and internal modules for sending pending operations / fetching authoritative changes. |
 | Sync ID | Cursor / Checkpoint | Cursor represents the current position; Checkpoint represents a position required for operation settlement. |
 
+`Notify` replaces the earlier `Publish` for the handler-side invalidation call; the wire and storage vocabulary is unchanged.
+
 ## API and module naming
 
 - Use singular `channel` and plural `channels`; an application constructor might be `bookChannel(bookId)`.
-- Call the callback a `Loader`; the proposed registration entry point is `Entry.loader(...)`, and the dispatch interface is `LoaderDispatcher`. If the optional Nest decorator is implemented, use `@Loads`, corresponding to the operation decorator `@Handles`.
+- Call the callback a `Loader`; the proposed registration entry point is `Entry.loader(...)`, and the dispatch interface is `LoaderDispatcher`.
 - Paths use `push` / `pull`, and types use `Push…` / `Pull…`; for example, `PullPage`.
 - `ChannelCursor` represents the current position in a Channel; `ChannelCheckpoint` represents a position that must be reached. The Channel must be carried explicitly or determined from context; bare numbers detached from their Channels cannot be compared.
 - `requiredCheckpoints` are settlement conditions; the conceptual name does not determine the exact wire-property spelling.
@@ -32,17 +34,17 @@
 
 The following only illustrates the names. Complete callback signatures and registration mechanisms will be determined during implementation:
 
-```ts
-Entry.loader(async (ctx, identities) => {
-  return entries.readVisible(ctx, identities);
-});
+> This section is a historical record of the pre-implementation naming proposal; the code block below was updated on 2026-09-12 to the current surface.
 
-// store is bound to the application transaction; see the architecture for Handler batch deduplication and receipts.
-await publisher.publish(store, {
-  channels: [bookChannel(bookId)],
-  model: Entry,
-  identity: { id: entryId },
-});
+```ts
+export const loaders: Loaders<Tx> = {
+  async entry({ ids, tx }) {
+    return Promise.all(ids.map((id) => tx.entry.findUnique({ where: id })));
+  },
+};
+
+// notify is called from within a Handler; see the architecture for Handler batch deduplication and receipts.
+notify({ channel: "book:demo", records: [input.entry] });
 ```
 
 ## Semantic boundaries

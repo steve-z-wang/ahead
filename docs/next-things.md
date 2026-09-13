@@ -21,6 +21,8 @@ Implement a schema-driven Rust client/server runtime, language SDKs, generators,
 - [ ] Extend the schema compatibility fence to inspect identity/type/nullability changes; preserve the current fence first, then design this independently.
 - [ ] Wake after external user-transaction commits, additional polling, and multi-process notification strategy; first verify the current notification boundary.
 - [ ] Improve settlement witness coverage, recovery after permission revocation, and the current channel-authorizer/host policy; do not remove old behavior without review.
+- [ ] Client `openClient`: open in one step with a built-in transport, symmetric with the backend's `createBackend`.
+- [ ] `authenticate` receives a Node `IncomingMessage`; supporting other runtimes needs an abstract request type.
 
 ## Confirmed naming
 

@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { createServer } from "node:http";
 import type { IncomingMessage, RequestListener, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, WebSocket } from "ws";
@@ -9,7 +10,6 @@ export type Native = {
   processPush(
     config: string,
     owner: string,
-    channel: string,
     request: string,
     callback: (request: string) => Promise<string>,
   ): Promise<string>;
@@ -41,6 +41,24 @@ export type Native = {
 export interface Persistence {
   call(request: Record<string, any>): Promise<unknown>;
 }
+export interface Database<T> {
+  /** Must provide a coherent snapshot and roll back rejected callbacks. Retry serialization failures. */
+  transaction: <R>(body: (tx: T) => Promise<R>) => Promise<R>;
+  persistence: (tx: T) => Persistence;
+}
+export type Authenticate = (
+  request: IncomingMessage,
+) => Promise<string | null | undefined> | string | null | undefined;
+/** Development only: the bearer token is used verbatim as the user id. Never use in production. */
+export function devAuth(): Authenticate {
+  return (request) => {
+    const header = request.headers.authorization;
+    if (typeof header !== "string" || !header.startsWith("Bearer "))
+      return null;
+    const id = header.slice("Bearer ".length).trim();
+    return id === "" ? null : id;
+  };
+}
 export class MutationRejected extends Error {
   readonly code: string;
   constructor(code: string) {
@@ -50,42 +68,70 @@ export class MutationRejected extends Error {
     this.code = code;
   }
 }
-export type Changes = readonly { model: string; identity: object }[];
-export interface WriteContext<T> {
-  transaction: T;
-  actorUserId: string;
-  publish(changes: Changes, channels: readonly string[]): Promise<unknown>;
+export interface RecordRef {
+  model: string;
+  identity: object;
 }
-export interface ReadContext<T> {
-  transaction: T;
-  viewerUserId: string;
+export type NotifyArgs = {
+  channel: string;
+  records: readonly (RecordRef | object)[];
+};
+export type Notify = (args: NotifyArgs) => void;
+export interface HandlerCall<Tx, Input> {
+  input: Input;
+  tx: Tx;
+  userId: string;
+  notify: Notify;
+}
+export interface LoaderCall<Tx, Identity> {
+  ids: readonly Identity[];
+  tx: Tx;
+  userId: string;
+  /** The channel whose Pull requested these rows; loaders may scope visibility by it. */
   channel: string;
 }
-export type Handler<T, Input = Record<string, any>> = (
-  context: WriteContext<T>,
-  args: Input,
+export type Handler<Tx, Input = any> = (
+  call: HandlerCall<Tx, Input>,
 ) => Promise<void | { channel: string }>;
-export interface Loader<T> {
-  load(
-    context: ReadContext<T>,
-    identities: readonly any[],
-  ): Promise<readonly (object | null)[]>;
-  prepareForViewer?(
-    context: ReadContext<T>,
-    identities: readonly any[],
-  ): Promise<void>;
+export type Loader<Tx, Identity = any, Row = object> = (
+  call: LoaderCall<Tx, Identity>,
+) => Promise<readonly (Row | null)[]>;
+export const RECORD: unique symbol = Symbol("otter.record");
+function toRef(value: unknown): RecordRef {
+  if (value !== null && typeof value === "object") {
+    const tagged = (value as { [RECORD]?: RecordRef })[RECORD];
+    if (tagged) return tagged;
+    const { model, identity } = value as Partial<RecordRef>;
+    if (typeof model === "string" && identity && typeof identity === "object")
+      return { model, identity };
+  }
+  throw new Error(
+    "notify: record must be a slot argument or { model, identity }",
+  );
 }
+function tag<T extends object>(value: T, ref: RecordRef): T {
+  Object.defineProperty(value, RECORD, { value: ref, enumerable: false });
+  return value;
+}
+function lowerFirst(name: string): string {
+  return name.charAt(0).toLowerCase() + name.slice(1);
+}
+/** A framework programming error (no/ambiguous checkpoint), never a per-mutation rejection: must abort the batch and never reach `translateRejection`. */
+class CheckpointError extends Error {}
 export interface BackendOptions<T> {
   config: object;
-  /** Must provide a coherent snapshot and roll back rejected callbacks. Retry serialization failures. */
-  transaction: <R>(body: (tx: T) => Promise<R>) => Promise<R>;
-  persistence: (tx: T) => Persistence;
-  principalChannel: (owner: string) => string;
-  authorize: (context: ReadContext<T>) => Promise<boolean>;
-  handlers: Record<string, Record<number, Handler<T, any>>>;
+  database: Database<T>;
+  authenticate: Authenticate;
+  handlers: Record<string, Handler<T>>;
   loaders: Record<string, Loader<T>>;
+  loaderHooks?: Record<
+    string,
+    { prepareForViewer(call: LoaderCall<T, any>): Promise<void> }
+  >;
   translateRejection?: (error: unknown) => string | null | undefined;
   native?: Native;
+  /** Called for server-side failures that clients only see as `{ code: "server" }`: authenticate throws, persistence faults, checkpoint errors, live drain failures. */
+  onError?: (error: unknown) => void;
 }
 /** JSON cannot represent nonfinite values or undefined array items. Never turn either into null. */
 function callbackJson(value: unknown): string {
@@ -161,32 +207,57 @@ class Session {
     if (this.closed) throw new Error("transaction session closed");
   }
 }
+type MutationSlot = {
+  name: string;
+  operation: string;
+  cardinality: string;
+  model: string;
+};
+type MutationDescriptor = {
+  name: string;
+  version: number;
+  slots?: MutationSlot[];
+};
 export function createBackend<T>(options: BackendOptions<T>) {
   const native =
-    options.native ?? (require("../../bindings/node/otter-node.node") as Native);
+    options.native ??
+    (require("../../bindings/node/otter-node.node") as Native);
+  const descriptor = options.config as {
+    schema?: { models?: { name: string }[] };
+    mutations?: MutationDescriptor[];
+  };
+  const latest = new Map<string, number>();
+  for (const m of descriptor.mutations ?? [])
+    latest.set(m.name, Math.max(latest.get(m.name) ?? 0, m.version));
+  const handlerKey = (name: string, version: number) =>
+    lowerFirst(name) + (version === latest.get(name) ? "" : `V${version}`);
+  const modelNames = (descriptor.schema?.models ?? []).map(
+    (model) => model.name,
+  );
   const config = JSON.stringify({
     ...options.config,
-    loaders: Object.keys(options.loaders),
+    loaders: modelNames,
   });
   native.validateConfig(config);
-  const descriptor = options.config as {
-    schema?: { models?: { name?: unknown }[] };
-    mutations?: { name?: unknown; version?: unknown }[];
-  };
-  for (const mutation of descriptor.mutations ?? []) {
-    if (
-      typeof mutation.name === "string" &&
-      typeof mutation.version === "number" &&
-      typeof options.handlers[mutation.name]?.[mutation.version] !== "function"
-    )
-      throw new Error(`Missing handler ${mutation.name} v${mutation.version}`);
+  const loaderTable = new Map<string, Loader<T>>();
+  for (const name of modelNames) {
+    const loader = options.loaders[lowerFirst(name)];
+    if (typeof loader !== "function") throw new Error(`Missing loader ${name}`);
+    loaderTable.set(name, loader);
   }
-  for (const model of descriptor.schema?.models ?? []) {
-    if (
-      typeof model.name === "string" &&
-      typeof options.loaders[model.name]?.load !== "function"
-    )
-      throw new Error(`Missing loader ${model.name}`);
+  const handlerTable = new Map<
+    string,
+    { handler: Handler<T>; slots: MutationSlot[] }
+  >();
+  for (const m of descriptor.mutations ?? []) {
+    const key = handlerKey(m.name, m.version);
+    const handler = options.handlers[key];
+    if (typeof handler !== "function")
+      throw new Error(`Missing handler ${key} for ${m.name} v${m.version}`);
+    handlerTable.set(`${m.name}:${m.version}`, {
+      handler,
+      slots: m.slots ?? [],
+    });
   }
   const sessions = new Map<T, Session>();
   const wakes = new WakeHub();
@@ -194,7 +265,7 @@ export function createBackend<T>(options: BackendOptions<T>) {
     tx: T,
     session: Session,
   ): ((request: string) => Promise<string>) => {
-    const storage = options.persistence(tx);
+    const storage = options.database.persistence(tx);
     return (raw) =>
       session.track(async () => {
         const req = JSON.parse(raw);
@@ -203,19 +274,74 @@ export function createBackend<T>(options: BackendOptions<T>) {
         if (req.op === "rollback") session.rollback(req.ordinal);
         if (req.op === "release") session.release(req.ordinal);
         if (req.op === "handle") {
-          const handler = options.handlers[req.name]?.[req.version];
-          if (!handler)
+          const entry = handlerTable.get(`${req.name}:${req.version}`);
+          if (!entry)
             throw new Error(`Missing handler ${req.name} v${req.version}`);
+          const shape = (slot: MutationSlot, raw: any) => {
+            if (raw === null || raw === undefined) return null;
+            const ref: RecordRef = {
+              model: slot.model,
+              identity: raw.identity,
+            };
+            if (slot.operation === "create")
+              return tag({ ...raw.identity, ...raw.data }, ref);
+            if (slot.operation === "update")
+              return tag({ identity: raw.identity, patch: raw.patch }, ref);
+            return tag({ identity: raw.identity }, ref);
+          };
+          const input: Record<string, unknown> = {};
+          for (const slot of entry.slots) {
+            const raw = req.arguments[slot.name];
+            input[slot.name] =
+              slot.cardinality === "list"
+                ? (raw as any[]).map((item) => shape(slot, item))
+                : shape(slot, raw);
+          }
+          const notified = new Set<string>();
+          const pending: { channel: string; refs: RecordRef[] }[] = [];
+          const notify: Notify = ({ channel, records }) => {
+            if (typeof channel !== "string" || channel === "")
+              throw new Error("notify: channel must be a non-empty string");
+            if (!Array.isArray(records))
+              throw new Error("notify: records must be an array");
+            const refs = records.map(toRef);
+            notified.add(channel);
+            pending.push({ channel, refs });
+          };
           try {
-            result = await handler(
-              {
-                transaction: tx,
-                actorUserId: req.owner,
-                publish: (changes, channels) => publish(tx, changes, channels),
-              },
-              req.arguments,
-            );
+            const returned = await entry.handler({
+              input,
+              tx,
+              userId: req.owner,
+              notify,
+            });
+            for (const item of pending)
+              await publish(tx, item.refs, [item.channel]);
+            if (
+              returned &&
+              typeof returned === "object" &&
+              typeof (returned as { channel?: unknown }).channel === "string"
+            ) {
+              const channel = (returned as { channel: string }).channel;
+              if (channel === "")
+                throw new CheckpointError(
+                  `handler.invalid_checkpoint:${req.name}`,
+                );
+              if (!notified.has(channel))
+                throw new CheckpointError(
+                  `handler.unnotified_checkpoint:${req.name}`,
+                );
+              result = { channel };
+            } else if (notified.size === 1)
+              result = { channel: [...notified][0] };
+            else if (notified.size === 0)
+              throw new CheckpointError(`handler.no_channel:${req.name}`);
+            else
+              throw new CheckpointError(
+                `handler.ambiguous_checkpoint:${req.name}`,
+              );
           } catch (error) {
+            if (error instanceof CheckpointError) throw error;
             const code =
               error instanceof MutationRejected
                 ? error.code
@@ -223,23 +349,21 @@ export function createBackend<T>(options: BackendOptions<T>) {
             if (code == null) throw error;
             result = { rejection: new MutationRejected(code).code };
           }
-          if (result === undefined) result = null;
         } else if (req.op === "authorize") {
-          result = await options.authorize({
-            transaction: tx,
-            viewerUserId: req.owner,
-            channel: req.channel,
-          });
+          result = true;
         } else if (req.op === "load") {
-          const loader = options.loaders[req.model];
+          const loader = loaderTable.get(req.model);
           if (!loader) throw new Error(`Missing loader ${req.model}`);
-          const context = {
-            transaction: tx,
-            viewerUserId: req.owner,
+          const call = {
+            ids: req.identities,
+            tx,
+            userId: req.owner,
             channel: req.channel,
           };
-          await loader.prepareForViewer?.(context, req.identities);
-          result = await loader.load(context, req.identities);
+          await options.loaderHooks?.[lowerFirst(req.model)]?.prepareForViewer(
+            call,
+          );
+          result = await loader(call);
           if (
             !Array.isArray(result) ||
             result.some((value) => value === undefined)
@@ -251,7 +375,7 @@ export function createBackend<T>(options: BackendOptions<T>) {
   };
   const publish = (
     tx: T,
-    changes: Changes,
+    changes: readonly RecordRef[],
     channels: readonly string[],
   ): Promise<unknown> => {
     const session = sessions.get(tx) ?? new Session();
@@ -273,8 +397,9 @@ export function createBackend<T>(options: BackendOptions<T>) {
     const session = new Session();
     sessions.set(tx, session);
     return {
-      publish: (changes: Changes, channels: readonly string[]) =>
-        publish(tx, changes, channels),
+      /** Unlike the handler's `notify`, this returns a promise the caller must await before the transaction commits. */
+      notify: ({ channel, records }: NotifyArgs) =>
+        publish(tx, records.map(toRef), [channel]),
       assertCommittable: () => session.assertCommittable(),
       afterCommit: () => {
         const scopes = [...session.touched];
@@ -290,7 +415,7 @@ export function createBackend<T>(options: BackendOptions<T>) {
     operation: (tx: T, session: Session) => Promise<R>,
   ) => {
     let committed: string[] = [];
-    const result = await options.transaction(async (tx) => {
+    const result = await options.database.transaction(async (tx) => {
       const bound = bindTransaction(tx);
       const session = sessions.get(tx)!;
       try {
@@ -314,16 +439,11 @@ export function createBackend<T>(options: BackendOptions<T>) {
     typeof request === "string"
       ? request
       : new TextDecoder("utf-8", { fatal: true }).decode(request);
-  return {
+  /** @internal Raw protocol seams used by the framework's own tests; not part of the supported surface. */
+  const api = {
     push: (owner: string, request: Uint8Array | string) =>
       run((tx, session) =>
-        native.processPush(
-          config,
-          owner,
-          options.principalChannel(owner),
-          text(request),
-          host(tx, session),
-        ),
+        native.processPush(config, owner, text(request), host(tx, session)),
       ),
     pull: (owner: string, request: Uint8Array | string) =>
       run((tx, session) =>
@@ -341,15 +461,75 @@ export function createBackend<T>(options: BackendOptions<T>) {
       wakes.subscribe(scope, wake),
     notifyCommitted: (scopes: readonly string[]) => wakes.notify(scopes),
     closeLive: () => wakes.clear(),
-    publish,
+    /** Unlike the handler's `notify`, this returns a promise the caller must await before the transaction commits. */
+    notify: (tx: T, args: NotifyArgs) =>
+      publish(tx, args.records.map(toRef), [args.channel]),
     bindTransaction,
   };
+  const authenticate = async (request: IncomingMessage) => {
+    const id = await options.authenticate(request);
+    if (typeof id !== "string") return null;
+    const trimmed = id.trim();
+    return trimmed === "" ? null : trimmed;
+  };
+  const listen = async ({
+    port,
+    host = "127.0.0.1",
+  }: {
+    port: number;
+    host?: string;
+  }) => {
+    const server = createServer(
+      createHttpHandler({
+        backend: api,
+        authenticate,
+        ...(options.onError ? { onError: options.onError } : {}),
+      }),
+    );
+    const live = attachLive(server, {
+      backend: api,
+      authenticate,
+      ...(options.onError ? { onError: options.onError } : {}),
+    });
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => reject(error);
+      server.once("error", onError);
+      server.listen(port, host, () => {
+        server.off("error", onError);
+        resolve();
+      });
+    });
+    const address = server.address();
+    const actual = typeof address === "object" && address ? address.port : port;
+    const urlHost =
+      host === "0.0.0.0"
+        ? "127.0.0.1"
+        : host === "::"
+          ? "localhost"
+          : host.includes(":")
+            ? `[${host}]`
+            : host;
+    let closed = false;
+    return {
+      url: `http://${urlHost}:${actual}`,
+      close: async () => {
+        if (closed) return;
+        closed = true;
+        await live.close();
+        server.closeIdleConnections();
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        );
+      },
+    };
+  };
+  return { ...api, listen };
 }
-export interface HttpBackend {
+interface HttpBackend {
   push(owner: string, request: Uint8Array | string): Promise<string>;
   pull(owner: string, request: Uint8Array | string): Promise<string>;
 }
-export function createHttpHandler(options: {
+function createHttpHandler(options: {
   backend: HttpBackend;
   authenticate: (request: IncomingMessage) => Promise<string | null>;
   maxBodyBytes?: number;
@@ -443,7 +623,7 @@ export function createHttpHandler(options: {
   };
 }
 
-export interface LiveBackend {
+interface LiveBackend {
   negotiateLive(
     owner: string,
     request: Uint8Array | string,
@@ -459,7 +639,7 @@ export interface LiveBackend {
   onCommitted(scope: string, wake: () => void): () => void;
 }
 
-export function attachLive(
+function attachLive(
   server: Server,
   options: {
     backend: LiveBackend;
