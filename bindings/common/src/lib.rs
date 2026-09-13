@@ -1,6 +1,5 @@
 //! One command/value contract shared by native language bridges.
 use otter_client::*;
-use otter_core::*;
 use otter_sqlite::SqliteStore;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -11,8 +10,6 @@ pub struct RuntimeHost {
 }
 struct Entry {
     client: Client<SqliteStore>,
-    session: Option<TransactionSession>,
-    savepoints: Vec<TransactionSession>,
     cycle: SyncCycle,
     connection: ConnectionDriver,
 }
@@ -20,15 +17,11 @@ impl RuntimeHost {
     pub fn call(&mut self, request: Value) -> Result<Value> {
         let op = text(&request, "op")?;
         if op == "open" {
-            let migration = request
-                .get("migration")
-                .map(|v| serde_json::from_value(v.clone()))
-                .transpose()?;
-            let client = Client::open_with_migration(
+            // `owner` and `migration` may still be sent by language packages; the
+            // row-based client keeps neither, so both are accepted and ignored.
+            let client = Client::open(
                 SqliteStore::open(text(&request, "path")?)?,
                 Schema::from_value(request["schema"].clone())?,
-                text(&request, "owner")?.into(),
-                migration,
             )?;
             self.next = self
                 .next
@@ -41,8 +34,6 @@ impl RuntimeHost {
                 handle,
                 Entry {
                     client,
-                    session: None,
-                    savepoints: vec![],
                     cycle: SyncCycle::default(),
                     connection: ConnectionDriver::default(),
                 },
@@ -63,66 +54,50 @@ impl RuntimeHost {
             .get_mut(&id)
             .ok_or_else(|| invalid("client_closed"))?;
         let generation = e.client.generation();
-        if request["transaction"] == true && e.session.is_none() {
+        if request["transaction"] == true && !e.client.session_active() {
             return Err(invalid("transaction_closed"));
         }
         let value = match op {
             "begin" => {
-                if e.session.is_some() {
-                    return Err(invalid("transaction already active"));
-                }
-                e.session = Some(e.client.begin_session());
+                e.client.begin_session()?;
                 Value::Null
             }
             "commit" => {
-                if !e.savepoints.is_empty() {
-                    return Err(invalid("unclosed savepoint"));
-                }
-                let session = e
-                    .session
-                    .take()
-                    .ok_or_else(|| invalid("no active transaction"))?;
-                e.client.commit_session(session)?;
+                e.client.commit_session()?;
                 Value::Null
             }
             "rollback" => {
-                e.session
-                    .take()
-                    .ok_or_else(|| invalid("no active transaction"))?;
-                e.savepoints.clear();
+                e.client.rollback_session()?;
                 Value::Null
             }
             "savepoint" => {
-                e.savepoints.push(
-                    e.session
-                        .as_ref()
-                        .ok_or_else(|| invalid("no active transaction"))?
-                        .clone(),
-                );
+                e.client.session_savepoint()?;
                 Value::Null
             }
             "release" => {
-                e.savepoints.pop().ok_or_else(|| invalid("no savepoint"))?;
+                e.client.session_release()?;
                 Value::Null
             }
             "rollbackSavepoint" => {
-                e.session = Some(e.savepoints.pop().ok_or_else(|| invalid("no savepoint"))?);
+                e.client.session_rollback_savepoint()?;
                 Value::Null
             }
             "read" => {
                 let key: RecordKey = serde_json::from_value(request["key"].clone())?;
-                match &mut e.session {
-                    Some(s) => s.run(|tx| tx.read(&key))?,
-                    None => e.client.read(&key)?,
+                if e.client.session_active() {
+                    e.client.session(|tx| tx.read(&key))?
+                } else {
+                    e.client.read(&key)?
                 }
                 .unwrap_or(Value::Null)
             }
             "query" => {
                 let model = text(&request, "model")?;
                 let filter = request.get("filter").cloned().unwrap_or(json!({}));
-                serde_json::to_value(match &mut e.session {
-                    Some(s) => s.run(|tx| tx.query(model, &filter))?,
-                    None => e.client.query(model, &filter)?,
+                serde_json::to_value(if e.client.session_active() {
+                    e.client.session(|tx| tx.query(model, &filter))?
+                } else {
+                    e.client.query(model, &filter)?
                 })?
             }
             "sql" => {
@@ -130,25 +105,28 @@ impl RuntimeHost {
                 let parameters = request["parameters"]
                     .as_array()
                     .ok_or_else(|| invalid("SQL parameters must be array"))?;
-                serde_json::to_value(match &e.session {
-                    Some(s) => e.client.session_sql(s, sql, parameters)?,
-                    None => e.client.read_sql(sql, parameters)?,
+                serde_json::to_value(if e.client.session_active() {
+                    e.client.session_sql(sql, parameters)?
+                } else {
+                    e.client.read_sql(sql, parameters)?
                 })?
             }
             "querySpec" => {
                 let model = text(&request, "model")?;
                 let spec: QuerySpec = serde_json::from_value(request["query"].clone())?;
-                serde_json::to_value(match &mut e.session {
-                    Some(s) => s.run(|tx| tx.query_spec(model, &spec))?,
-                    None => e.client.query_spec(model, &spec)?,
+                serde_json::to_value(if e.client.session_active() {
+                    e.client.session(|tx| tx.query_spec(model, &spec))?
+                } else {
+                    e.client.query_spec(model, &spec)?
                 })?
             }
             "related" => {
                 let key: RecordKey = serde_json::from_value(request["key"].clone())?;
                 let name = text(&request, "relation")?;
-                match &mut e.session {
-                    Some(s) => s.run(|tx| tx.related(&key, name))?,
-                    None => e.client.related(&key, name)?,
+                if e.client.session_active() {
+                    e.client.session(|tx| tx.related(&key, name))?
+                } else {
+                    e.client.related(&key, name)?
                 }
                 .unwrap_or(Value::Null)
             }
@@ -156,24 +134,27 @@ impl RuntimeHost {
                 let key: RecordKey = serde_json::from_value(request["key"].clone())?;
                 let name = text(&request, "relation")?;
                 let source = text(&request, "source")?;
-                serde_json::to_value(match &mut e.session {
-                    Some(s) => s.run(|tx| tx.referencing(&key, source, name))?,
-                    None => e.client.referencing(&key, source, name)?,
+                serde_json::to_value(if e.client.session_active() {
+                    e.client.session(|tx| tx.referencing(&key, source, name))?
+                } else {
+                    e.client.referencing(&key, source, name)?
                 })?
             }
             "enqueue" => {
                 let mutation: Mutation = serde_json::from_value(request["mutation"].clone())?;
-                let ordinal = match &mut e.session {
-                    Some(s) => s.run(|tx| tx.enqueue(mutation))?,
-                    None => e.client.transaction(|tx| tx.enqueue(mutation))?,
+                let ordinal = if e.client.session_active() {
+                    e.client.session(|tx| tx.enqueue(mutation))?
+                } else {
+                    e.client.transaction(|tx| tx.enqueue(mutation))?
                 };
                 json!(ordinal)
             }
             "direct" => {
                 let operation: Operation = serde_json::from_value(request["operation"].clone())?;
-                match &mut e.session {
-                    Some(s) => s.run(|tx| tx.direct(operation))?,
-                    None => e.client.transaction(|tx| tx.direct(operation))?,
+                if e.client.session_active() {
+                    e.client.session(|tx| tx.direct(operation))?
+                } else {
+                    e.client.transaction(|tx| tx.direct(operation))?
                 };
                 Value::Null
             }
@@ -182,20 +163,16 @@ impl RuntimeHost {
                 let subscribed = request["subscribed"]
                     .as_bool()
                     .ok_or_else(|| invalid("subscribed must be bool"))?;
-                match &mut e.session {
-                    Some(s) => s.run(|tx| {
-                        tx.set_channel(channel, subscribed);
-                        Ok(())
-                    })?,
-                    None => e.client.transaction(|tx| {
-                        tx.set_channel(channel, subscribed);
-                        Ok(())
-                    })?,
+                if e.client.session_active() {
+                    e.client.session(|tx| tx.set_channel(channel, subscribed))?
+                } else {
+                    e.client
+                        .transaction(|tx| tx.set_channel(channel, subscribed))?
                 };
                 Value::Null
             }
             _ => {
-                if e.session.is_some() {
+                if e.client.session_active() {
                     return Err(invalid("client transaction active"));
                 }
                 match op {
@@ -281,16 +258,16 @@ impl RuntimeHost {
                         let key: RecordKey = serde_json::from_value(request["key"].clone())?;
                         e.client.record_status(&key)?
                     }
-                    "tasks" => json!(e.client.pending_tasks()),
+                    "tasks" => json!(e.client.pending_tasks()?),
                     "status" => {
-                        json!({"clientId":e.client.client_id(),"pending":e.client.pending_count(),"beforeImages":e.client.before_image_count(),"cursors":e.client.snapshot().cursors,"channels":e.client.desired_channels(),"rejections":e.client.rejections()})
+                        json!({"clientId":e.client.client_id(),"pending":e.client.pending_count()?,"beforeImages":e.client.before_image_count()?,"cursors":e.client.subscriptions()?.into_iter().collect::<BTreeMap<_,_>>(),"channels":e.client.desired_channels()?,"rejections":e.client.rejections()?})
                     }
                     _ => return Err(invalid(format!("unknown client command {op}"))),
                 }
             }
         };
         Ok(
-            json!({"value":value,"changed":generation!=e.client.generation(),"generation":e.client.generation()}),
+            json!({"value":value,"changed":generation!=e.client.generation(),"changedTables":e.client.last_changed(),"generation":e.client.generation()}),
         )
     }
 }

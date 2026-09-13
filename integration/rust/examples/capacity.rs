@@ -12,12 +12,7 @@ fn main() {
     for count in [10, 1000] {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("capacity.sqlite");
-        let mut client = Client::open(
-            SqliteStore::open(&path).unwrap(),
-            schema.clone(),
-            "capacity".into(),
-        )
-        .unwrap();
+        let mut client = Client::open(SqliteStore::open(&path).unwrap(), schema.clone()).unwrap();
         let page = |from, to| PullPage {
             channel: "book".into(),
             from_cursor: from,
@@ -54,7 +49,7 @@ fn main() {
         let start = Instant::now();
         client.apply_page(page(1, 2)).unwrap();
         let replay_ms = start.elapsed().as_secs_f64() * 1000.0;
-        assert_eq!(client.pending_count(), count);
+        assert_eq!(client.pending_count().unwrap(), count);
         let key = schema.record_key("Entry", &json!({"id":"one"})).unwrap();
         assert_eq!(
             client.read(&key).unwrap().unwrap()["text"],
