@@ -349,8 +349,6 @@ export function createBackend<T>(options: BackendOptions<T>) {
             if (code == null) throw error;
             result = { rejection: new MutationRejected(code).code };
           }
-        } else if (req.op === "authorize") {
-          result = true;
         } else if (req.op === "load") {
           const loader = loaderTable.get(req.model);
           if (!loader) throw new Error(`Missing loader ${req.model}`);
@@ -590,13 +588,8 @@ function createHttpHandler(options: {
       send(200, result);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (/^(owner_mismatch|channel_forbidden)$/.test(message)) {
-        send(403, {
-          code:
-            message === "owner_mismatch"
-              ? "client.owner_mismatch"
-              : "scope.forbidden",
-        });
+      if (message === "owner_mismatch") {
+        send(403, { code: "client.owner_mismatch" });
         return;
       }
       if (/^(gap|overlap)$/.test(message)) {

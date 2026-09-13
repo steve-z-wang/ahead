@@ -49,7 +49,6 @@ impl Host for Fixed {
     ) -> Pin<Box<dyn Future<Output = otter_server::Result<Value>> + Send + '_>> {
         Box::pin(async move {
             Ok(match r["op"].as_str().unwrap() {
-                "authorize" => json!(true),
                 "head" => json!(5),
                 "scan" => self.scan.clone(),
                 "load" => json!([{"id":"e","text":"t"}]),
