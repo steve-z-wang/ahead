@@ -454,6 +454,7 @@ pub async fn process_pull(
             cursor,
             model: model.into(),
             identity: key.identity,
+            stamp: None,
             state: Value::Null,
         });
     }

@@ -58,6 +58,8 @@ pub struct FieldDescriptor {
     #[serde(rename = "type")]
     pub value_type: ValueType,
     pub nullable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<Value>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -114,6 +116,7 @@ impl Schema {
         }
         for model in &self.models {
             if model.name.is_empty()
+                || model.name.starts_with("otter_")
                 || !names.insert(model.name.as_str())
                 || model.identity.is_empty()
             {
