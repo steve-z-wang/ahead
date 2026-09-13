@@ -4,4 +4,6 @@ pub mod host;
 pub mod net;
 pub mod rng;
 pub mod schema;
+pub mod sim;
 pub use rng::Rng;
+pub use sim::{Action, MutationSpec, Sim, Slot};
