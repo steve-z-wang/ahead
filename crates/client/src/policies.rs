@@ -1,20 +1,27 @@
 //! Resolve schema-declared dependencies from data, without replaying application callbacks.
-use super::*;
-pub(super) fn derive(
-    schema: &Schema,
-    state: &mut ClientState,
+use crate::engine::Engine;
+use crate::store::ClientStore;
+use crate::{Mutation, OperationKind};
+use otter_core::{RecordKey, Result, Schema, canonical_json, invalid};
+use serde_json::{Value, json};
+use std::collections::{BTreeMap, BTreeSet};
+
+pub(crate) fn derive<S: ClientStore>(
+    engine: &mut Engine<'_, S>,
     mutation: &mut Mutation,
 ) -> Result<()> {
+    let queue = engine.queued()?;
+    let schema = engine.schema;
     let mut lifecycle: BTreeSet<_> = mutation.lifecycle_dependencies.iter().copied().collect();
     for op in &mutation.operations {
         let key = schema.record_key(&op.model, &op.identity)?;
         let mut references = vec![key.clone()];
         for relation in &schema.model(&key.model)?.relations {
-            if let Some(target) = reference(schema, state, &key, &relation.name)? {
+            if let Some(target) = reference(engine, &key, &relation.name)? {
                 references.push(target);
             }
         }
-        for prior in &state.queue {
+        for prior in &queue {
             for previous in &prior.mutation.operations {
                 let previous_key = schema.record_key(&previous.model, &previous.identity)?;
                 if (previous.op == OperationKind::Create && references.contains(&previous_key))
@@ -41,26 +48,24 @@ pub(super) fn derive(
                 .map(|k| (k.clone(), value.clone()))
                 .collect();
             let invocation = json!({"name":requirement.name,"arguments":arguments});
-            let task = canonical_json(&invocation)?;
-            state.tasks.insert(task.clone(), invocation);
-            mutation.prerequisites.push(task);
+            mutation.prerequisites.push(canonical_json(&invocation)?);
         }
     }
     mutation.lifecycle_dependencies = lifecycle.into_iter().collect();
     mutation.prerequisites.sort();
     mutation.prerequisites.dedup();
     let mut sequences: BTreeSet<_> = mutation.sequence_dependencies.iter().copied().collect();
-    if let Some(policy) = policy(schema, mutation) {
+    if let Some(policy) = policy_fn(schema, mutation) {
         let current = slots(schema, mutation, policy)?;
         if let Some(after) = policy["sequence"]["after"].as_array() {
-            for reference in after {
-                let name = reference["name"]
+            for reference_spec in after {
+                let name = reference_spec["name"]
                     .as_str()
                     .ok_or_else(|| invalid("invalid sequence descriptor"))?;
-                let arguments = reference["arguments"]
+                let arguments = reference_spec["arguments"]
                     .as_object()
                     .ok_or_else(|| invalid("invalid sequence arguments"))?;
-                for prior in state.queue.iter().filter(|q| q.mutation.name == name) {
+                for prior in queue.iter().filter(|q| q.mutation.name == name) {
                     let Some(prior_policy) = policy_fn(schema, &prior.mutation) else {
                         continue;
                     };
@@ -70,7 +75,7 @@ pub(super) fn derive(
                         let path = path
                             .as_str()
                             .ok_or_else(|| invalid("invalid sequence path"))?;
-                        let source = resolve(schema, state, &current, path)?;
+                        let source = resolve(engine, &current, path)?;
                         if source.is_none()
                             || !targets
                                 .get(target)
@@ -89,9 +94,6 @@ pub(super) fn derive(
     }
     mutation.sequence_dependencies = sequences.into_iter().collect();
     Ok(())
-}
-fn policy<'a>(schema: &'a Schema, mutation: &Mutation) -> Option<&'a Value> {
-    policy_fn(schema, mutation)
 }
 fn policy_fn<'a>(schema: &'a Schema, mutation: &Mutation) -> Option<&'a Value> {
     schema
@@ -128,9 +130,8 @@ fn slots(
     }
     Ok(result)
 }
-fn resolve(
-    schema: &Schema,
-    state: &ClientState,
+fn resolve<S: ClientStore>(
+    engine: &mut Engine<'_, S>,
     slots: &BTreeMap<String, Vec<RecordKey>>,
     path: &str,
 ) -> Result<Option<RecordKey>> {
@@ -141,47 +142,43 @@ fn resolve(
     };
     let mut key = keys[0].clone();
     for part in parts {
-        let Some(next) = reference(schema, state, &key, part)? else {
+        let Some(next) = reference(engine, &key, part)? else {
             return Ok(None);
         };
         key = next;
     }
     Ok(Some(key))
 }
-fn reference(
-    schema: &Schema,
-    state: &ClientState,
+fn reference<S: ClientStore>(
+    engine: &mut Engine<'_, S>,
     key: &RecordKey,
     name: &str,
 ) -> Result<Option<RecordKey>> {
-    let relation = schema
+    let relation = engine
+        .schema
         .model(&key.model)?
         .relations
         .iter()
         .find(|r| r.name == name)
-        .ok_or_else(|| invalid("unknown relation in dependency"))?;
-    let encoded = key.encoded()?;
-    let row = state
-        .records
-        .get(&encoded)
-        .or_else(|| state.before.get(&encoded).and_then(Option::as_ref));
+        .ok_or_else(|| invalid("unknown relation in dependency"))?
+        .clone();
+    let row = match engine.read_row(key)? {
+        Some(row) => Some(row),
+        None => engine.truth(key)?,
+    };
     let Some(row) = row else {
         return Ok(None);
     };
     let mut identity = serde_json::Map::new();
     for (local, target) in relation.fields.iter().zip(&relation.target_fields) {
-        let Some(value) = row
-            .key
-            .identity
-            .get(local)
-            .or_else(|| row.state.get(local))
-            .filter(|v| !v.is_null())
-        else {
+        let Some(value) = row.get(local).filter(|v| !v.is_null()) else {
             return Ok(None);
         };
         identity.insert(target.clone(), value.clone());
     }
     Ok(Some(
-        schema.record_key(&relation.target, &Value::Object(identity))?,
+        engine
+            .schema
+            .record_key(&relation.target, &Value::Object(identity))?,
     ))
 }

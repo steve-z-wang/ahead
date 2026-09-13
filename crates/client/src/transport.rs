@@ -15,7 +15,7 @@ impl SyncCycle {
         self.completed.clear();
         self.active = None;
     }
-    pub fn next<S: LegacyClientStore>(
+    pub fn next<S: ClientStore>(
         &mut self,
         client: &mut Client<S>,
     ) -> Result<Option<TransportAction>> {
@@ -30,19 +30,13 @@ impl SyncCycle {
             self.active = Some(action.clone());
             return Ok(Some(action));
         }
-        let mut channels = client.desired_channels();
-        for batch in &client.snapshot().batches {
-            if let Some(receipt) = &batch.receipt {
-                for cp in &receipt.required_checkpoints {
-                    channels.insert(cp.channel.clone());
-                }
-            }
-        }
+        let mut channels = client.desired_channels()?;
+        channels.extend(client.checkpoint_channels()?);
         if let Some(channel) = channels.iter().find(|c| !self.completed.contains(*c)) {
             let request = PullRequest {
                 client_id: client.client_id().into(),
                 channel: channel.clone(),
-                from_cursor: client.cursor(channel),
+                from_cursor: client.cursor(channel)?,
             };
             let action = TransportAction {
                 kind: "pull".into(),
@@ -53,11 +47,7 @@ impl SyncCycle {
         }
         Ok(None)
     }
-    pub fn complete<S: LegacyClientStore>(
-        &mut self,
-        client: &mut Client<S>,
-        bytes: &[u8],
-    ) -> Result<()> {
+    pub fn complete<S: ClientStore>(&mut self, client: &mut Client<S>, bytes: &[u8]) -> Result<()> {
         let action = self
             .active
             .clone()
