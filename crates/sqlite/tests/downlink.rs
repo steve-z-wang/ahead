@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 fn stamped(channel: &str, from: u64, to: u64, stamp: u64, text: Option<&str>) -> PullPage {
     let mut p = page(channel, from, to, text);
-    p.changes[0].stamp = Some(stamp);
+    p.changes[0].stamp = stamp;
     p
 }
 
@@ -145,7 +145,7 @@ fn delete_cascades_to_descendants_and_their_claims() {
             cursor,
             model: "Book".into(),
             identity: json!({"id":"b"}),
-            stamp: None,
+            stamp: cursor,
             state,
         }],
     };
@@ -158,7 +158,7 @@ fn delete_cascades_to_descendants_and_their_claims() {
             cursor: 2,
             model: "Comment".into(),
             identity: json!({"id":"c"}),
-            stamp: None,
+            stamp: 2,
             state: json!({"bookId":"b","text":"hi"}),
         }],
     })
@@ -166,32 +166,6 @@ fn delete_cascades_to_descendants_and_their_claims() {
     assert_eq!(table_count(&mut c, "otter_claim"), 2);
     c.apply_page(book(3, Value::Null)).unwrap();
     assert!(c.query("Comment", &json!({})).unwrap().is_empty());
-    assert_eq!(table_count(&mut c, "otter_claim"), 0);
-    assert_eq!(table_count(&mut c, "otter_record"), 0);
-}
-
-#[test]
-fn unstamped_delete_releases_one_claim_and_removes_on_last() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut c = open(&dir.path().join("db"));
-    subscribe(&mut c, "a");
-    subscribe(&mut c, "b");
-    c.apply_page(page("a", 0, 1, Some("A"))).unwrap();
-    c.apply_page(page("b", 0, 1, Some("B"))).unwrap();
-    assert_eq!(table_count(&mut c, "otter_claim"), 2);
-    c.apply_page(page("a", 1, 2, None)).unwrap();
-    assert_eq!(
-        c.read(&key()).unwrap().unwrap()["text"],
-        "B",
-        "an unstamped delete carries no order and may only release a's claim"
-    );
-    assert_eq!(table_count(&mut c, "otter_claim"), 1);
-    assert_eq!(table_count(&mut c, "otter_record"), 1);
-    c.apply_page(page("b", 1, 2, None)).unwrap();
-    assert!(
-        c.read(&key()).unwrap().is_none(),
-        "the last claim released removes the record"
-    );
     assert_eq!(table_count(&mut c, "otter_claim"), 0);
     assert_eq!(table_count(&mut c, "otter_record"), 0);
 }

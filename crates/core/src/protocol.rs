@@ -178,8 +178,7 @@ pub struct RecordChange {
     pub cursor: u64,
     pub model: String,
     pub identity: Value,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stamp: Option<u64>,
+    pub stamp: u64,
     pub state: Value,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -200,6 +199,9 @@ impl PullPage {
                 if change.get("state").is_none() {
                     return Err(invalid("change state missing"));
                 }
+                if change.get("stamp").is_none() {
+                    return Err(invalid("change stamp missing"));
+                }
             }
         }
         let p: Self = serde_json::from_value(value)?;
@@ -215,6 +217,9 @@ impl PullPage {
         let mut previous = self.from_cursor;
         for change in &self.changes {
             counter(change.cursor)?;
+            if change.stamp == 0 || counter(change.stamp).is_err() {
+                return Err(invalid("change stamp must be a positive counter"));
+            }
             if change.model.is_empty()
                 || change.cursor <= previous
                 || change.cursor > self.to_cursor

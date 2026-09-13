@@ -90,7 +90,7 @@ fn pull_copies_the_row_stamp_into_the_change() {
     ))
     .unwrap();
     let page = otter_core::PullPage::decode(text.as_bytes()).unwrap();
-    assert_eq!(page.changes[0].stamp, Some(7));
+    assert_eq!(page.changes[0].stamp, 7);
 }
 
 #[test]

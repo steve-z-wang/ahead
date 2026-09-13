@@ -132,6 +132,7 @@ fn deterministic_interleavings_preserve_local_priority_and_eventually_converge()
         let server = Backend::new();
         let mut client = open(&path);
         let page = server.pull(&mut client);
+        assert_eq!(page.changes[0].stamp, 1, "seed {seed}");
         client.apply_page(page).unwrap();
         edit(&mut client, "  first  ");
         let request = client.freeze().unwrap().unwrap();
