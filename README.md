@@ -32,7 +32,9 @@ client.models.todo.watch({ where: { done: false } }, (todos) => render(todos));
 
 // Write, inside a transaction.
 await client.transaction(async (tx) => {
-  await tx.mutate.addTodo({ todo: { id: "t1", title: "Buy milk", done: false } });
+  await tx.mutate.addTodo({
+    todo: { id: "t1", title: "Buy milk", done: false },
+  });
 });
 ```
 
@@ -57,7 +59,12 @@ The connection sends queued mutations when the network allows, retries on its ow
 ### 3. Write the backend
 
 ```ts
-import { createBackend, devAuth, type Handlers, type Loaders } from "./generated/backend.ts";
+import {
+  createBackend,
+  devAuth,
+  type Handlers,
+  type Loaders,
+} from "./generated/backend.ts";
 
 // Implement the handler from the generated interface.
 const handlers: Handlers<Tx> = {
