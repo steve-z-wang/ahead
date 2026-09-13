@@ -87,6 +87,8 @@ export interface LoaderCall<Tx, Identity> {
   ids: readonly Identity[];
   tx: Tx;
   userId: string;
+  /** The channel whose Pull requested these rows; loaders may scope visibility by it. */
+  channel: string;
 }
 export type Handler<Tx, Input = any> = (
   call: HandlerCall<Tx, Input>,
@@ -352,7 +354,12 @@ export function createBackend<T>(options: BackendOptions<T>) {
         } else if (req.op === "load") {
           const loader = loaderTable.get(req.model);
           if (!loader) throw new Error(`Missing loader ${req.model}`);
-          const call = { ids: req.identities, tx, userId: req.owner };
+          const call = {
+            ids: req.identities,
+            tx,
+            userId: req.owner,
+            channel: req.channel,
+          };
           await options.loaderHooks?.[lowerFirst(req.model)]?.prepareForViewer(
             call,
           );

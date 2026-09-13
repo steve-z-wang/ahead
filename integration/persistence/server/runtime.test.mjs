@@ -12,7 +12,7 @@ const db=new PrismaClient();
 const schema={enums:[],models:[{name:'Task',identity:['id'],fields:[{name:'id',type:{kind:'scalar',name:'string'},nullable:false},{name:'title',type:{kind:'scalar',name:'string'},nullable:false}]}]};
 const config={schema,mutations:[{name:'edit',version:1,slots:[{name:'task',model:'Task',operation:'update',cardinality:'single',allowedPatchFields:['title']}]}]};
 const authenticate=async req=>req.headers.authorization==='Bearer alice'?'alice':null;
-let called=0,prepared=0,lastInput;
+let called=0,prepared=0,lastInput;const seenChannels=[];
 const backend=createBackend({config,database:prisma(db),authenticate,handlers:{
  async edit({input,tx,notify}){
   called++;lastInput=input;const {identity,patch}=input.task;
@@ -27,7 +27,7 @@ const backend=createBackend({config,database:prisma(db),authenticate,handlers:{
   if(patch.title==='empty-checkpoint')return {channel:''};
   if(patch.title==='never-checkpoint')return {channel:'never'};
  }},
- loaders:{async task({ids,tx}){return Promise.all(ids.map(async identity=>{const rows=await tx.$queryRawUnsafe('SELECT title FROM business_task WHERE id=$1',identity.id);return rows[0]??null;}));}},
+ loaders:{async task({ids,tx,channel}){seenChannels.push(channel);return Promise.all(ids.map(async identity=>{const rows=await tx.$queryRawUnsafe('SELECT title FROM business_task WHERE id=$1',identity.id);return rows[0]??null;}));}},
  loaderHooks:{task:{async prepareForViewer(){prepared++}}},
 });
 const mutation=(ordinal,title,id='a')=>({ordinal,name:'edit',operations:[{model:'Task',op:'update',identity:{id},values:{title}}]});
@@ -79,6 +79,9 @@ test('unknown error rolls back entire batch including earlier effects and client
 test('unsupported versions abort before handlers, invalid bodies settle with empty checkpoints',async()=>{
  const before=called;await assert.rejects(()=>backend.push('alice',push('version',1,[mutation(1,'ignored','v'),{...mutation(2,'bad','w'),version:2}])),/mutation_version_unsupported/);assert.equal(called,before);
  const result=JSON.parse(await backend.push('alice',push('invalid',1,[{ordinal:1,name:'absent',operations:[]}])));assert.deepEqual(result,{requiredCheckpoints:[],requiredScope:'',requiredSyncId:0,rejections:[{ordinal:1,code:'mutation.invalid'}]});
+});
+test('loaders receive the channel whose pull requested the rows',async()=>{
+ seenChannels.length=0;await pull('shared',0);assert.ok(seenChannels.length>0);assert.ok(seenChannels.every(c=>c==='shared'));
 });
 test('compaction materializes latest state; deletion is aligned null',async()=>{
  await backend.push('alice',push('dedup',2,[mutation(1,'updated')]));await assert.rejects(()=>backend.push('alice',push('dedup',1,[mutation(1,'first')])),/overlap/);

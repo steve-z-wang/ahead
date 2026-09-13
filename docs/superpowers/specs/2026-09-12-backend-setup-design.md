@@ -6,7 +6,7 @@
 
 The backend is the API layer. A developer should write only what the framework cannot know: the business logic of each mutation, how to load each model, how to identify the caller, and which database to use. Everything the compiler can derive from the `.model` files is generated.
 
-One convention applies to the whole surface: every framework call takes a single object argument with named fields. Handlers receive `{ input, tx, userId, notify }`, loaders `{ ids, tx, userId }`, `notify` takes `{ channel, records }`, `createBackend` takes options, `listen` takes `{ port, host }`, and model references take an identity object. There are no positional overloads and no variadic parameters; a developer learns one shape.
+One convention applies to the whole surface: every framework call takes a single object argument with named fields. Handlers receive `{ input, tx, userId, notify }`, loaders `{ ids, tx, userId, channel }`, `notify` takes `{ channel, records }`, `createBackend` takes options, `listen` takes `{ port, host }`, and model references take an identity object. There are no positional overloads and no variadic parameters; a developer learns one shape.
 
 ## What the developer writes
 
@@ -95,10 +95,10 @@ Each handler and loader receives one object and destructures what it needs, in t
 
 ```ts
 HandlerCall<Tx, Input> = { input: Input; tx: Tx; userId: string; notify: Notify }
-LoaderCall<Tx, Identity> = { ids: readonly Identity[]; tx: Tx; userId: string }
+LoaderCall<Tx, Identity> = { ids: readonly Identity[]; tx: Tx; userId: string; channel: string }
 ```
 
-`input` is not flattened into the call object because slot names could collide with framework fields. The previous `(ctx, input)` shape and the names `transaction`, `actorUserId`, `viewerUserId` and the loader's `channel` are removed without aliases; this is a source alpha. A loader's result may depend only on the record and the viewer, never on the channel that triggered the pull.
+`input` is not flattened into the call object because slot names could collide with framework fields. The previous `(ctx, input)` shape and the names `transaction`, `actorUserId`, `viewerUserId` are removed without aliases; this is a source alpha. The loader keeps `channel`: the channel whose Pull requested the rows is part of deciding what this viewer may see, and different channels may legitimately return different content for the same record. Reconciling such differences on the client is tracked separately (per-record revisions, GitHub issue #8).
 
 `notify({ channel, records })` has exactly one shape: `channel` is a string and `records` is always an array, even for one record. Several channels mean several calls. A record is a slot argument (already tagged with its model), a generated model reference such as `Book({ id: comment.bookId })` for records outside the input, or a raw `{ model, identity }` object for fully dynamic cases. Calling `notify` several times in one handler is equivalent to one call listing every record. It records an invalidation in the current transaction session exactly as the previous `ctx.publish(changes, channels)` did. The name says what it does: it tells subscribers of those channels that the record changed; the content comes from the loader. It returns void; awaiting it is allowed but not required because the session drains outstanding publications before commit.
 

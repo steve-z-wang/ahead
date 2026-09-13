@@ -44,7 +44,7 @@ The generated `createBackend` needs no `config` option: the schema is already bo
 
 ## Call objects
 
-A Handler receives a `HandlerCall<Tx, Input>`: `{ input, tx, userId, notify }`. A Loader receives a `LoaderCall<Tx, Identity>`: `{ ids, tx, userId }`. `input` and `ids` come from `EditInput`-style generated types; `tx` is the application's own transaction object; `userId` is the authenticated owner.
+A Handler receives a `HandlerCall<Tx, Input>`: `{ input, tx, userId, notify }`. A Loader receives a `LoaderCall<Tx, Identity>`: `{ ids, tx, userId, channel }`. `input` and `ids` come from `EditInput`-style generated types; `tx` is the application's own transaction object; `userId` is the authenticated owner; `channel` is the channel whose Pull requested the rows, so a loader can decide what this user sees in this channel and return null for rows they must not see.
 
 ## notify
 
