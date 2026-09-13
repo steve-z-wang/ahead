@@ -1,18 +1,20 @@
 # TypeScript client
 
-`Client.open({path,schema,owner})` opens the shared Rust runtime with actual SQLite persistence. Build `bindings/node` before importing this source package. Generated model APIs wrap the generic client; schema is runtime data and adding a model does not recompile Rust.
+The compiler emits `client.ts` next to your models. `GeneratedClient.open({path})` opens the shared Rust runtime on a SQLite file at that path with the generated schema; where the file lives, and whether there is one per signed-in user, is the application's decision. Build `bindings/node` before importing this source package. Adding a model does not recompile Rust.
 
 ```ts
-const client = await Client.open({path: 'local.sqlite', schema, owner: userId});
-const models = new GeneratedClient(client);
+import { GeneratedClient, httpTransport } from './generated/client.ts';
+const client = await GeneratedClient.open({path: 'local.sqlite'});
 await client.subscribe('book:example');
-await models.edit({entry: {identity: {id: 'entry-1'}, values: {text: 'offline'}}});
-await client.sync(transport);
+await client.connect(httpTransport({url: 'http://127.0.0.1:4242', token}));
+await client.edit({entry: {identity: {id: 'entry-1'}, values: {text: 'offline'}}});
 ```
+
+`Client.open({path, schema})` is the untyped runtime underneath; `GeneratedClient` forwards `subscribe`, `connect`, `sync`, `transaction`, `watch`, `status` and `close` to it and exposes the rest as `.client`.
 
 ## Sync and background connections
 
-The transport receives `push` or `pull` plus the frozen JSON body and returns response JSON. Throw on HTTP/network errors. The sample backend maps these to `/sync/mutations` and `/sync/pull`. `sync` performs one catch-up cycle. Local transactions remain available while network I/O is pending.
+A transport receives `push` or `pull` plus the frozen JSON body and returns response JSON. `httpTransport({url, token})` talks to a backend started with `listen`, mapping these to `/sync/mutations` and `/sync/pull`; `token` may be a function for rotating credentials. A custom transport should throw on HTTP/network errors. `sync` performs one catch-up cycle. Local transactions remain available while network I/O is pending.
 
 `connect(transport, {onError, refreshAuth})` runs in the background with Rust-controlled retry timing. The returned connection supports `pause`, `resume`, `wake`, and `close`. A transport may accept an optional `AbortSignal`; close also abandons a response from a transport that ignores cancellation. Mark an authentication error with `status: 401` to invoke the optional refresh callback. No authentication or credentials are built into the runtime.
 

@@ -14,7 +14,7 @@ void main(){
  });
  test('generated mutations and query use real native client',()async{
   final temp=await Directory.systemTemp.createTemp('generated-api-');
-  final client=await Client.open(path:'${temp.path}/state.sqlite',schema:schema,owner:'test',libraryPath:Platform.environment['OTTER_DART_LIBRARY'] ?? '../../target/debug/libotter_dart.dylib');
+  final client=await Client.open(path:'${temp.path}/state.sqlite',schema:schema,libraryPath:Platform.environment['OTTER_DART_LIBRARY'] ?? '../../target/debug/libotter_dart.dylib');
   try{
    final api=GeneratedClient(client);
    expect(await api.mutate(createEntry(entry:row)),1);

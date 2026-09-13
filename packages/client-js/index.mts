@@ -11,6 +11,7 @@ export type {
 } from "./connection.mts";
 import { Transaction, strictJson, type QuerySpec } from "./transaction.mts";
 export { Transaction, type QuerySpec } from "./transaction.mts";
+export { httpTransport } from "./transport.mts";
 import { createRequire } from "node:module";
 import { EventEmitter } from "node:events";
 const native = createRequire(import.meta.url)(
@@ -36,7 +37,6 @@ export class Client {
   static async open(options: {
     path: string;
     schema: object;
-    owner: string;
     migration?: { defaults?: RecordValue; replayPull?: boolean };
   }) {
     const result = JSON.parse(

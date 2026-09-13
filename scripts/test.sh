@@ -9,7 +9,7 @@ cargo fmt --all --check
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 (cd examples/rust-round-trip && npm ci && npx prisma generate)
-cargo run -p otter-compiler -- compile examples/rust-round-trip/models examples/rust-round-trip/generated --backend-runtime ../../../packages/server/index.mts
+cargo run -p otter-compiler -- compile examples/rust-round-trip/models examples/rust-round-trip/generated --backend-runtime ../../../packages/server/index.mts --client-runtime ../../../packages/client-js/index.mts
 npm run typecheck
 "$root/node_modules/.bin/prettier" --check packages/client-js/*.mts packages/server/*.mts packages/persistence-prisma/*.mts
 node --test integration/bindings/client-js/*.test.mjs

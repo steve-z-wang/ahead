@@ -70,7 +70,6 @@ class Client {
   static Future<Client> open({
     required String path,
     required Map<String, dynamic> schema,
-    required String owner,
     String? libraryPath,
     Map<String, dynamic>? migration,
   }) async {
@@ -90,7 +89,6 @@ class Client {
         'op': 'open',
         'path': path,
         'schema': schema,
-        'owner': owner,
         if (migration != null) 'migration': migration,
       });
       final value = opened['value'] as Map;

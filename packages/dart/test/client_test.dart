@@ -8,7 +8,7 @@ void main() {
   test('default native loader is reserved for iOS process symbols', () async {
     if (Platform.isIOS) return;
     await expectLater(
-      Client.open(path: 'unused', schema: const {}, owner: 'u'),
+      Client.open(path: 'unused', schema: const {}),
       throwsA(
         isA<StateError>().having(
           (error) => error.message,
@@ -31,7 +31,7 @@ void main() {
       var client = await Client.open(
         path: path,
         schema: schema,
-        owner: 'u',
+        
         libraryPath: Platform.environment['OTTER_LIBRARY']!,
       );
       try {
@@ -140,7 +140,7 @@ void main() {
         client = await Client.open(
           path: path,
           schema: schema,
-          owner: 'u',
+          
           libraryPath: Platform.environment['OTTER_LIBRARY']!,
         );
         expect(await client.freeze(), frozen);
@@ -165,7 +165,7 @@ void main() {
       final client = await Client.open(
         path: '${dir.path}/db',
         schema: schema,
-        owner: 'u',
+        
         libraryPath: Platform.environment['OTTER_LIBRARY']!,
       );
       final errors = <Object>[];
