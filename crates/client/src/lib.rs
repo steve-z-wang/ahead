@@ -1,6 +1,7 @@
 //! Durable client state machine. Storage and transport never decide settlement.
 mod query;
 pub use query::{Direction, QueryOrder, QuerySpec};
+pub mod ddl;
 pub mod store;
 pub use store::*;
 mod migration;
