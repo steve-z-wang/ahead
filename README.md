@@ -62,6 +62,7 @@ const client = await GeneratedClient.open({
 });
 
 // Subscribe to the channels you want to sync.
+await client.channels.subscribe("users");
 await client.channels.subscribe("todos");
 ```
 
@@ -88,8 +89,10 @@ const handlers: Handlers<Tx> = {
   },
   async assignTodo({ input, tx, notify }) {
     const { identity, patch } = input.todo;
-    const user = await tx.user.findUnique({ where: { id: patch.assigneeId! } });
-    if (!user) throw new MutationRejected("user.unknown");
+    if (patch.assigneeId != null) {
+      const user = await tx.user.findUnique({ where: { id: patch.assigneeId } });
+      if (!user) throw new MutationRejected("user.unknown");
+    }
 
     await tx.todo.update({ where: identity, data: patch });
     notify({ channel: "todos", records: [input.todo] });
