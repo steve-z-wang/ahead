@@ -21,8 +21,8 @@ pub use transport::*;
 
 use engine::Engine;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::BTreeSet;
+use serde_json::{Value, json};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::mpsc::{self, Receiver, Sender};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -416,11 +416,95 @@ impl<S: ClientStore> Client<S> {
     pub fn freeze(&mut self) -> Result<Option<Vec<u8>>> {
         self.freeze_with_limit(256 * 1024)
     }
-    pub fn freeze_with_limit(&mut self, _max_bytes: usize) -> Result<Option<Vec<u8>>> {
-        Err(invalid("not yet implemented"))
+    pub fn freeze_with_limit(&mut self, max_bytes: usize) -> Result<Option<Vec<u8>>> {
+        self.write(|e| e.freeze(max_bytes))
     }
-    pub fn acknowledge(&mut self, _sequence: u64, _receipt: PushReceipt) -> Result<()> {
-        Err(invalid("not yet implemented"))
+    pub fn acknowledge(&mut self, sequence: u64, receipt: PushReceipt) -> Result<()> {
+        let receipt = PushReceipt::decode(&receipt.encode()?)?;
+        self.write(|e| e.acknowledge(sequence, &receipt))
+    }
+    pub fn set_readiness(&mut self, key: &str, value: Readiness) -> Result<()> {
+        self.write(|e| {
+            match value {
+                Readiness::Ready => e.resolve_prerequisite(key)?,
+                Readiness::Failed => e.fail_prerequisite(key, "failed")?,
+                Readiness::Pending => e.reset_prerequisite(key)?,
+            };
+            Ok(())
+        })
+    }
+    pub fn pending_tasks(&mut self) -> Result<Vec<Value>> {
+        self.view(|e| {
+            Ok(e.prerequisite_keys()?
+                .into_iter()
+                .map(|(key, error)| {
+                    // Schema-derived keys are canonical JSON invocations; any other
+                    // key is opaque and carries no fields of its own.
+                    let mut value = serde_json::from_str::<Value>(&key)
+                        .ok()
+                        .filter(Value::is_object)
+                        .unwrap_or_else(|| json!({}));
+                    value["key"] = json!(key);
+                    value["state"] = json!(if error.is_some() { "failed" } else { "pending" });
+                    value
+                })
+                .collect())
+        })
+    }
+    pub fn dismiss_rejection(&mut self, ordinal: u64) -> Result<()> {
+        self.write(|e| e.delete_rejection(ordinal))
+    }
+    pub fn rejections(&mut self) -> Result<Vec<Rejection>> {
+        self.view(|e| e.rejections())
+    }
+    pub fn record_status(&mut self, key: &RecordKey) -> Result<Value> {
+        let key = self.schema.record_key(&key.model, &key.identity)?;
+        self.view(|e| {
+            let prerequisites: BTreeMap<String, Option<String>> =
+                e.prerequisite_keys()?.into_iter().collect();
+            let mut pending = vec![];
+            for q in e.queued()? {
+                let touches = q
+                    .mutation
+                    .operations
+                    .iter()
+                    .chain(&q.mutation.companion)
+                    .chain(&q.mutation.effects)
+                    .any(|op| op.model == key.model && op.identity == key.identity);
+                if !touches {
+                    continue;
+                }
+                let phase = match q.push {
+                    None => "queued",
+                    Some(push) if e.checkpoints(push)?.is_empty() => "frozen",
+                    Some(_) => "accepted",
+                };
+                let prerequisites: Vec<Value> = q
+                    .mutation
+                    .prerequisites
+                    .iter()
+                    .map(|k| {
+                        json!({"key":k,"state":match prerequisites.get(k) {
+                            None => "ready",
+                            Some(Some(_)) => "failed",
+                            Some(None) => "pending",
+                        }})
+                    })
+                    .collect();
+                pending.push(json!({"ordinal":q.ordinal,"name":q.mutation.name,"phase":phase,"prerequisites":prerequisites}));
+            }
+            let rejections: Vec<Value> = e
+                .rejection_details()?
+                .into_iter()
+                .filter(|d| {
+                    d["records"].as_array().is_some_and(|r| {
+                        r.iter()
+                            .any(|x| x["model"] == key.model && x["identity"] == key.identity)
+                    })
+                })
+                .collect();
+            Ok(json!({"pending":pending,"rejections":rejections}))
+        })
     }
 }
 
