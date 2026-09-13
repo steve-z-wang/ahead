@@ -403,13 +403,6 @@ pub async fn process_pull(
 ) -> Result<String> {
     principal(owner)?;
     let request = PullRequest::decode(bytes).map_err(|e| format!("request.invalid:{e}"))?;
-    if host
-        .call(json!({"op":"authorize","owner":owner,"channel":request.channel}))
-        .await?
-        != true
-    {
-        return Err("channel_forbidden".into());
-    }
     let maximum = head(host, &request.channel).await?;
     if request.from_cursor > maximum {
         return Err("request.invalid:cursor ahead of head".into());

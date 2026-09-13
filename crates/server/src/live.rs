@@ -54,23 +54,14 @@ pub async fn negotiate(owner: &str, bytes: &[u8], host: &impl Host) -> Result<Ne
     principal(owner)?;
     let scopes = decode_subscribe(bytes)?;
     let mut accepted = vec![];
-    let mut rejected = vec![];
     for scope in scopes {
-        if host
-            .call(json!({"op":"authorize","owner":owner,"channel":scope}))
-            .await?
-            == true
-        {
-            let from_cursor = head(host, &scope).await?;
-            accepted.push(Subscription { scope, from_cursor });
-        } else {
-            rejected.push(json!({"scope":scope,"code":"scope.forbidden"}));
-        }
+        let from_cursor = head(host, &scope).await?;
+        accepted.push(Subscription { scope, from_cursor });
     }
     let response = serde_json::to_string(&json!({
         "type":"subscribed",
         "scopes":accepted.iter().map(|entry| &entry.scope).collect::<Vec<_>>(),
-        "rejections":rejected,
+        "rejections":[],
     }))
     .map_err(|error| error.to_string())?;
     Ok(Negotiation {
