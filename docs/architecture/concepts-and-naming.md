@@ -21,6 +21,8 @@
 | Uplink / Downlink | Push / Pull | The paths and internal modules for sending pending operations / fetching authoritative changes. |
 | Sync ID | Cursor / Checkpoint | Cursor represents the current position; Checkpoint represents a position required for operation settlement. |
 
+`Notify` replaces the earlier `Publish` for the handler-side invalidation call; the wire and storage vocabulary is unchanged.
+
 ## API and module naming
 
 - Use singular `channel` and plural `channels`; an application constructor might be `bookChannel(bookId)`.
