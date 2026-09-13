@@ -24,21 +24,6 @@ The compiler turns this file into a typed client for TypeScript and Dart, and in
 ### 2. Read and write on the client
 
 ```ts
-// Read.
-const open = await client.models.todo.query({ where: { done: false } });
-
-// Watch. Updates on every change.
-client.models.todo.watch({ where: { done: false } }, (todos) => render(todos));
-
-// Write, inside a transaction.
-await client.transaction(async (tx) => {
-  await tx.mutate.addTodo({
-    todo: { id: "t1", title: "Buy milk", done: false },
-  });
-});
-```
-
-```ts
 // Open the local database and connect.
 import { GeneratedClient, httpTransport } from "./generated/client.ts";
 
@@ -52,6 +37,21 @@ const client = await GeneratedClient.open({
 
 // Subscribe to the channels you want to sync.
 await client.channels.subscribe("todos");
+```
+
+```ts
+// Read.
+const open = await client.models.todo.query({ where: { done: false } });
+
+// Watch. Updates on every change.
+client.models.todo.watch({ where: { done: false } }, (todos) => render(todos));
+
+// Write, inside a transaction.
+await client.transaction(async (tx) => {
+  await tx.mutate.addTodo({
+    todo: { id: "t1", title: "Buy milk", done: false },
+  });
+});
 ```
 
 The connection sends queued mutations when the network allows, retries on its own, and pulls every record the backend notified about.
