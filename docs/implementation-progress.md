@@ -9,9 +9,9 @@ The user approved end-to-end implementation on 2026-09-10. The Rust rewrite now 
 | Shared Rust runtime | Schema-as-data, normalization, identities, legacy wire codecs and request hashes. No generated business types in Rust. |
 | Persistent client | SQLite transactions/savepoints, direct and optimistic writes, sparse before images, durable queue/frozen batches, ACK checkpoint barriers and accepted-prefix settlement. |
 | Existing client behavior | Channel claims, companion/cascade effects, lifecycle/sequence dependencies, prerequisites, rejection inbox/status, queries/relations/watch, read-only SQL and background scheduling. |
-| Backend | Generic Rust Push/Pull/publication state machines, application-owned transaction callbacks, per-mutation savepoints, durable batch receipts and coherent Loader snapshots. |
+| Backend | Generic Rust Push/Pull/notification state machines, application-owned transaction callbacks, per-mutation savepoints, durable batch receipts and coherent Loader snapshots. Handlers and Loaders implement compiler-generated interfaces; notify from handlers selects receipt checkpoints. |
 | Integration | Node/N-API and Dart FFI worker, Prisma/PostgreSQL persistence with reusable `bind`, HTTP/WebSocket attachment to the application's server. |
-| Compiler | Rust `.model` parser/validation/history; generated Dart and TypeScript identities, model/patch types, operation builders, typed queries, relations and backend inputs. |
+| Compiler | Rust `.model` parser/validation/history; generated Dart and TypeScript identities, model/patch types, operation builders, typed queries, relations and backend inputs, and generated/backend.ts with typed Handlers, Loaders and a bound createBackend. |
 | Developer workflow | Independent runnable example, build/test scripts, host CI definition, shared fixtures, compatibility/recovery documentation and a repeatable small capacity diagnostic. |
 
 ## Verification
@@ -27,12 +27,13 @@ The user approved end-to-end implementation on 2026-09-10. The Rust rewrite now 
 | Common native command boundary | 2 tests |
 | Rust client ↔ Rust server | 64 deterministic interleaving/restart scenarios |
 | Rust server contracts | 8 tests |
-| Compiler | 10 tests; the reference `.model` corpus also compiled during implementation |
+| Compiler | 11 tests; the reference `.model` corpus also compiled during implementation |
 | Node client boundary | 13 tests after the close/start regression, including ordered transactions, nested savepoints, prerequisites and connection lifecycle |
 | Real Node/Prisma transaction bridge | 12 tests |
-| Native backend + PostgreSQL + HTTP/WS | 23 tests, including safe BigInt scalars/lists and overflow rejection |
+| Native backend + PostgreSQL + HTTP/WS | 29 tests, including safe BigInt scalars/lists and overflow rejection |
 | Dart native client | 6 tests after the close/start regression; analysis passed in the full gate |
 | Generated APIs | TypeScript positive/negative compilation and native calls; Dart analysis and 2 native tests |
+| Generated backend typecheck | positive fixture compiles; a handlers object missing one mutation fails to compile |
 | Actual HTTP end-to-end | Node and Dart against Rust/Prisma/PostgreSQL/SQLite; lost ACK retry, normalization, business rejection, offline reopen, local writes during delayed responses, background pause/resume |
 | Optimized native build | Rust workspace and Node addon built successfully |
 | Small capacity diagnostic | Queues of 10 and 1,000 real SQLite commits; [method and measurements](../integration/rust/README.md) |
@@ -52,6 +53,8 @@ A broad read-only review checked `97faef6..26e3f99` plus focused subsequent fixe
 | iOS device / Android | Not verified. No Android SDK/emulator is available on this host. |
 | Linux, Node + Dart | Fresh Ubuntu 24.04 runner: complete host gate, real PostgreSQL/HTTP E2E, optimized builds and native binding smoke passed. |
 | Browser/WASM / Windows | Not supported/verified by this first source implementation. |
+
+The backend serves its own HTTP and WebSocket endpoints through listen(); mounting on an application-owned server and the former Nest adapter were removed on 2026-09-12 (see the backend setup design record).
 
 The source alpha uses a new local database. Original database/history importing, arbitrary identity/type conversion, production-scale indexing, distributed committed wake delivery and broader platform packaging are not implemented. The existing overlapping-channel limitations and per-change malformed Pull skip behavior are preserved. Record revisions, protocol reset/GC and other semantics changes remain in [Next things](next-things.md).
 
