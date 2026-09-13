@@ -85,6 +85,15 @@ impl MemHost {
             .cloned()
             .unwrap_or_default()
     }
+    /// Whether membership was ever explicitly set for `key`, even to no channels at
+    /// all - distinct from `membership` being empty because nothing was set yet.
+    pub fn has_membership(&self, key: &RecordKey) -> bool {
+        self.0
+            .lock()
+            .unwrap()
+            .membership
+            .contains_key(&encoded(key))
+    }
     pub fn notify(&self, key: &RecordKey, channels: &[&str]) {
         let mut s = self.0.lock().unwrap();
         for c in channels {

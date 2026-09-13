@@ -194,7 +194,7 @@ impl Sim {
     }
     fn ensure_membership(&mut self, spec: &MutationSpec) {
         let key = spec.key();
-        if !self.host.membership(&key).is_empty() {
+        if self.host.has_membership(&key) {
             return;
         }
         let channels = match spec {
