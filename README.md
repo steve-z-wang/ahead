@@ -6,7 +6,7 @@ Ahead is a library, not a service. Mutations settle in your own database transac
 
 ## How it works
 
-### 1. Describe your data and your mutations
+### 1. Describe the local data and the mutations it sends to the backend
 
 ```
 model Todo {
