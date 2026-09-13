@@ -419,7 +419,7 @@ export function createHttpHandler(options: {
         });
         return;
       }
-      if (/^(gap|overlap|request_conflict)$/.test(message)) {
+      if (/^(gap|overlap)$/.test(message)) {
         send(409, { code: message });
         return;
       }
