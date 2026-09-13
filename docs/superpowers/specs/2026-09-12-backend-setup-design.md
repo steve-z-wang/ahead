@@ -24,14 +24,14 @@ mutation EditTask { task Task.update<title,done> }
 import { type Handlers, MutationRejected } from "./generated/backend.ts";
 
 export const handlers: Handlers<Tx> = {
-  async addTask({ input: { task }, tx, publish }) {
+  async addTask({ input: { task }, tx, notify }) {
     await tx.task.create({ data: task });
-    publish(task, "team:demo");
+    notify(task, "team:demo");
   },
-  async editTask({ input: { task }, tx, publish }) {
+  async editTask({ input: { task }, tx, notify }) {
     if (task.patch.title === "") throw new MutationRejected("task.empty");
     await tx.task.update({ where: task.identity, data: task.patch });
-    publish(task, "team:demo");
+    notify(task, "team:demo");
   },
 };
 ```
@@ -82,20 +82,20 @@ Handlers and loaders are not grouped by model. A mutation may touch several mode
 | update | `{ identity, patch }`. |
 | delete | `{ identity }`. |
 
-Optional slots may be null; list slots are arrays. Every slot argument object carries a non-enumerable model tag set by the host before the handler runs, so `publish` can accept it directly.
+Optional slots may be null; list slots are arrays. Every slot argument object carries a non-enumerable model tag set by the host before the handler runs, so `notify` can accept it directly.
 
 ## Handler and loader calls
 
-Each handler and loader receives one object and destructures what it needs, in the style of tRPC and Remix. The declared order is the subject first, then the tools in order of use:
+Each handler and loader receives one object and destructures what it needs, in the style of tRPC and Remix. The declared order is the subject first, then the tools in order of use: `input`, `tx`, `userId`, `notify`. `notify` replaces the previous `publish`, which suggested that record content was sent; only an invalidation is.
 
 ```ts
-HandlerCall<Tx, Input> = { input: Input; tx: Tx; userId: string; publish: Publish }
+HandlerCall<Tx, Input> = { input: Input; tx: Tx; userId: string; notify: Notify }
 LoaderCall<Tx, Identity> = { ids: readonly Identity[]; tx: Tx; userId: string }
 ```
 
 `input` is not flattened into the call object because slot names could collide with framework fields. The previous `(ctx, input)` shape and the names `transaction`, `actorUserId`, `viewerUserId` and the loader's `channel` are removed without aliases; this is a source alpha. A loader's result may depend only on the record and the viewer, never on the channel that triggered the pull.
 
-`publish(target, ...channels)` accepts a slot argument, a `{ model, identity }` object, or an array of either, followed by one or more channel names. It records the publication in the current transaction session exactly as `ctx.publish(changes, channels)` does today. It returns void; awaiting it is allowed but not required because the session drains outstanding publications before commit.
+`notify(target, ...channels)` accepts a slot argument, a `{ model, identity }` object, or an array of either, followed by one or more channel names. It records an invalidation in the current transaction session exactly as the previous `ctx.publish(changes, channels)` did. The name says what it does: it tells subscribers of those channels that the record changed; the content comes from the loader. It returns void; awaiting it is allowed but not required because the session drains outstanding publications before commit.
 
 ## Channels
 
