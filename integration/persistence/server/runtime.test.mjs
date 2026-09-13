@@ -5,7 +5,7 @@ import {createRequire} from 'node:module';
 import * as serverSdk from '../../../packages/server/index.mts';
 import {createServer} from 'node:http';
 import {createBackend,MutationRejected} from '../../../packages/server/index.mts';
-import {PrismaPersistence,prismaTransactions} from '../../../packages/persistence-prisma/index.mts';
+import {PrismaPersistence,prismaTransactions,prisma} from '../../../packages/persistence-prisma/index.mts';
 const require=createRequire(import.meta.url);
 const {PrismaClient}=require('../../bindings/node/generated/client');
 const native=require('../../../bindings/node/otter-node.node');
@@ -13,7 +13,7 @@ const db=new PrismaClient();
 const schema={enums:[],models:[{name:'Task',identity:['id'],fields:[{name:'id',type:{kind:'scalar',name:'string'},nullable:false},{name:'title',type:{kind:'scalar',name:'string'},nullable:false}]}]};
 const config={schema,mutations:[{name:'edit',version:1,slots:[{name:'task',model:'Task',operation:'update',cardinality:'single',allowedPatchFields:['title']}]}]};
 let called=0,prepared=0;
-const backend=createBackend({config,transaction:prismaTransactions(db),persistence:tx=>new PrismaPersistence(tx),principalChannel:owner=>owner,authorize:async c=>c.viewerUserId===c.channel||c.channel==='shared',handlers:{edit:{1:async(c,args)=>{
+const backend=createBackend({config,database:prisma(db),authenticate:async req=>req.headers.authorization==='Bearer alice'?'alice':null,principalChannel:owner=>owner,authorize:async c=>c.viewerUserId===c.channel||c.channel==='shared',handlers:{edit:{1:async(c,args)=>{
  called++;const {identity,patch}=args.task;await c.transaction.$executeRawUnsafe('INSERT INTO business_task(id,title) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET title=$2',identity.id,patch.title);
  await c.publish([{model:'Task',identity}],['shared']);
  if(patch.title==='refuse')throw new MutationRejected('task.refused');if(patch.title==='crash')throw new Error('business crash');return {channel:'shared'};
@@ -29,9 +29,9 @@ test('native exports production runtime',()=>{assert.equal(typeof native.process
 });
 test('backend validates config and complete registrations at startup',()=>{
  const base={...config,schema:structuredClone(schema)};
- assert.throws(()=>createBackend({config:{...base,mutations:[{name:'bad',version:0,slots:[]}]},native,transaction:prismaTransactions(db),persistence:tx=>new PrismaPersistence(tx),principalChannel:x=>x,authorize:async()=>true,handlers:{},loaders:{Task:{load:async()=>[]}}}),/invalid mutation descriptor/);
- assert.throws(()=>createBackend({config:base,native,transaction:prismaTransactions(db),persistence:tx=>new PrismaPersistence(tx),principalChannel:x=>x,authorize:async()=>true,handlers:{},loaders:{Task:{load:async()=>[]}}}),/Missing handler edit v1/);
- assert.throws(()=>createBackend({config:base,native,transaction:prismaTransactions(db),persistence:tx=>new PrismaPersistence(tx),principalChannel:x=>x,authorize:async()=>true,handlers:{edit:{1:async()=>{}}},loaders:{}}),/Missing loader Task/);
+ assert.throws(()=>createBackend({config:{...base,mutations:[{name:'bad',version:0,slots:[]}]},native,database:prisma(db),authenticate:async()=>'alice',principalChannel:x=>x,authorize:async()=>true,handlers:{},loaders:{Task:{load:async()=>[]}}}),/invalid mutation descriptor/);
+ assert.throws(()=>createBackend({config:base,native,database:prisma(db),authenticate:async()=>'alice',principalChannel:x=>x,authorize:async()=>true,handlers:{},loaders:{Task:{load:async()=>[]}}}),/Missing handler edit v1/);
+ assert.throws(()=>createBackend({config:base,native,database:prisma(db),authenticate:async()=>'alice',principalChannel:x=>x,authorize:async()=>true,handlers:{edit:{1:async()=>{}}},loaders:{}}),/Missing loader Task/);
 });
 test('Prisma persistence supports reusable bind without owning a transaction',async()=>{
  const reusable=new PrismaPersistence();let calls=0;
@@ -75,12 +75,12 @@ test('50-row pages retain original cursor progression and remainder reaches head
 test('concurrent same-client retry executes once under PostgreSQL lock',async()=>{const before=called;const request=push('race',1,[mutation(1,'race','race')]);const receipts=await Promise.all([backend.push('alice',request),backend.push('alice',request)]);assert.equal(receipts[0],receipts[1]);assert.equal(called,before+1);});
 test('publication rollback uses user transaction and rejects unregistered models',async()=>{const before=(await pull('shared',56)).toCursor;await assert.rejects(()=>db.$transaction(async tx=>{await backend.publish(tx,[{model:'Task',identity:{id:'rollback'}}],['shared']);throw new Error('cancel');}),/cancel/);assert.equal((await pull('shared',56)).toCursor,before);await assert.rejects(()=>db.$transaction(tx=>backend.publish(tx,[{model:'Unknown',identity:{id:'x'}}],['shared'])),/unregistered loader/);});
 test('loader defects abort pull instead of silently advancing its cursor',async()=>{
- const make=load=>createBackend({config:{...config,mutations:[]},transaction:fn=>db.$transaction(fn),persistence:tx=>new PrismaPersistence(tx),principalChannel:x=>x,authorize:async()=>true,handlers:{},loaders:{Task:{load}}});
+ const make=load=>createBackend({config:{...config,mutations:[]},database:prisma(db),authenticate:async req=>req.headers.authorization==='Bearer alice'?'alice':null,principalChannel:x=>x,authorize:async()=>true,handlers:{},loaders:{Task:{load}}});
  await assert.rejects(()=>make(async()=>[]).pull('alice',JSON.stringify({clientId:'c',scope:'shared',fromCursor:56})),/misaligned loader/);
  await assert.rejects(()=>make(async(_c,ids)=>ids.map(()=>({title:'x',unexpected:true}))).pull('alice',JSON.stringify({clientId:'c',scope:'shared',fromCursor:56})),/unknown|state field/);
 });
 test('registered translator rejects one mutation; malformed translator code aborts transaction',async()=>{
- const make=code=>createBackend({config,transaction:fn=>db.$transaction(fn),persistence:tx=>new PrismaPersistence(tx),principalChannel:x=>x,authorize:async()=>true,translateRejection:()=>code,handlers:{edit:{1:async c=>{await c.transaction.$executeRawUnsafe("INSERT INTO business_task(id,title) VALUES('translated','temporary')");throw new Error('product refusal');}}},loaders:{Task:{load:async()=>[]}}});
+ const make=code=>createBackend({config,database:prisma(db),authenticate:async req=>req.headers.authorization==='Bearer alice'?'alice':null,principalChannel:x=>x,authorize:async()=>true,translateRejection:()=>code,handlers:{edit:{1:async c=>{await c.transaction.$executeRawUnsafe("INSERT INTO business_task(id,title) VALUES('translated','temporary')");throw new Error('product refusal');}}},loaders:{Task:{load:async()=>[]}}});
  const receipt=JSON.parse(await make('product.denied').push('alice',push('translated',1,[mutation(1,'x')])));assert.deepEqual(receipt.rejections,[{ordinal:1,code:'product.denied'}]);assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='translated'")).length,0);
  await assert.rejects(()=>make('Not a machine code').push('alice',push('bad-translator',1,[mutation(1,'x')])),/stable machine code/);assert.equal((await db.$queryRawUnsafe("SELECT * FROM otter_client WHERE client_id='bad-translator'")).length,0);
 });
@@ -97,21 +97,21 @@ test('HTTP adapter authenticates and serves the real native persistence path',as
  }finally{await new Promise((resolve,reject)=>http.close(error=>error?reject(error):resolve()));}
 });
 test('undefined loader entries remain defects and never become tombstones',async()=>{
- const bad=createBackend({config:{...config,mutations:[]},transaction:fn=>db.$transaction(fn),persistence:tx=>new PrismaPersistence(tx),principalChannel:x=>x,authorize:async()=>true,handlers:{},loaders:{Task:{load:async(_c,ids)=>ids.map(()=>undefined)}}});
+ const bad=createBackend({config:{...config,mutations:[]},database:prisma(db),authenticate:async req=>req.headers.authorization==='Bearer alice'?'alice':null,principalChannel:x=>x,authorize:async()=>true,handlers:{},loaders:{Task:{load:async(_c,ids)=>ids.map(()=>undefined)}}});
  await assert.rejects(()=>bad.pull('alice',JSON.stringify({clientId:'c',scope:'shared',fromCursor:56})),/undefined|invalid loader/);
 });
 test('caught publication failures poison push and roll back business writes',async()=>{
- const broken=createBackend({config,transaction:fn=>db.$transaction(fn),persistence:tx=>new PrismaPersistence(tx),principalChannel:x=>x,authorize:async()=>true,handlers:{edit:{1:async c=>{await c.transaction.$executeRawUnsafe("INSERT INTO business_task(id,title) VALUES('caught','bad')");try{await c.publish([{model:'Unknown',identity:{id:'caught'}}],['shared']);}catch{} }}},loaders:{Task:{load:async()=>[]}}});
+ const broken=createBackend({config,database:prisma(db),authenticate:async req=>req.headers.authorization==='Bearer alice'?'alice':null,principalChannel:x=>x,authorize:async()=>true,handlers:{edit:{1:async c=>{await c.transaction.$executeRawUnsafe("INSERT INTO business_task(id,title) VALUES('caught','bad')");try{await c.publish([{model:'Unknown',identity:{id:'caught'}}],['shared']);}catch{} }}},loaders:{Task:{load:async()=>[]}}});
  await assert.rejects(()=>broken.push('alice',push('caught',1,[mutation(1,'x')])),/unregistered loader|failed|poison/);
  assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='caught'")).length,0);assert.equal((await db.$queryRawUnsafe("SELECT * FROM otter_client WHERE client_id='caught'")).length,0);
 });
 test('nonfinite nullable loader values are defects rather than null clears',async()=>{
  const expanded=structuredClone(config);expanded.schema.models[0].fields.push({name:'score',type:{kind:'scalar',name:'float'},nullable:true});
- expanded.mutations=[];const bad=createBackend({config:expanded,transaction:prismaTransactions(db),persistence:tx=>new PrismaPersistence(tx),principalChannel:x=>x,authorize:async()=>true,handlers:{},loaders:{Task:{load:async(_c,ids)=>ids.map(()=>({title:'x',score:NaN}))}}});
+ expanded.mutations=[];const bad=createBackend({config:expanded,database:prisma(db),authenticate:async req=>req.headers.authorization==='Bearer alice'?'alice':null,principalChannel:x=>x,authorize:async()=>true,handlers:{},loaders:{Task:{load:async(_c,ids)=>ids.map(()=>({title:'x',score:NaN}))}}});
  await assert.rejects(()=>bad.pull('alice',JSON.stringify({clientId:'c',scope:'shared',fromCursor:56})),/nonfinite/);
 });
 test('pending unawaited publication prevents outer transaction commit',async()=>{
- const bad=createBackend({config,transaction:prismaTransactions(db),persistence:tx=>{const storage=new PrismaPersistence(tx);return {call:async r=>{if(r.op==='publish')await new Promise(resolve=>setTimeout(resolve,30));return storage.call(r);}}},principalChannel:x=>x,authorize:async()=>true,handlers:{edit:{1:async c=>{await c.transaction.$executeRawUnsafe("INSERT INTO business_task(id,title) VALUES('unawaited','bad')");void c.publish([{model:'Task',identity:{id:'unawaited'}}],['shared']);}}},loaders:{Task:{load:async()=>[]}}});
+ const bad=createBackend({config,database:{transaction:prismaTransactions(db),persistence:tx=>{const storage=new PrismaPersistence(tx);return {call:async r=>{if(r.op==='publish')await new Promise(resolve=>setTimeout(resolve,30));return storage.call(r);}}}},authenticate:async()=>'alice',principalChannel:x=>x,authorize:async()=>true,handlers:{edit:{1:async c=>{await c.transaction.$executeRawUnsafe("INSERT INTO business_task(id,title) VALUES('unawaited','bad')");void c.publish([{model:'Task',identity:{id:'unawaited'}}],['shared']);}}},loaders:{Task:{load:async()=>[]}}});
  await assert.rejects(()=>bad.push('alice',push('unawaited',1,[mutation(1,'x')])),/unawaited/);assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='unawaited'")).length,0);
 });
 test('external transaction binding retains swallowed publication failure until its completion gate',async()=>{
@@ -120,7 +120,7 @@ test('external transaction binding retains swallowed publication failure until i
 });
 test('repeatable-read runner keeps head, scan, and loader coherent across concurrent publication',async()=>{
  await db.$transaction(tx=>backend.publish(tx,[{model:'Task',identity:{id:'a'}}],['snapshot']));let changed=false;
- const reader=createBackend({config:{...config,mutations:[]},transaction:prismaTransactions(db),persistence:tx=>{const storage=new PrismaPersistence(tx);return {call:async r=>{const result=await storage.call(r);if(r.op==='head'&&!changed){changed=true;await db.$transaction(other=>backend.publish(other,[{model:'Task',identity:{id:'b'}}],['snapshot']));}return result;}}},principalChannel:x=>x,authorize:async()=>true,handlers:{},loaders:{Task:{load:async(_c,ids)=>ids.map(()=>null)}}});
+ const reader=createBackend({config:{...config,mutations:[]},database:{transaction:prismaTransactions(db),persistence:tx=>{const storage=new PrismaPersistence(tx);return {call:async r=>{const result=await storage.call(r);if(r.op==='head'&&!changed){changed=true;await db.$transaction(other=>backend.publish(other,[{model:'Task',identity:{id:'b'}}],['snapshot']));}return result;}}}},authenticate:async()=>'alice',principalChannel:x=>x,authorize:async()=>true,handlers:{},loaders:{Task:{load:async(_c,ids)=>ids.map(()=>null)}}});
  const page=JSON.parse(await reader.pull('alice',JSON.stringify({clientId:'c',scope:'snapshot',fromCursor:0})));assert.equal(page.toCursor,1);assert.equal(page.changes.length,1);
  const next=JSON.parse(await reader.pull('alice',JSON.stringify({clientId:'c',scope:'snapshot',fromCursor:1})));assert.equal(next.toCursor,2);assert.equal(next.changes.length,1);
 });
@@ -194,7 +194,7 @@ test('loader safely converts PostgreSQL BigInt scalar and list values without wi
       {name: 'count', type: int, nullable: false},
       {name: 'counts', type: {kind: 'list', element: int}, nullable: false},
     ]}]}},
-    transaction: prismaTransactions(db), persistence: tx => new PrismaPersistence(tx),
+    database: prisma(db), authenticate: async req => req.headers.authorization === 'Bearer alice' ? 'alice' : null,
     principalChannel: () => 'bigints', authorize: async () => true, handlers: {},
     loaders: {Counter: {load: async ({transaction}) => transaction.$queryRawUnsafe(
       'SELECT $1::bigint AS count, ARRAY[$1::bigint,(-$1)::bigint] AS counts', value,
@@ -211,4 +211,17 @@ test('loader safely converts PostgreSQL BigInt scalar and list values without wi
     value = overflow;
     await assert.rejects(bigintBackend.pull('alice', request), /bigint outside safe integer range/);
   }
+});
+test('prisma() bundles the transaction runner and the persistence factory',async()=>{
+ const adapter=prisma(db);
+ assert.equal(typeof adapter.transaction,'function');
+ const bound=adapter.persistence({$queryRawUnsafe:async()=>[{head:7}],$executeRawUnsafe:async()=>1});
+ assert.equal(await bound.call({op:'head',channel:'x'}),7);
+});
+test('listen serves push, pull and live on one port and closes cleanly',async()=>{
+ const server=await backend.listen({port:0});
+ try{
+  const denied=await fetch(`${server.url}/sync/pull`,{method:'POST',body:'{}'});assert.equal(denied.status,401);
+  const ok=await fetch(`${server.url}/sync/pull`,{method:'POST',headers:{authorization:'Bearer alice'},body:JSON.stringify({clientId:'listen',scope:'shared',fromCursor:0})});assert.equal(ok.status,200);
+ }finally{await server.close();}
 });

@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { createServer } from "node:http";
 import type { IncomingMessage, RequestListener, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, WebSocket } from "ws";
@@ -40,6 +41,23 @@ export type Native = {
 export interface Persistence {
   call(request: Record<string, any>): Promise<unknown>;
 }
+export interface Database<T> {
+  /** Must provide a coherent snapshot and roll back rejected callbacks. Retry serialization failures. */
+  transaction: <R>(body: (tx: T) => Promise<R>) => Promise<R>;
+  persistence: (tx: T) => Persistence;
+}
+export type Authenticate = (
+  request: IncomingMessage,
+) => Promise<string | null | undefined> | string | null | undefined;
+/** Development only: the bearer token is used verbatim as the user id. Never use in production. */
+export function devAuth(): Authenticate {
+  return (request) => {
+    const header = request.headers.authorization;
+    if (typeof header !== "string" || !header.startsWith("Bearer ")) return null;
+    const id = header.slice("Bearer ".length).trim();
+    return id === "" ? null : id;
+  };
+}
 export class MutationRejected extends Error {
   readonly code: string;
   constructor(code: string) {
@@ -76,9 +94,8 @@ export interface Loader<T> {
 }
 export interface BackendOptions<T> {
   config: object;
-  /** Must provide a coherent snapshot and roll back rejected callbacks. Retry serialization failures. */
-  transaction: <R>(body: (tx: T) => Promise<R>) => Promise<R>;
-  persistence: (tx: T) => Persistence;
+  database: Database<T>;
+  authenticate: Authenticate;
   principalChannel: (owner: string) => string;
   authorize: (context: ReadContext<T>) => Promise<boolean>;
   handlers: Record<string, Record<number, Handler<T, any>>>;
@@ -193,7 +210,7 @@ export function createBackend<T>(options: BackendOptions<T>) {
     tx: T,
     session: Session,
   ): ((request: string) => Promise<string>) => {
-    const storage = options.persistence(tx);
+    const storage = options.database.persistence(tx);
     return (raw) =>
       session.track(async () => {
         const req = JSON.parse(raw);
@@ -291,7 +308,7 @@ export function createBackend<T>(options: BackendOptions<T>) {
     operation: (tx: T, session: Session) => Promise<R>,
   ) => {
     let committed: string[] = [];
-    const result = await options.transaction(async (tx) => {
+    const result = await options.database.transaction(async (tx) => {
       const bound = bindTransaction(tx);
       const session = sessions.get(tx)!;
       try {
@@ -315,7 +332,7 @@ export function createBackend<T>(options: BackendOptions<T>) {
     typeof request === "string"
       ? request
       : new TextDecoder("utf-8", { fatal: true }).decode(request);
-  return {
+  const api = {
     push: (owner: string, request: Uint8Array | string) =>
       run((tx, session) =>
         native.processPush(config, owner, text(request), host(tx, session)),
@@ -339,6 +356,30 @@ export function createBackend<T>(options: BackendOptions<T>) {
     publish,
     bindTransaction,
   };
+  const authenticate = async (request: IncomingMessage) => {
+    const id = await options.authenticate(request);
+    return typeof id === "string" && id.trim() !== "" ? id : null;
+  };
+  const listen = async ({ port, host = "127.0.0.1" }: { port: number; host?: string }) => {
+    const server = createServer(createHttpHandler({ backend: api, authenticate }));
+    const live = attachLive(server, { backend: api, authenticate });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(port, host, () => resolve());
+    });
+    const address = server.address();
+    const actual = typeof address === "object" && address ? address.port : port;
+    return {
+      url: `http://${host}:${actual}`,
+      close: async () => {
+        await live.close();
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        );
+      },
+    };
+  };
+  return { ...api, listen };
 }
 export interface HttpBackend {
   push(owner: string, request: Uint8Array | string): Promise<string>;

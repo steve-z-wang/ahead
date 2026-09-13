@@ -6,12 +6,10 @@ import {
   createBackend,
   createHttpHandler,
   attachLive,
+  devAuth,
   MutationRejected,
 } from "../../packages/server/index.mts";
-import {
-  PrismaPersistence,
-  prismaTransactions,
-} from "../../packages/persistence-prisma/index.mts";
+import { prisma } from "../../packages/persistence-prisma/index.mts";
 export async function createExample() {
   const db = new PrismaClient();
   const generated = JSON.parse(
@@ -25,8 +23,8 @@ export async function createExample() {
   let calls = 0;
   const backend = createBackend<Prisma.TransactionClient>({
     config,
-    transaction: prismaTransactions<Prisma.TransactionClient>(db),
-    persistence: (tx) => new PrismaPersistence(tx),
+    database: prisma<Prisma.TransactionClient>(db),
+    authenticate: devAuth(),
     principalChannel: () => "book:demo",
     authorize: async (c) => c.channel === "book:demo",
     handlers: {
