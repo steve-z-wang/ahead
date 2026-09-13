@@ -108,16 +108,20 @@ await backend.listen({ port: 4242 });
 
 ```mermaid
 flowchart LR
-  App[Your app] -- read, watch --> Local[(Local SQLite)]
-  App -- transaction --> Local
-  Local -- push mutations --> Backend[Your backend]
-  Backend -- handler, in one transaction --> DB[(Your database)]
-  Backend -- notify channel --> Local
-  Local -- pull records --> Backend
-  Backend -- loader --> DB
+  App[Your app] -- 1 transaction --> Local[(Local SQLite)]
+  Local -- 2 push --> Backend[Your backend]
+  Backend -- 3 handler --> DB[(Your database)]
+  Backend -- 3 notify --> Local
+  Local -- 4 pull --> Backend
+  Backend -- 4 loader --> DB
+  Local -- 5 watch --> App
 ```
 
-A mutation lands in local SQLite first, then the connection pushes it to your backend. The handler runs in one database transaction and calls `notify` with the records that changed. Every client subscribed to that channel pulls them, the backend answers through the loader, and local SQLite updates so `watch` fires again. If the handler rejects the mutation, the local change rolls back.
+1. Your app writes in a transaction. The change lands in local SQLite, and reads see it at once.
+2. The connection pushes the mutation to your backend when the network allows.
+3. The handler runs in one database transaction and calls `notify` with the records that changed.
+4. Every client subscribed to that channel pulls those records. The backend answers through the loader.
+5. Local SQLite updates and `watch` fires again. If the handler rejected the mutation, the local change rolls back instead.
 
 ## Try it
 
