@@ -56,7 +56,6 @@ nav:
   - Backend:
       - TypeScript SDK: packages/server/README.md
       - Prisma: packages/persistence-prisma/README.md
-      - Nest: packages/nest/README.md
   - Project:
       - Overview: project.md
       - Compiler: crates/compiler/README.md

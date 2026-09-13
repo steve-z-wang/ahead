@@ -33,7 +33,7 @@ Use `sync`, `edit TEXT`, `show`, and `status` to observe offline edits, server n
 | Schema compiler and language generators | `crates/compiler` |
 | Native boundary | `bindings/common`, `bindings/node`, `bindings/dart` |
 | Frontend APIs | [TypeScript](packages/client-js/README.md), [Dart](packages/dart/README.md) |
-| Embedded backend | [Server](packages/server/README.md), [Prisma](packages/persistence-prisma/README.md), [Nest](packages/nest/README.md) |
+| Embedded backend | [Server](packages/server/README.md), [Prisma](packages/persistence-prisma/README.md) |
 
 ## Test and design
 

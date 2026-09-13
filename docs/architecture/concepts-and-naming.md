@@ -24,7 +24,7 @@
 ## API and module naming
 
 - Use singular `channel` and plural `channels`; an application constructor might be `bookChannel(bookId)`.
-- Call the callback a `Loader`; the proposed registration entry point is `Entry.loader(...)`, and the dispatch interface is `LoaderDispatcher`. If the optional Nest decorator is implemented, use `@Loads`, corresponding to the operation decorator `@Handles`.
+- Call the callback a `Loader`; the proposed registration entry point is `Entry.loader(...)`, and the dispatch interface is `LoaderDispatcher`.
 - Paths use `push` / `pull`, and types use `Push…` / `Pull…`; for example, `PullPage`.
 - `ChannelCursor` represents the current position in a Channel; `ChannelCheckpoint` represents a position that must be reached. The Channel must be carried explicitly or determined from context; bare numbers detached from their Channels cannot be compared.
 - `requiredCheckpoints` are settlement conditions; the conceptual name does not determine the exact wire-property spelling.

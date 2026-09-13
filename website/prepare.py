@@ -15,7 +15,7 @@ PAGES = {
         'examples/rust-round-trip/README.md',
         'packages/client-js/README.md', 'packages/dart/README.md',
         'packages/server/README.md', 'packages/persistence-prisma/README.md',
-        'packages/nest/README.md', 'crates/compiler/README.md',
+        'crates/compiler/README.md',
         'integration/README.md', 'integration/rust/README.md',
         'integration/platform/README.md',
         'docs/architecture/compatibility-and-recovery.md',

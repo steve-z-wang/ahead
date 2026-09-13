@@ -32,7 +32,7 @@ The application provides the transaction runner. Batch processing uses one outer
 
 Background jobs can also publish inside an existing application transaction. A publication inside that transaction is not proof of commit: use the SDK's completion check and invoke the returned notification hook only after the transaction resolves.
 
-The [backend SDK guide](packages/server/README.md) shows both registration and transaction-bound publication. The first adapter targets [Prisma/PostgreSQL](packages/persistence-prisma/README.md); [Nest decorators](packages/nest/README.md) are optional.
+The [backend SDK guide](packages/server/README.md) shows both registration and transaction-bound publication. The first adapter targets [Prisma/PostgreSQL](packages/persistence-prisma/README.md).
 
 ## Channel, Cursor and Checkpoint
 
