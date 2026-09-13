@@ -90,8 +90,10 @@ const handlers: Handlers<Tx> = {
   async assignTodo({ input, tx, notify }) {
     const { identity, patch } = input.todo;
     if (patch.assigneeId != null) {
-      const user = await tx.user.findUnique({ where: { id: patch.assigneeId } });
-      if (!user) throw new MutationRejected("user.unknown");
+      const where = { id: patch.assigneeId };
+      if (!(await tx.user.findUnique({ where }))) {
+        throw new MutationRejected("user.unknown");
+      }
     }
 
     await tx.todo.update({ where: identity, data: patch });
