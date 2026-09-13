@@ -24,14 +24,14 @@ mutation EditTask { task Task.update<title,done> }
 import { type Handlers, MutationRejected } from "./generated/backend.ts";
 
 export const handlers: Handlers<Tx> = {
-  async addTask(ctx, { task }) {
-    await ctx.tx.task.create({ data: task });
-    ctx.publish(task, "team:demo");
+  async addTask({ input: { task }, tx, publish }) {
+    await tx.task.create({ data: task });
+    publish(task, "team:demo");
   },
-  async editTask(ctx, { task }) {
+  async editTask({ input: { task }, tx, publish }) {
     if (task.patch.title === "") throw new MutationRejected("task.empty");
-    await ctx.tx.task.update({ where: task.identity, data: task.patch });
-    ctx.publish(task, "team:demo");
+    await tx.task.update({ where: task.identity, data: task.patch });
+    publish(task, "team:demo");
   },
 };
 ```
@@ -41,7 +41,7 @@ export const handlers: Handlers<Tx> = {
 import type { Loaders } from "./generated/backend.ts";
 
 export const loaders: Loaders<Tx> = {
-  task: (ctx, ids) => Promise.all(ids.map((id) => ctx.tx.task.findUnique({ where: id }))),
+  task: ({ ids, tx }) => Promise.all(ids.map((id) => tx.task.findUnique({ where: id }))),
 };
 ```
 
@@ -65,10 +65,10 @@ await backend.listen(4242);
 The compiler emits `generated/backend.ts` next to the existing client output. It contains:
 
 - `createBackend(options)`: the runtime `createBackend` with the compiled schema bound. The developer never sees the schema object.
-- `interface Handlers<Tx>`: one method per mutation, named in lower camel case from the mutation name (`AddTask` becomes `addTask`). Signature `(ctx: WriteContext<Tx>, input: AddTaskInput) => Promise<void | { channel: string }>`.
-- `interface Loaders<Tx>`: one method per model, named in lower camel case from the model name. Signature `(ctx: ReadContext<Tx>, ids: readonly TaskIdentity[]) => Promise<readonly (Task | null)[]>`. An optional `prepareForViewer` hook keeps its current shape under `loaderHooks` and stays out of the main documentation.
+- `interface Handlers<Tx>`: one method per mutation, named in lower camel case from the mutation name (`AddTask` becomes `addTask`). Signature `(call: HandlerCall<Tx, AddTaskInput>) => Promise<void | { channel: string }>`.
+- `interface Loaders<Tx>`: one method per model, named in lower camel case from the model name. Signature `(call: LoaderCall<Tx, TaskIdentity>) => Promise<readonly (Task | null)[]>`. An optional `prepareForViewer` hook keeps its current shape under `loaderHooks` and stays out of the main documentation.
 - Input types per mutation (`AddTaskInput`), record types (`Task`), identity types (`TaskIdentity`) and patch types (`TaskPatch`), shared with the client output where identical.
-- Re-exports of `MutationRejected`, `WriteContext`, `ReadContext` from `@ottersync/server`.
+- Re-exports of `MutationRejected`, `HandlerCall`, `LoaderCall` from `@ottersync/server`.
 
 Handlers and loaders are not grouped by model. A mutation may touch several models; a loader serves exactly one.
 
@@ -84,9 +84,16 @@ Handlers and loaders are not grouped by model. A mutation may touch several mode
 
 Optional slots may be null; list slots are arrays. Every slot argument object carries a non-enumerable model tag set by the host before the handler runs, so `publish` can accept it directly.
 
-## Context
+## Handler and loader calls
 
-`WriteContext<Tx>` is `{ tx, userId, publish }`. `ReadContext<Tx>` is `{ tx, userId, channel }`. The previous names `transaction`, `actorUserId` and `viewerUserId` are removed without aliases; this is a source alpha.
+Each handler and loader receives one object and destructures what it needs, in the style of tRPC and Remix. The declared order is the subject first, then the tools in order of use:
+
+```ts
+HandlerCall<Tx, Input> = { input: Input; tx: Tx; userId: string; publish: Publish }
+LoaderCall<Tx, Identity> = { ids: readonly Identity[]; tx: Tx; userId: string }
+```
+
+`input` is not flattened into the call object because slot names could collide with framework fields. The previous `(ctx, input)` shape and the names `transaction`, `actorUserId`, `viewerUserId` and the loader's `channel` are removed without aliases; this is a source alpha. A loader's result may depend only on the record and the viewer, never on the channel that triggered the pull.
 
 `publish(target, ...channels)` accepts a slot argument, a `{ model, identity }` object, or an array of either, followed by one or more channel names. It records the publication in the current transaction session exactly as `ctx.publish(changes, channels)` does today. It returns void; awaiting it is allowed but not required because the session drains outstanding publications before commit.
 
