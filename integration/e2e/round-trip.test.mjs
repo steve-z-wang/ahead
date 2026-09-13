@@ -13,10 +13,10 @@ test('Node SDK -> native Rust -> HTTP -> Rust backend -> Prisma -> SQLite, then 
  try{
   await app.initialize();server=await app.listen(0);const url=server.url;
   const transport=async(kind,body)=>{const response=await fetch(`${url}/sync/${kind==='push'?'mutations':'pull'}`,{method:'POST',headers:{authorization:'Bearer demo-user','content-type':'application/json'},body});if(!response.ok)throw Error(`HTTP ${response.status}: ${await response.text()}`);return response.text();};
-  client=await Client.open({path:join(directory,'client.sqlite'),schema:app.schema,owner:'demo-user'});await client.subscribe('book:demo');await client.sync(transport);assert.equal((await client.read('Entry',{id:'entry-1'})).text,'Hello from the server');
+  client=await Client.open({path:join(directory,'client.sqlite'),schema:app.schema});await client.subscribe('book:demo');await client.sync(transport);assert.equal((await client.read('Entry',{id:'entry-1'})).text,'Hello from the server');
   await client.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:'  offline edit  '}}]});
   assert.equal((await client.read('Entry',{id:'entry-1'})).text,'  offline edit  ');const frozen=await client.freeze();await client.close();
-  client=await Client.open({path:join(directory,'client.sqlite'),schema:app.schema,owner:'demo-user'});assert.equal(await client.freeze(),frozen);
+  client=await Client.open({path:join(directory,'client.sqlite'),schema:app.schema});assert.equal(await client.freeze(),frozen);
   let dropped=false;await assert.rejects(()=>client.sync(async(kind,body)=>{const result=await transport(kind,body);if(kind==='push'&&!dropped){dropped=true;throw Error('lost ACK after COMMIT');}return result;}),/lost ACK/);
   const calls=app.handlerCalls;assert.equal((await client.status()).pending,1);await client.sync(transport);assert.equal(app.handlerCalls,calls);assert.equal((await client.read('Entry',{id:'entry-1'})).text,'offline edit');assert.equal((await client.status()).pending,0);assert.equal((await client.status()).beforeImages,0);
   await client.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:'reject'}}]});await client.sync(transport);assert.equal((await client.read('Entry',{id:'entry-1'})).text,'offline edit');assert.equal((await client.status()).rejections[0].code,'entry.denied');

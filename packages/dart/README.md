@@ -4,7 +4,7 @@ Generated model types sit above the generic `Client`; schema validation, local s
 
 ## Open the client
 
-Build the native library first with `bash scripts/build.sh` from the root. `Client.open(path: ..., schema: schema, owner: userId, libraryPath: ...)` keeps explicit native library selection for development. iOS uses process-linked native symbols when no path is supplied; see the platform smoke harness for the link/build steps.
+Build the native library first with `bash scripts/build.sh` from the root. `GeneratedClient.open(path: ..., libraryPath: ...)` from the generated file opens the runtime with the generated schema; `Client.open(path: ..., schema: schema, libraryPath: ...)` is the untyped runtime underneath. Where the SQLite file lives is the application's decision. `libraryPath` keeps explicit native library selection for development. iOS uses process-linked native symbols when no path is supplied; see the platform smoke harness for the link/build steps.
 
 ## Queries and transactions
 

@@ -77,7 +77,6 @@ test("closing an old client connection twice preserves ownership of the replacem
   const client = await Client.open({
     path: join(directory, "client.sqlite"),
     schema,
-    owner: "u",
   });
   let second;
   try {
@@ -115,7 +114,6 @@ test("client close waits for in-flight connection setup and remains idempotent",
   const client = await Client.open({
     path: join(directory, "client.sqlite"),
     schema,
-    owner: "u",
   });
   const errors = [];
   try {

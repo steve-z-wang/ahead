@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 mod emit;
-pub use emit::{backend_typescript, dart, typescript};
+pub use emit::{backend_typescript, client_typescript, dart, typescript};
 #[derive(Clone, Debug)]
 struct Token {
     text: String,

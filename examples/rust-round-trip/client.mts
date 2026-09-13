@@ -1,31 +1,16 @@
 import { createInterface } from "node:readline/promises";
 import { resolve } from "node:path";
 import { stdin, stdout } from "node:process";
-import { Client } from "../../packages/client-js/index.mts";
-import { schema, GeneratedClient } from "./generated/generated.ts";
-const client = await Client.open({
+import { GeneratedClient, httpTransport } from "./generated/client.ts";
+const client = await GeneratedClient.open({
   path: resolve(process.env.OTTER_DATABASE ?? "example-client.sqlite"),
-  schema,
-  owner: "demo-user",
 });
-const model = new GeneratedClient(client);
 await client.subscribe("book:demo");
-const transport = async (kind: string, body: string) => {
-  const response = await fetch(
-    `${process.env.OTTER_URL ?? "http://127.0.0.1:4242"}/sync/${kind === "push" ? "mutations" : "pull"}`,
-    {
-      method: "POST",
-      headers: {
-        authorization: "Bearer demo-user",
-        "content-type": "application/json",
-      },
-      body,
-    },
-  );
-  if (!response.ok) throw Error(await response.text());
-  return response.text();
-};
-const show = async () => console.log(await model.readEntry({ id: "entry-1" }));
+const transport = httpTransport({
+  url: process.env.OTTER_URL ?? "http://127.0.0.1:4242",
+  token: "demo-user",
+});
+const show = async () => console.log(await client.readEntry({ id: "entry-1" }));
 const terminal = createInterface({ input: stdin, output: stdout });
 console.log(
   "Commands: sync | edit TEXT | show | status | quit. Edits are local until sync.",
@@ -39,7 +24,7 @@ try {
         await client.sync(transport);
         await show();
       } else if (line.startsWith("edit ")) {
-        await model.edit({
+        await client.edit({
           entry: {
             identity: { id: "entry-1" },
             values: { text: line.slice(5) },

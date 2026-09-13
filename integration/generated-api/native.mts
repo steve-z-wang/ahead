@@ -4,7 +4,7 @@ import {join} from 'node:path';
 import {Client} from '../../packages/client-js/index.mts';
 import {schema,GeneratedClient} from './generated.ts';
 const directory=await mkdtemp(join(tmpdir(),'generated-native-'));
-const client=await Client.open({path:join(directory,'state.sqlite'),schema,owner:'test'});
+const client=await Client.open({path:join(directory,'state.sqlite'),schema});
 try {
  const api=new GeneratedClient(client);
  const id='123e4567-e89b-42d3-a456-426614174000';

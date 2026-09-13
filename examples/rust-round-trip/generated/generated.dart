@@ -71,4 +71,13 @@ class GeneratedClient { final Client client; GeneratedClient(this.client);
  Future<Entry?> readEntry(EntryIdentity identity) async { final row=await client.read('Entry',identity.toRecord()); return row == null ? null : Entry.fromRecord(row); }
  Future<List<Entry>> entry({Map<String,dynamic> where=const {}}) async => (await client.query('Entry',where:where)).map(Entry.fromRecord).toList();
  Future<int> mutate(Map<String,dynamic> mutation) => client.mutate(mutation);
+ static Future<GeneratedClient> open({required String path, String? libraryPath, Map<String,dynamic>? migration}) async => GeneratedClient(await Client.open(path:path, schema:schema, libraryPath:libraryPath, migration:migration));
+ Future<void> subscribe(String channel) => client.subscribe(channel);
+ Future<void> unsubscribe(String channel) => client.unsubscribe(channel);
+ Future<RuntimeConnection> connect(Transport transport, {void Function(Object)? onError, Future<void> Function()? refreshAuth}) => client.connect(transport, onError:onError, refreshAuth:refreshAuth);
+ Future<void> sync(Transport transport) => client.sync(transport);
+ Future<T> transaction<T>(Future<T> Function(Transaction tx) body) => client.transaction(body);
+ Stream<List<Map<String,dynamic>>> watch(String model, {Map<String,dynamic> where=const {}}) => client.watch(model, where:where);
+ Future<Map<String,dynamic>> status() => client.status();
+ Future<void> close() => client.close();
 }

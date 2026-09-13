@@ -10,19 +10,20 @@ fn read_json(path: &Path) -> Result<Value, String> {
 fn run() -> Result<(), String> {
     let args: Vec<_> = env::args().collect();
     if args.len() < 4 || args[1] != "compile" {
-        return Err("usage: otter-sync compile INPUT_DIR OUTPUT_DIR [--mutation-history FILE] [--initialize-mutation-history] [--schema-fence FILE] [--backend-runtime SPEC]".into());
+        return Err("usage: otter-sync compile INPUT_DIR OUTPUT_DIR [--mutation-history FILE] [--initialize-mutation-history] [--schema-fence FILE] [--backend-runtime SPEC] [--client-runtime SPEC]".into());
     }
     let out = Path::new(&args[3]);
     let mut history_path = out.join("mutation-history.json");
     let mut fence_path = out.join("schema.json");
     let mut backend_runtime = String::from("@ottersync/server");
+    let mut client_runtime = String::from("@ottersync/client");
     let mut initialize = false;
     let mut explicit_history = false;
     let mut index = 4;
     while index < args.len() {
         match args[index].as_str() {
             "--initialize-mutation-history" => initialize = true,
-            "--mutation-history" | "--schema-fence" | "--backend-runtime" => {
+            "--mutation-history" | "--schema-fence" | "--backend-runtime" | "--client-runtime" => {
                 let value = args.get(index + 1).ok_or("missing option value")?;
                 match args[index].as_str() {
                     "--mutation-history" => {
@@ -30,7 +31,8 @@ fn run() -> Result<(), String> {
                         explicit_history = true;
                     }
                     "--schema-fence" => fence_path = PathBuf::from(value),
-                    _ => backend_runtime = value.clone(),
+                    "--backend-runtime" => backend_runtime = value.clone(),
+                    _ => client_runtime = value.clone(),
                 }
                 index += 1;
             }
@@ -126,6 +128,10 @@ fn run() -> Result<(), String> {
         (
             out.join("backend.ts"),
             otter_compiler::backend_typescript(&config, &backend_runtime),
+        ),
+        (
+            out.join("client.ts"),
+            otter_compiler::client_typescript(&client_runtime),
         ),
         (out.join("generated.dart"), otter_compiler::dart(&config)),
         (
