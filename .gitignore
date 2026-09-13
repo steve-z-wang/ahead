@@ -23,3 +23,4 @@ artifacts/
 /website/site/
 /website/.venv/
 /website/__pycache__/
+.tools
