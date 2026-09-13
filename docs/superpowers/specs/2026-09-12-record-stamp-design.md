@@ -116,7 +116,9 @@ The request returns `{ cursor, stamp }` instead of the bare cursor. The Rust `pu
 
 `scan` returns the extra `stamp` column. `process_pull` validates it as a safe counter and copies it into `RecordChange.stamp`. The loader is called as today, with the row's channel; the stamp is not read from `otter_record` at Pull time.
 
-The pair `(stamp, state)` delivered for a row is the stamp written at `notify` time and the content the loader returns now. If the record has been notified again on the same channel since, the row has already moved to the newer stamp, so the pair is coherent within a channel. If it has been notified only on another channel since, this channel delivers an older stamp with newer content; the client discards the content because the other channel's larger stamp has arrived or will arrive, and the record converges to the newer channel's content. This is the intended behaviour and is covered by an acceptance scenario below.
+The pair `(stamp, state)` delivered for a row is the stamp written at `notify` time and the content the loader returns now. They describe the same content because of one application rule: **every change to a record is notified to every channel that provides it.** Under that rule, whenever a record changes, each of its rows in `otter_invalidation` moves to a new stamp before any Pull can read the new content, so a row's stamp and the loader's content always belong to the same change.
+
+A handler that edits a record and notifies only some of its channels has a bug. The framework does not detect it and makes no promise about what the other channels deliver; they return their old stamp with whatever the loader reads now. The rule is documented with `notify`, next to the existing rule that a mutation must notify at least one channel.
 
 ### Persistence contract
 
@@ -193,7 +195,7 @@ A delete with a newer stamp removes the local record regardless of how many clai
 
 The previous behaviour, releasing one claim and deleting only when the last claim leaves, and the earlier `removeFromChannel` proposal in `docs/next-things.md`, are replaced. Channels are notification routes and do not define record content; the claim ledger exists so that unsubscribing a channel can drop records no other channel provides.
 
-A null from the loader has two possible causes: the record is gone, or this viewer may not see it on this channel. The client treats both as a delete. A handler that hides a record on one channel while another channel still provides it must notify the other channel too, otherwise the local copy stays absent until that channel's next notification. This is an application rule and is documented with `notify`.
+A null from the loader has two possible causes: the record is gone, or this viewer may not see it on this channel. The client treats both as a delete. Hiding a record on one channel is a change to that record, so the rule above applies: the handler notifies every channel that provides it. Otherwise the local copy stays absent until the other channel's next notification, which is the application's bug, not the framework's.
 
 ### Equal stamp, different content
 
@@ -231,7 +233,7 @@ Server `otter_invalidation`
 
 Client after pulling A then B: `Task` holds B's content, `otter_record` says 8, `otter_claim` has A and B, `otter_subscription` says A = 10, B = 5.
 
-A later edit notified only to B moves B's row to `cursor 6, stamp 9` and leaves A's row alone. The client pulls B, applies 9. If a stale A response with stamp 7 arrives afterwards it is discarded; A's cursor still advances.
+A later edit notified to both channels moves A's row to `cursor 11, stamp 9` and B's row to `cursor 6, stamp 10`. The client pulls B, applies 10. If a delayed A response with stamp 7 arrives afterwards it is discarded; A's cursor still advances. The next Pull on A delivers stamp 9, which is also discarded.
 
 ## Acceptance scenarios
 
@@ -241,12 +243,11 @@ Each is a scenario under `fixtures/scenarios` run by `integration/rust/tests/sce
 2. **Idempotent redelivery.** The same page delivered twice on one channel is a no-op. The same row with different content on redelivery produces the diagnostic and advances the cursor.
 3. **Fan-out.** One handler notifying A then B produces two stamps; each channel's cursor advances independently; rollback leaves neither table changed.
 4. **Concurrent notify.** Two transactions notifying one record concurrently receive distinct stamps (persistence test in `integration/persistence`).
-5. **Stale stamp, newer content.** Record notified on A, then only on B; pulling A after the edit delivers A's old stamp with the new content; the client converges to the B content and never reports a diagnostic.
-6. **Move A → B and A → B → A**, including delayed updates and child-record cascade.
-7. **Delete across channels.** Delete notified to A and B; the record disappears after the first channel's delete; the tombstone survives until the second; an older upsert arriving in between is discarded; the tombstone is dropped after the last claim.
-8. **Pending edits.** Local edits replay over the newest base; ACK-before-Pull and Pull-before-ACK keep correct checkpoint and prefix settlement.
-9. **Close and reopen** at each durable boundary preserves stamps, claims and tombstones.
-10. **Unstamped page** is rejected; `fixtures/protocol` cases for missing, zero, negative and overflowing `stamp`.
+5. **Move A → B and A → B → A**, including delayed updates and child-record cascade.
+6. **Delete across channels.** Delete notified to A and B; the record disappears after the first channel's delete; the tombstone survives until the second; an older upsert arriving in between is discarded; the tombstone is dropped after the last claim.
+7. **Pending edits.** Local edits replay over the newest base; ACK-before-Pull and Pull-before-ACK keep correct checkpoint and prefix settlement.
+8. **Close and reopen** at each durable boundary preserves stamps, claims and tombstones.
+9. **Unstamped page** is rejected; `fixtures/protocol` cases for missing, zero, negative and overflowing `stamp`.
 
 ## Tests to update
 
