@@ -2,7 +2,7 @@
 
 2026-09-12. Design record for issue #8. Every record delivered by Pull carries a per-record content version called the **stamp**. The client applies content strictly by stamp, so a delayed page from one channel can no longer overwrite newer content that arrived through another channel. Channel cursors keep their current job of ordering delivery on one channel and witnessing settlement.
 
-This design assumes the loader surface merged in #5 (PR #10) and the client tables designed in #9 (`docs/superpowers/specs/2026-09-12-client-storage-design.md`). It is written against the #9 design branch and is rebased once #9 merges.
+This design builds on the loader surface merged in #5 (PR #10) and the client storage merged in #9 (PR #15, `docs/superpowers/specs/2026-09-12-client-storage-design.md`). #9 already shipped the client half: `otter_record`, `otter_claim`, and a `downlink.rs` that applies content by stamp when a change carries one. What remains is listed under "Work remaining" at the end.
 
 ## Why
 
@@ -73,7 +73,7 @@ Every record delivered by Pull carries a stamp from creation. There is no dynami
 | `stamp` | compared with `otter_record.stamp` |
 | `state` | non-null is an upsert, null is a delete, unchanged |
 
-`crates/core/src/protocol.rs`: `RecordChange` gains `pub stamp: u64`; `validate` applies the same safe-integer rule as `syncId`. `fixtures/protocol/counter-and-checkpoint.json` gains cases for a missing, zero, negative and overflowing `stamp`.
+`crates/core/src/protocol.rs`: `RecordChange.stamp` is currently `Option<u64>` with `skip_serializing_if`, the transitional shape from #9. It becomes `pub stamp: u64`, and `PullPage::validate` applies the same safe-integer rule as `syncId` plus `stamp > 0`. `fixtures/protocol/counter-and-checkpoint.json` gains cases for a missing, zero, negative and overflowing `stamp`.
 
 ## Server
 
@@ -189,6 +189,8 @@ As a table:
 
 Rejecting stale content never drops the claim bookkeeping it carries. Page validation, per-change commit and skip-on-failure are unchanged.
 
+`crates/client/src/downlink.rs` already implements this table for stamped changes, with one refinement kept from #9: a tombstone whose record still has a pending local operation is not dropped when its claims reach zero, because the pending operation still needs the stamp as its base. The two `None` branches for unstamped changes (apply unconditionally; release one claim and delete on the last) are the transitional path and are removed by this issue, together with the test `unstamped_delete_releases_one_claim_and_removes_on_last`.
+
 ### Delete applies across channels
 
 A delete with a newer stamp removes the local record regardless of how many claims remain. The remaining `otter_claim` rows are exactly the channels whose copy of the delete has not arrived yet. Each channel's delete removes its claim; when none remain, the `otter_record` row is dropped. At that point every claiming channel's cursor is past the delete, so an older upsert cannot arrive. There is no TTL and no separate pending set.
@@ -259,9 +261,19 @@ Each is a scenario under `fixtures/scenarios` run by `integration/rust/tests/sce
 
 `bash scripts/test.sh` must pass on macOS and Linux before merge.
 
-## Sequencing
+## Work remaining
 
-#5 is merged. #9 lands the client tables this design writes to. Implement this issue on top of #9.
+Already on `main` from #9: client tables `otter_record`, `otter_claim`, `otter_subscription`; `ledger.rs` with the stamp and claim operations; `downlink.rs` applying stamped changes by the rules above; `RecordChange.stamp` as an optional field; the sqlite downlink tests for cross-channel delete, stale stamp, equal stamp and cascade.
+
+This issue does the rest, in this order:
+
+1. **Server storage.** `otter_record` table and the `stamp` column on `otter_invalidation` in `packages/persistence-prisma/migration.sql`; `publish` allocates and returns `{ cursor, stamp }`; `scan` returns `stamp`. Persistence tests for both and for concurrent notify.
+2. **Server pull.** `process_pull` copies the row's `stamp` into `RecordChange` instead of `None`; `publish` validates the returned stamp.
+3. **Wire.** `RecordChange.stamp` becomes required; validation and protocol fixtures.
+4. **Client.** Remove the unstamped branches in `downlink.rs` and their test; every remaining scenario supplies a stamp.
+5. **Scenarios.** The acceptance list above under `fixtures/scenarios`, and `bash scripts/test.sh` green.
+
+Steps 1 and 2 can land before 3; once the server always emits a stamp, 3 and 4 remove the optional path in one change.
 
 ## Out of scope
 
