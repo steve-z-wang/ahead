@@ -158,6 +158,7 @@ Map<String,dynamic> createEntry({required Entry entry}) { final operations=<Map<
  final state=value.toRecord(); for (final key in value.identity.toRecord().keys) { state.remove(key); }
  operations.add({'model':'Entry','op':'create','identity':value.identity.toRecord(),'values':state}); }
  return {'name':'CreateEntry','version':1,'operations':operations}; }
+final _createEntry = createEntry;
 class EditEntryEntryUpdate {
  final EntryIdentity identity;
  final Present<String>? title;
@@ -174,22 +175,26 @@ Map<String,dynamic> editEntry({required EditEntryEntryUpdate entry}) { final ope
  for (final value in [entry]) {
  operations.add({'model':'Entry','op':'update','identity':value.identity.toRecord(),'values':value.toRecord()}); }
  return {'name':'EditEntry','version':2,'operations':operations}; }
+final _editEntry = editEntry;
 Map<String,dynamic> removeEntries({required List<EntryIdentity> entries,EntryIdentity? maybe}) { final operations=<Map<String,dynamic>>[];
  for (final value in entries) {
  operations.add({'model':'Entry','op':'delete','identity':value.toRecord()}); }
  for (final value in [maybe].nonNulls) {
  operations.add({'model':'Entry','op':'delete','identity':value.toRecord()}); }
  return {'name':'RemoveEntries','version':1,'operations':operations}; }
+final _removeEntries = removeEntries;
 Map<String,dynamic> addBook({required Book book}) { final operations=<Map<String,dynamic>>[];
  for (final value in [book]) {
  final state=value.toRecord(); for (final key in value.identity.toRecord().keys) { state.remove(key); }
  operations.add({'model':'Book','op':'create','identity':value.identity.toRecord(),'values':state}); }
  return {'name':'AddBook','version':1,'operations':operations}; }
+final _addBook = addBook;
 Map<String,dynamic> addComment({required Comment comment}) { final operations=<Map<String,dynamic>>[];
  for (final value in [comment]) {
  final state=value.toRecord(); for (final key in value.identity.toRecord().keys) { state.remove(key); }
  operations.add({'model':'Comment','op':'create','identity':value.identity.toRecord(),'values':state}); }
  return {'name':'AddComment','version':1,'operations':operations}; }
+final _addComment = addComment;
 class EntryFilter {
  final Present<String>? id;
  final Present<String>? title;
@@ -242,29 +247,89 @@ class CounterFilter {
 }
 enum CounterOrderField {byId('id'),byIndex('index'); final String wireName; const CounterOrderField(this.wireName);}
 class CounterOrder { final CounterOrderField field; final bool descending; const CounterOrder(this.field,{this.descending=false}); Map<String,dynamic> toRecord()=>{'field':field.wireName,'direction':descending?'descending':'ascending'}; }
-class GeneratedClient { final Client client; GeneratedClient(this.client);
- Future<List<Entry>> queryEntry({EntryFilter? where,List<EntryOrder> orderBy=const [],int? limit}) async => (await client.querySpec('Entry',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Entry.fromRecord).toList();
- Future<List<Book>> queryBook({BookFilter? where,List<BookOrder> orderBy=const [],int? limit}) async => (await client.querySpec('Book',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Book.fromRecord).toList();
- Future<List<Comment>> queryComment({CommentFilter? where,List<CommentOrder> orderBy=const [],int? limit}) async => (await client.querySpec('Comment',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Comment.fromRecord).toList();
- Future<Book?> commentBook(CommentIdentity identity) async { final row=await client.related('Comment',identity.toRecord(),'book');return row==null?null:Book.fromRecord(row); }
- Future<List<Counter>> queryCounter({CounterFilter? where,List<CounterOrder> orderBy=const [],int? limit}) async => (await client.querySpec('Counter',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Counter.fromRecord).toList();
- Future<List<Comment>> bookComments(BookIdentity identity) async => (await client.referencing('Book',identity.toRecord(),'Comment','book')).map(Comment.fromRecord).toList();
- Future<Entry?> readEntry(EntryIdentity identity) async { final row=await client.read('Entry',identity.toRecord()); return row == null ? null : Entry.fromRecord(row); }
- Future<List<Entry>> entry({Map<String,dynamic> where=const {}}) async => (await client.query('Entry',where:where)).map(Entry.fromRecord).toList();
- Future<Book?> readBook(BookIdentity identity) async { final row=await client.read('Book',identity.toRecord()); return row == null ? null : Book.fromRecord(row); }
- Future<List<Book>> book({Map<String,dynamic> where=const {}}) async => (await client.query('Book',where:where)).map(Book.fromRecord).toList();
- Future<Comment?> readComment(CommentIdentity identity) async { final row=await client.read('Comment',identity.toRecord()); return row == null ? null : Comment.fromRecord(row); }
- Future<List<Comment>> comment({Map<String,dynamic> where=const {}}) async => (await client.query('Comment',where:where)).map(Comment.fromRecord).toList();
- Future<Counter?> readCounter(CounterIdentity identity) async { final row=await client.read('Counter',identity.toRecord()); return row == null ? null : Counter.fromRecord(row); }
- Future<List<Counter>> counter({Map<String,dynamic> where=const {}}) async => (await client.query('Counter',where:where)).map(Counter.fromRecord).toList();
- Future<int> mutate(Map<String,dynamic> mutation) => client.mutate(mutation);
- static Future<GeneratedClient> open({required String path, String? libraryPath, Map<String,dynamic>? migration}) async => GeneratedClient(await Client.open(path:path, schema:schema, libraryPath:libraryPath, migration:migration));
+class EntryModel { final ReadPort port; EntryModel(this.port);
+ Future<Entry?> get(EntryIdentity identity) async { final row=await port.read('Entry',identity.toRecord()); return row == null ? null : Entry.fromRecord(row); }
+ Future<List<Entry>> query({EntryFilter? where,List<EntryOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Entry',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Entry.fromRecord).toList();
+}
+class EntryLiveModel extends EntryModel { final Client client; EntryLiveModel(this.client) : super(client);
+ Stream<List<Entry>> watch({EntryFilter? where}) => client.watch('Entry', where:where?.toRecord()??{}).map((rows) => rows.map(Entry.fromRecord).toList());
+}
+class EntryTxModel extends EntryModel { final WritePort writer; EntryTxModel(this.writer) : super(writer);
+ Future<void> create(Entry value) { final state=value.toRecord(); for (final key in value.identity.toRecord().keys) { state.remove(key); } return writer.direct({'model':'Entry','op':'create','identity':value.identity.toRecord(),'values':state}); }
+ Future<void> update(EntryIdentity identity, EntryPatch patch) => writer.direct({'model':'Entry','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
+ Future<void> delete(EntryIdentity identity) => writer.direct({'model':'Entry','op':'delete','identity':identity.toRecord()});
+}
+class BookModel { final ReadPort port; BookModel(this.port);
+ Future<Book?> get(BookIdentity identity) async { final row=await port.read('Book',identity.toRecord()); return row == null ? null : Book.fromRecord(row); }
+ Future<List<Book>> query({BookFilter? where,List<BookOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Book',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Book.fromRecord).toList();
+ Future<List<Comment>> comments(BookIdentity identity) async => (await port.referencing('Book',identity.toRecord(),'Comment','book')).map(Comment.fromRecord).toList();
+}
+class BookLiveModel extends BookModel { final Client client; BookLiveModel(this.client) : super(client);
+ Stream<List<Book>> watch({BookFilter? where}) => client.watch('Book', where:where?.toRecord()??{}).map((rows) => rows.map(Book.fromRecord).toList());
+}
+class BookTxModel extends BookModel { final WritePort writer; BookTxModel(this.writer) : super(writer);
+ Future<void> create(Book value) { final state=value.toRecord(); for (final key in value.identity.toRecord().keys) { state.remove(key); } return writer.direct({'model':'Book','op':'create','identity':value.identity.toRecord(),'values':state}); }
+ Future<void> update(BookIdentity identity, BookPatch patch) => writer.direct({'model':'Book','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
+ Future<void> delete(BookIdentity identity) => writer.direct({'model':'Book','op':'delete','identity':identity.toRecord()});
+}
+class CommentModel { final ReadPort port; CommentModel(this.port);
+ Future<Comment?> get(CommentIdentity identity) async { final row=await port.read('Comment',identity.toRecord()); return row == null ? null : Comment.fromRecord(row); }
+ Future<List<Comment>> query({CommentFilter? where,List<CommentOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Comment',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Comment.fromRecord).toList();
+ Future<Book?> book(CommentIdentity identity) async { final row=await port.related('Comment',identity.toRecord(),'book');return row==null?null:Book.fromRecord(row); }
+}
+class CommentLiveModel extends CommentModel { final Client client; CommentLiveModel(this.client) : super(client);
+ Stream<List<Comment>> watch({CommentFilter? where}) => client.watch('Comment', where:where?.toRecord()??{}).map((rows) => rows.map(Comment.fromRecord).toList());
+}
+class CommentTxModel extends CommentModel { final WritePort writer; CommentTxModel(this.writer) : super(writer);
+ Future<void> create(Comment value) { final state=value.toRecord(); for (final key in value.identity.toRecord().keys) { state.remove(key); } return writer.direct({'model':'Comment','op':'create','identity':value.identity.toRecord(),'values':state}); }
+ Future<void> update(CommentIdentity identity, CommentPatch patch) => writer.direct({'model':'Comment','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
+ Future<void> delete(CommentIdentity identity) => writer.direct({'model':'Comment','op':'delete','identity':identity.toRecord()});
+}
+class CounterModel { final ReadPort port; CounterModel(this.port);
+ Future<Counter?> get(CounterIdentity identity) async { final row=await port.read('Counter',identity.toRecord()); return row == null ? null : Counter.fromRecord(row); }
+ Future<List<Counter>> query({CounterFilter? where,List<CounterOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Counter',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Counter.fromRecord).toList();
+}
+class CounterLiveModel extends CounterModel { final Client client; CounterLiveModel(this.client) : super(client);
+ Stream<List<Counter>> watch({CounterFilter? where}) => client.watch('Counter', where:where?.toRecord()??{}).map((rows) => rows.map(Counter.fromRecord).toList());
+}
+class CounterTxModel extends CounterModel { final WritePort writer; CounterTxModel(this.writer) : super(writer);
+ Future<void> create(Counter value) { final state=value.toRecord(); for (final key in value.identity.toRecord().keys) { state.remove(key); } return writer.direct({'model':'Counter','op':'create','identity':value.identity.toRecord(),'values':state}); }
+ Future<void> update(CounterIdentity identity, CounterPatch patch) => writer.direct({'model':'Counter','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
+ Future<void> delete(CounterIdentity identity) => writer.direct({'model':'Counter','op':'delete','identity':identity.toRecord()});
+}
+class Mutate { final WritePort port; Mutate(this.port);
+ Future<int> createEntry({required Entry entry}) => port.mutate(_createEntry(entry:entry));
+ Future<int> editEntry({required EditEntryEntryUpdate entry}) => port.mutate(_editEntry(entry:entry));
+ Future<int> removeEntries({required List<EntryIdentity> entries,EntryIdentity? maybe}) => port.mutate(_removeEntries(entries:entries,maybe:maybe));
+ Future<int> addBook({required Book book}) => port.mutate(_addBook(book:book));
+ Future<int> addComment({required Comment comment}) => port.mutate(_addComment(comment:comment));
+}
+class LiveModels { final Client port; LiveModels(this.port);
+ late final EntryLiveModel entry = EntryLiveModel(port);
+ late final BookLiveModel book = BookLiveModel(port);
+ late final CommentLiveModel comment = CommentLiveModel(port);
+ late final CounterLiveModel counter = CounterLiveModel(port);
+}
+class TxModels { final WritePort port; TxModels(this.port);
+ late final EntryTxModel entry = EntryTxModel(port);
+ late final BookTxModel book = BookTxModel(port);
+ late final CommentTxModel comment = CommentTxModel(port);
+ late final CounterTxModel counter = CounterTxModel(port);
+}
+class Channels { final Client client; Channels(this.client);
  Future<void> subscribe(String channel) => client.subscribe(channel);
  Future<void> unsubscribe(String channel) => client.unsubscribe(channel);
- Future<RuntimeConnection> connect(Transport transport, {void Function(Object)? onError, Future<void> Function()? refreshAuth}) => client.connect(transport, onError:onError, refreshAuth:refreshAuth);
- Future<void> sync(Transport transport) => client.sync(transport);
- Future<T> transaction<T>(Future<T> Function(Transaction tx) body) => client.transaction(body);
- Stream<List<Map<String,dynamic>>> watch(String model, {Map<String,dynamic> where=const {}}) => client.watch(model, where:where);
+}
+class GeneratedTransaction { final Transaction transaction; late final TxModels models = TxModels(transaction); late final Mutate mutate = Mutate(transaction); GeneratedTransaction(this.transaction); }
+class GeneratedClient { final Client client; final RuntimeConnection? connection; late final LiveModels models = LiveModels(client); late final Channels channels = Channels(client);
+ GeneratedClient._(this.client, this.connection);
+ /// Opens the local database at [path]. With a [transport], the connection starts immediately and retries on its own.
+ static Future<GeneratedClient> open({required String path, Transport? transport, String? libraryPath, Map<String,dynamic>? migration, void Function(Object)? onError, Future<void> Function()? refreshAuth}) async {
+  final client = await Client.open(path:path, schema:schema, libraryPath:libraryPath, migration:migration);
+  final connection = transport == null ? null : await client.connect(transport, onError:onError, refreshAuth:refreshAuth);
+  return GeneratedClient._(client, connection);
+ }
+ Future<T> transaction<T>(Future<T> Function(GeneratedTransaction tx) body) => client.transaction((tx) => body(GeneratedTransaction(tx)));
  Future<Map<String,dynamic>> status() => client.status();
  Future<void> close() => client.close();
 }

@@ -16,7 +16,7 @@ In another terminal, from the repository root:
 node examples/rust-round-trip/client.mts
 ```
 
-Try `sync`, then `edit   hello   `, then `show`. The local optimistic text retains the whitespace. Run `sync` again: the backend trims the text and the client replaces optimism after its Pull checkpoint arrives. `edit reject` followed by `sync` demonstrates rejection and restoration. Close/reopen the CLI before syncing to observe durable offline changes. Client data stays in `example-client.sqlite`; `OTTER_DATABASE` selects another path.
+Try `edit   hello   `. The entry prints twice: first the local optimistic text with its whitespace, then the backend's trimmed version once the Pull checkpoint arrives. `edit reject` demonstrates rejection and restoration. Stop the server, edit, and start it again to watch the queued change settle; close and reopen the CLI to observe durable offline changes. Client data stays in `example-client.sqlite`; `OTTER_DATABASE` selects another path.
 
 - `models/entry.model`: the source schema and mutation contract.
 - `generated/`: generated schema, mutation history, and language-specific facades.

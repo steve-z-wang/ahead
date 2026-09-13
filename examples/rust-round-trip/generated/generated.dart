@@ -53,6 +53,7 @@ Map<String,dynamic> edit({required EditEntryUpdate entry}) { final operations=<M
  for (final value in [entry]) {
  operations.add({'model':'Entry','op':'update','identity':value.identity.toRecord(),'values':value.toRecord()}); }
  return {'name':'Edit','version':1,'operations':operations}; }
+final _edit = edit;
 class EntryFilter {
  final Present<String>? id;
  final Present<String>? text;
@@ -66,18 +67,41 @@ class EntryFilter {
 }
 enum EntryOrderField {byId('id'),byText('text'),byNote('note'); final String wireName; const EntryOrderField(this.wireName);}
 class EntryOrder { final EntryOrderField field; final bool descending; const EntryOrder(this.field,{this.descending=false}); Map<String,dynamic> toRecord()=>{'field':field.wireName,'direction':descending?'descending':'ascending'}; }
-class GeneratedClient { final Client client; GeneratedClient(this.client);
- Future<List<Entry>> queryEntry({EntryFilter? where,List<EntryOrder> orderBy=const [],int? limit}) async => (await client.querySpec('Entry',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Entry.fromRecord).toList();
- Future<Entry?> readEntry(EntryIdentity identity) async { final row=await client.read('Entry',identity.toRecord()); return row == null ? null : Entry.fromRecord(row); }
- Future<List<Entry>> entry({Map<String,dynamic> where=const {}}) async => (await client.query('Entry',where:where)).map(Entry.fromRecord).toList();
- Future<int> mutate(Map<String,dynamic> mutation) => client.mutate(mutation);
- static Future<GeneratedClient> open({required String path, String? libraryPath, Map<String,dynamic>? migration}) async => GeneratedClient(await Client.open(path:path, schema:schema, libraryPath:libraryPath, migration:migration));
+class EntryModel { final ReadPort port; EntryModel(this.port);
+ Future<Entry?> get(EntryIdentity identity) async { final row=await port.read('Entry',identity.toRecord()); return row == null ? null : Entry.fromRecord(row); }
+ Future<List<Entry>> query({EntryFilter? where,List<EntryOrder> orderBy=const [],int? limit}) async => (await port.querySpec('Entry',{'filter':where?.toRecord()??{},'orderBy':orderBy.map((o)=>o.toRecord()).toList(),if(limit!=null)'limit':limit})).map(Entry.fromRecord).toList();
+}
+class EntryLiveModel extends EntryModel { final Client client; EntryLiveModel(this.client) : super(client);
+ Stream<List<Entry>> watch({EntryFilter? where}) => client.watch('Entry', where:where?.toRecord()??{}).map((rows) => rows.map(Entry.fromRecord).toList());
+}
+class EntryTxModel extends EntryModel { final WritePort writer; EntryTxModel(this.writer) : super(writer);
+ Future<void> create(Entry value) { final state=value.toRecord(); for (final key in value.identity.toRecord().keys) { state.remove(key); } return writer.direct({'model':'Entry','op':'create','identity':value.identity.toRecord(),'values':state}); }
+ Future<void> update(EntryIdentity identity, EntryPatch patch) => writer.direct({'model':'Entry','op':'update','identity':identity.toRecord(),'values':patch.toRecord()});
+ Future<void> delete(EntryIdentity identity) => writer.direct({'model':'Entry','op':'delete','identity':identity.toRecord()});
+}
+class Mutate { final WritePort port; Mutate(this.port);
+ Future<int> edit({required EditEntryUpdate entry}) => port.mutate(_edit(entry:entry));
+}
+class LiveModels { final Client port; LiveModels(this.port);
+ late final EntryLiveModel entry = EntryLiveModel(port);
+}
+class TxModels { final WritePort port; TxModels(this.port);
+ late final EntryTxModel entry = EntryTxModel(port);
+}
+class Channels { final Client client; Channels(this.client);
  Future<void> subscribe(String channel) => client.subscribe(channel);
  Future<void> unsubscribe(String channel) => client.unsubscribe(channel);
- Future<RuntimeConnection> connect(Transport transport, {void Function(Object)? onError, Future<void> Function()? refreshAuth}) => client.connect(transport, onError:onError, refreshAuth:refreshAuth);
- Future<void> sync(Transport transport) => client.sync(transport);
- Future<T> transaction<T>(Future<T> Function(Transaction tx) body) => client.transaction(body);
- Stream<List<Map<String,dynamic>>> watch(String model, {Map<String,dynamic> where=const {}}) => client.watch(model, where:where);
+}
+class GeneratedTransaction { final Transaction transaction; late final TxModels models = TxModels(transaction); late final Mutate mutate = Mutate(transaction); GeneratedTransaction(this.transaction); }
+class GeneratedClient { final Client client; final RuntimeConnection? connection; late final LiveModels models = LiveModels(client); late final Channels channels = Channels(client);
+ GeneratedClient._(this.client, this.connection);
+ /// Opens the local database at [path]. With a [transport], the connection starts immediately and retries on its own.
+ static Future<GeneratedClient> open({required String path, Transport? transport, String? libraryPath, Map<String,dynamic>? migration, void Function(Object)? onError, Future<void> Function()? refreshAuth}) async {
+  final client = await Client.open(path:path, schema:schema, libraryPath:libraryPath, migration:migration);
+  final connection = transport == null ? null : await client.connect(transport, onError:onError, refreshAuth:refreshAuth);
+  return GeneratedClient._(client, connection);
+ }
+ Future<T> transaction<T>(Future<T> Function(GeneratedTransaction tx) body) => client.transaction((tx) => body(GeneratedTransaction(tx)));
  Future<Map<String,dynamic>> status() => client.status();
  Future<void> close() => client.close();
 }

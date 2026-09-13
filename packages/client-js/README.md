@@ -1,16 +1,26 @@
 # TypeScript client
 
-The compiler emits `client.ts` next to your models. `GeneratedClient.open({path})` opens the shared Rust runtime on a SQLite file at that path with the generated schema; where the file lives, and whether there is one per signed-in user, is the application's decision. Build `bindings/node` before importing this source package. Adding a model does not recompile Rust.
+The compiler emits `client.ts` next to your models. `GeneratedClient.open({path, transport})` opens the shared Rust runtime on a SQLite file at that path with the generated schema and, when a transport is given, starts the background connection. Where the file lives, and whether there is one per signed-in user, is the application's decision. Build `bindings/node` before importing this source package. Adding a model does not recompile Rust.
 
 ```ts
 import { GeneratedClient, httpTransport } from './generated/client.ts';
-const client = await GeneratedClient.open({path: 'local.sqlite'});
-await client.subscribe('book:example');
-await client.connect(httpTransport({url: 'http://127.0.0.1:4242', token}));
-await client.edit({entry: {identity: {id: 'entry-1'}, values: {text: 'offline'}}});
+const client = await GeneratedClient.open({
+  path: 'local.sqlite',
+  transport: httpTransport({url: 'http://127.0.0.1:4242', token}),
+});
+await client.channels.subscribe('book:example');
+
+// Reads anywhere.
+const entry = await client.models.entry.get({id: 'entry-1'});
+const stop = client.models.entry.watch({}, (rows) => render(rows));
+
+// Writes inside a transaction.
+await client.transaction(async (tx) => {
+  await tx.mutate.edit({entry: {identity: {id: 'entry-1'}, values: {text: 'offline'}}});
+});
 ```
 
-`Client.open({path, schema})` is the untyped runtime underneath; `GeneratedClient` forwards `subscribe`, `connect`, `sync`, `transaction`, `watch`, `status` and `close` to it and exposes the rest as `.client`.
+One rule: reads anywhere, writes inside a transaction. `client.models.<model>` has `get`, `query({where, orderBy, limit})`, `watch` and relation accessors. `tx.models.<model>` has the same reads plus local writes `create`, `update` and `delete`, which change the local store without enqueueing anything. `tx.mutate.<mutation>(args)` enqueues a mutation and returns its ordinal. `client.channels` subscribes and unsubscribes; `client.connection` pauses, resumes and wakes the background connection. `Client.open({path, schema})` is the untyped runtime underneath, reachable as `client.client`; the runtime `Transaction` is `tx.transaction`.
 
 ## Sync and background connections
 

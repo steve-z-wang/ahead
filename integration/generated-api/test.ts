@@ -1,4 +1,4 @@
-import {CreateEntry,EditEntry,RemoveEntries,decodeEntry,encodeEntry,GeneratedClient,type Entry} from './generated.ts';
+import {CreateEntry,EditEntry,RemoveEntries,decodeEntry,encodeEntry,EntryModel,EntryLiveModel,GeneratedTransaction,type Entry,type ReadPort,type LivePort,type WritePort} from './generated.ts';
 const row:Entry={id:'123e4567-e89b-42d3-a456-426614174000',title:'hello',note:null,at:new Date('2026-01-01T00:00:00Z'),tags:['x'],status:'active'};
 function check(v:unknown,m:string){if(!v)throw Error(m)}
 const create=CreateEntry({entry:row});
@@ -7,14 +7,20 @@ check(JSON.stringify(decodeEntry(encodeEntry(row)))===JSON.stringify(row),'sourc
 const patch=EditEntry({entry:{identity:{id:row.id},values:{note:null}}});
 check(JSON.stringify((patch.operations[0] as {values:object}).values)==='{"note":null}','presence semantics');
 check(RemoveEntries({entries:[]}).operations.length===0,'optional/list');
+const reads:ReadPort={async read(){return encodeEntry(row)},async querySpec(){return [encodeEntry(row)]},async related(){return null},async referencing(){return []}};
 if(false){
- const api=new GeneratedClient({async read(){return null},async query(){return []},async mutate(){return 1}});
+ const entries=new EntryModel(reads);
  // @ts-expect-error lists cannot be query predicates
- api.queryEntry({where:{tags:[]}});
+ entries.query({where:{tags:[]}});
  // @ts-expect-error enum ordering is not defined
- api.queryEntry({orderBy:[{field:'status',direction:'ascending'}]});
+ entries.query({orderBy:[{field:'status',direction:'ascending'}]});
  // @ts-expect-error date filter must be a Date
- api.queryEntry({where:{at:'2026-01-01'}});
+ entries.query({where:{at:'2026-01-01'}});
+ const live:LivePort={...reads,watch(){return ()=>{}}};
+ new EntryLiveModel(live).watch({},(rows)=>rows[0]?.at.getTime());
+ const writes:WritePort={...reads,async mutate(){return 1},async direct(){}};
+ // @ts-expect-error watch is not available inside a transaction
+ new GeneratedTransaction(writes).models.entry.watch({},()=>{});
 
  // @ts-expect-error identity is immutable in patch
  EditEntry({entry:{identity:{id:row.id},values:{id:'bad'}}});
@@ -25,6 +31,6 @@ if(false){
  // @ts-expect-error enum typo
  const bad:Entry={...row,status:'typo'};
 }
-const client=new GeneratedClient({async read(){return encodeEntry(row)},async query(){return [encodeEntry(row)]},async mutate(m){check(JSON.stringify(m)===JSON.stringify(create),'forwarding');return 1}});
-async function main(){check((await client.readEntry({id:row.id}))?.at instanceof Date,'read decode');check((await client.entry()).length===1,'query facade');check(await client.createEntry({entry:row})===1,'mutate facade');}
+const tx=new GeneratedTransaction({...reads,async mutate(m){check(JSON.stringify(m)===JSON.stringify(create),'forwarding');return 1},async direct(op){check(JSON.stringify(op)===JSON.stringify({model:'Entry',op:'delete',identity:{id:row.id}}),'local write');}});
+async function main(){check((await tx.models.entry.get({id:row.id}))?.at instanceof Date,'read decode');check((await tx.models.entry.query()).length===1,'query facade');check(await tx.mutate.createEntry({entry:row})===1,'mutate facade');await tx.models.entry.delete({id:row.id});}
 main();
