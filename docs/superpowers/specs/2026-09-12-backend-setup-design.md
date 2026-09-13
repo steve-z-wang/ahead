@@ -6,6 +6,8 @@
 
 The backend is the API layer. A developer should write only what the framework cannot know: the business logic of each mutation, how to load each model, how to identify the caller, and which database to use. Everything the compiler can derive from the `.model` files is generated.
 
+One convention applies to the whole surface: every framework call takes a single object argument with named fields. Handlers receive `{ input, tx, userId, notify }`, loaders `{ ids, tx, userId }`, `notify` takes `{ channel, records }`, `createBackend` takes options, `listen` takes `{ port, host }`, and model references take an identity object. There are no positional overloads and no variadic parameters; a developer learns one shape.
+
 ## What the developer writes
 
 ```text
@@ -26,12 +28,12 @@ import { type Handlers, MutationRejected } from "./generated/backend.ts";
 export const handlers: Handlers<Tx> = {
   async addTask({ input: { task }, tx, notify }) {
     await tx.task.create({ data: task });
-    notify("team:demo", task);
+    notify({ channel: "team:demo", records: [task] });
   },
   async editTask({ input: { task }, tx, notify }) {
     if (task.patch.title === "") throw new MutationRejected("task.empty");
     await tx.task.update({ where: task.identity, data: task.patch });
-    notify("team:demo", task);
+    notify({ channel: "team:demo", records: [task] });
   },
 };
 ```
@@ -57,7 +59,7 @@ const backend = createBackend({
   handlers,
   loaders,
 });
-await backend.listen(4242);
+await backend.listen({ port: 4242 });
 ```
 
 ## Generated `backend.ts`
@@ -96,13 +98,13 @@ LoaderCall<Tx, Identity> = { ids: readonly Identity[]; tx: Tx; userId: string }
 
 `input` is not flattened into the call object because slot names could collide with framework fields. The previous `(ctx, input)` shape and the names `transaction`, `actorUserId`, `viewerUserId` and the loader's `channel` are removed without aliases; this is a source alpha. A loader's result may depend only on the record and the viewer, never on the channel that triggered the pull.
 
-`notify(channel, ...targets)` takes the channel first, then one or more targets, so the common case of several records to one channel needs no array. The channel argument is a string or, for the rare case of several channels, an array of strings. A target is a slot argument (already tagged with its model), a generated model reference such as `Book({ id: comment.bookId })` for records outside the input, or a raw `{ model, identity }` object for fully dynamic cases. Calling `notify` several times in one handler is equivalent to one call listing every target. It records an invalidation in the current transaction session exactly as the previous `ctx.publish(changes, channels)` did. The name says what it does: it tells subscribers of those channels that the record changed; the content comes from the loader. It returns void; awaiting it is allowed but not required because the session drains outstanding publications before commit.
+`notify({ channel, records })` has exactly one shape: `channel` is a string and `records` is always an array, even for one record. Several channels mean several calls. A record is a slot argument (already tagged with its model), a generated model reference such as `Book({ id: comment.bookId })` for records outside the input, or a raw `{ model, identity }` object for fully dynamic cases. Calling `notify` several times in one handler is equivalent to one call listing every record. It records an invalidation in the current transaction session exactly as the previous `ctx.publish(changes, channels)` did. The name says what it does: it tells subscribers of those channels that the record changed; the content comes from the loader. It returns void; awaiting it is allowed but not required because the session drains outstanding publications before commit.
 
 ```ts
 async addComment({ input: { comment }, tx, notify }) {
   await tx.comment.create({ data: comment });
   await tx.book.update({ where: { id: comment.bookId }, data: { comments: { increment: 1 } } });
-  notify("team:demo", comment, Book({ id: comment.bookId }));
+  notify({ channel: "team:demo", records: [comment, Book({ id: comment.bookId })] });
 }
 ```
 
@@ -137,7 +139,7 @@ createBackend({
 
 ## Serving
 
-`backend.listen(port, host = "127.0.0.1")` creates a Node HTTP server, mounts `/sync/mutations`, `/sync/pull` and the `/sync/live` WebSocket upgrade, and resolves to `{ url, close() }`. `close()` stops live subscriptions and the server.
+`backend.listen({ port, host = "127.0.0.1" })` creates a Node HTTP server, mounts `/sync/mutations`, `/sync/pull` and the `/sync/live` WebSocket upgrade, and resolves to `{ url, close() }`. `close()` stops live subscriptions and the server.
 
 `createHttpHandler` and `attachLive` become internal. Mounting on an application-owned server is not supported by the public surface.
 
@@ -151,7 +153,7 @@ createBackend({
 ## Kept, with renames noted
 
 - Rust runtime semantics, storage tables and settlement rules. The only Rust change is dropping the push fallback channel described under Receipt checkpoint.
-- `backend.notify(tx, channel, ...targets)` (renamed from `backend.publish`) and `bindTransaction` for background jobs.
+- `backend.notify(tx, { channel, records })` (renamed from `backend.publish`) and `bindTransaction` for background jobs.
 - The Dart and TypeScript client packages. Client-side simplification (`openClient` with a built-in transport) is a separate design.
 
 ## Example and tests
