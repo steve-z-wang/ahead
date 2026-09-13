@@ -99,11 +99,11 @@ LoaderCall<Tx, Identity> = { ids: readonly Identity[]; tx: Tx; userId: string }
 
 ## Channels
 
-The framework has two concepts at its boundary: a **channel** is a named distribution scope that clients subscribe to and handlers publish to, and **authenticate** tells the framework who is calling. How channels are named, who subscribes to which, and what each user may see are application decisions. The loader is the visibility boundary: it returns null for a row the viewer must not see. The framework has no notion of a per-user or "principal" channel and does not guard subscriptions.
+The framework has two concepts at its boundary: a **channel** is a named distribution scope that clients subscribe to and handlers notify, and **authenticate** tells the framework who is calling. How channels are named, who subscribes to which, and what each user may see are application decisions. The loader is the visibility boundary: it returns null for a row the viewer must not see. The framework has no notion of a per-user or "principal" channel and does not guard subscriptions.
 
 ## Receipt checkpoint
 
-A handler may return `{ channel }` to choose the checkpoint channel for its receipt. When it returns nothing, the host selects the single channel it published to. If it published to several, the host raises `handler.ambiguous_checkpoint` naming the mutation; the developer resolves it by returning `{ channel }`. If it published to none and returned nothing, the host raises `handler.no_channel`: a mutation that notifies nobody has no place in this model.
+A handler may return `{ channel }` to choose the checkpoint channel for its receipt. When it returns nothing, the host selects the single channel it notified. If it notified several, the host raises `handler.ambiguous_checkpoint` naming the mutation; the developer resolves it by returning `{ channel }`. If it notified none and returned nothing, the host raises `handler.no_channel`: a mutation that notifies nobody has no place in this model.
 
 The Rust server currently receives a fallback channel per push (the former principal channel) and uses it for mutations without a selected channel and for the legacy `requiredScope`/`requiredSyncId` receipt fields. The fallback parameter is removed. `requiredScope` becomes the first selected checkpoint channel, or an empty string when every mutation in the batch was rejected. The wire fixtures and the 64 client/server interleaving scenarios verify that the client's settlement is unaffected.
 
@@ -142,7 +142,7 @@ createBackend({
 ## Kept unchanged
 
 - Rust runtime semantics, storage tables and settlement rules. The only Rust change is dropping the push fallback channel described under Receipt checkpoint.
-- `backend.publish(tx, changes, channels)` and `bindTransaction` for background jobs.
+- `backend.notify(tx, target, ...channels)` (renamed from `backend.publish`) and `bindTransaction` for background jobs.
 - The Dart and TypeScript client packages. Client-side simplification (`openClient` with a built-in transport) is a separate design.
 
 ## Example and tests
@@ -152,7 +152,7 @@ createBackend({
 Tests to update or add:
 
 - `crates/compiler`: golden test for the emitted `backend.ts`; the generated file must compile under `integration/generated-api` with a handlers object that omits one mutation failing to typecheck.
-- `integration/persistence/server/runtime.test.mjs`: use `database: prisma(db)`, `handlers`, `loaders`; add cases for the checkpoint selection (one channel, none, several) and for the tagged slot argument passed to `publish`.
+- `integration/persistence/server/runtime.test.mjs`: use `database: prisma(db)`, `handlers`, `loaders`; add cases for the checkpoint selection (one channel, none, several) and for the tagged slot argument passed to `notify`.
 - `crates/server` and `integration/rust`: adjust the push signature and receipt legacy fields; all existing scenarios must still pass.
 - `integration/bindings/client-js` and `integration/e2e`: unchanged behavior through the rewritten example.
 - Remove `integration/nest`.
