@@ -15,7 +15,7 @@ impl SyncCycle {
         self.completed.clear();
         self.active = None;
     }
-    pub fn next<S: ClientStore>(
+    pub fn next<S: LegacyClientStore>(
         &mut self,
         client: &mut Client<S>,
     ) -> Result<Option<TransportAction>> {
@@ -53,7 +53,11 @@ impl SyncCycle {
         }
         Ok(None)
     }
-    pub fn complete<S: ClientStore>(&mut self, client: &mut Client<S>, bytes: &[u8]) -> Result<()> {
+    pub fn complete<S: LegacyClientStore>(
+        &mut self,
+        client: &mut Client<S>,
+        bytes: &[u8],
+    ) -> Result<()> {
         let action = self
             .active
             .clone()

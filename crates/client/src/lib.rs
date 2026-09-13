@@ -1,6 +1,8 @@
 //! Durable client state machine. Storage and transport never decide settlement.
 mod query;
 pub use query::{Direction, QueryOrder, QuerySpec};
+pub mod store;
+pub use store::*;
 mod migration;
 pub use migration::SchemaMigration;
 mod connection;
@@ -15,7 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::mpsc::{self, Receiver, Sender};
 pub use transport::*;
 
-pub trait ClientStore {
+pub trait LegacyClientStore {
     fn read_sql(
         &mut self,
         _schema: &Schema,
@@ -137,14 +139,14 @@ pub struct ApplyReport {
     pub stale: bool,
 }
 
-pub struct Client<S: ClientStore> {
+pub struct Client<S: LegacyClientStore> {
     store: S,
     schema: Schema,
     state: ClientState,
     generation: u64,
     watchers: Vec<Sender<u64>>,
 }
-impl<S: ClientStore> Client<S> {
+impl<S: LegacyClientStore> Client<S> {
     pub fn open(store: S, schema: Schema, owner: String) -> Result<Self> {
         Self::open_with_migration(store, schema, owner, None)
     }
