@@ -111,6 +111,8 @@ function tag<T extends object>(value: T, ref: RecordRef): T {
 function lowerFirst(name: string): string {
   return name.charAt(0).toLowerCase() + name.slice(1);
 }
+/** A framework programming error (no/ambiguous checkpoint), never a per-mutation rejection: must abort the batch and never reach `translateRejection`. */
+class CheckpointError extends Error {}
 export interface BackendOptions<T> {
   config: object;
   database: Database<T>;
@@ -241,7 +243,7 @@ export function createBackend<T>(options: BackendOptions<T>) {
     const key = handlerKey(m.name, m.version);
     const handler = options.handlers[key];
     if (typeof handler !== "function")
-      throw new Error(`Missing handler ${m.name} v${m.version}`);
+      throw new Error(`Missing handler ${key} for ${m.name} v${m.version}`);
     handlerTable.set(`${m.name}:${m.version}`, {
       handler,
       slots: m.slots ?? [],
@@ -309,10 +311,14 @@ export function createBackend<T>(options: BackendOptions<T>) {
               result = { channel: (returned as { channel: string }).channel };
             else if (notified.size === 1) result = { channel: [...notified][0] };
             else if (notified.size === 0)
-              throw new Error(`handler.no_channel:${req.name}`);
-            else throw new Error(`handler.ambiguous_checkpoint:${req.name}`);
+              throw new CheckpointError(`handler.no_channel:${req.name}`);
+            else
+              throw new CheckpointError(
+                `handler.ambiguous_checkpoint:${req.name}`,
+              );
           } catch (error) {
             await chain.catch(() => {});
+            if (error instanceof CheckpointError) throw error;
             const code =
               error instanceof MutationRejected
                 ? error.code
@@ -363,6 +369,7 @@ export function createBackend<T>(options: BackendOptions<T>) {
     const session = new Session();
     sessions.set(tx, session);
     return {
+      /** Unlike the handler's `notify`, this returns a promise the caller must await before the transaction commits. */
       notify: ({ channel, records }: NotifyArgs) =>
         publish(tx, records.map(toRef), [channel]),
       assertCommittable: () => session.assertCommittable(),
@@ -425,6 +432,7 @@ export function createBackend<T>(options: BackendOptions<T>) {
       wakes.subscribe(scope, wake),
     notifyCommitted: (scopes: readonly string[]) => wakes.notify(scopes),
     closeLive: () => wakes.clear(),
+    /** Unlike the handler's `notify`, this returns a promise the caller must await before the transaction commits. */
     notify: (tx: T, args: NotifyArgs) =>
       publish(tx, args.records.map(toRef), [args.channel]),
     bindTransaction,

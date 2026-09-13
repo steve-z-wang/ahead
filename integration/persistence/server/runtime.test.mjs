@@ -17,6 +17,9 @@ const backend=createBackend({config,database:prisma(db),authenticate,handlers:{
  async edit({input,tx,notify}){
   called++;lastInput=input;const {identity,patch}=input.task;
   await tx.$executeRawUnsafe('INSERT INTO business_task(id,title) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET title=$2',identity.id,patch.title);
+  if(patch.title==='empty-channel')notify({channel:'',records:[]});
+  if(patch.title==='bad-records')notify({channel:'shared',records:'x'});
+  if(patch.title==='bogus-record')notify({channel:'shared',records:[{bogus:true}]});
   notify({channel:'shared',records:[input.task]});
   if(patch.title==='refuse')throw new MutationRejected('task.refused');if(patch.title==='crash')throw new Error('business crash');
   if(patch.title==='two')notify({channel:'other',records:[input.task]});
@@ -37,7 +40,7 @@ test('native exports production runtime',()=>{assert.equal(typeof native.process
 test('backend validates config and complete registrations at startup',()=>{
  const base={...config,schema:structuredClone(schema)};
  assert.throws(()=>createBackend({config:{...base,mutations:[{name:'bad',version:0,slots:[]}]},native,database:prisma(db),authenticate,handlers:{},loaders:{task:async()=>[]}}),/invalid mutation descriptor/);
- assert.throws(()=>createBackend({config:base,native,database:prisma(db),authenticate,handlers:{},loaders:{task:async()=>[]}}),/Missing handler edit v1/);
+ assert.throws(()=>createBackend({config:base,native,database:prisma(db),authenticate,handlers:{},loaders:{task:async()=>[]}}),/Missing handler edit for edit v1/);
  assert.throws(()=>createBackend({config:base,native,database:prisma(db),authenticate,handlers:{edit:async()=>{}},loaders:{}}),/Missing loader Task/);
 });
 test('Prisma persistence supports reusable bind without owning a transaction',async()=>{
@@ -224,7 +227,8 @@ test('listen serves push, pull and live on one port and closes cleanly',async()=
 test('slot arguments are tagged so notify accepts them directly',async()=>{
  await backend.push('alice',push('tagged',1,[mutation(1,'hello','tagged-a')]));
  assert.deepEqual(lastInput.task[RECORD],{model:'Task',identity:{id:'tagged-a'}});
- assert.equal(Object.keys(lastInput.task).includes('model'),false);
+ assert.deepEqual(Object.keys(lastInput.task),['identity','patch']);
+ assert.equal(RECORD in {...lastInput.task},false);
 });
 test('checkpoint is the single notified channel; several need an explicit choice; none is an error',async()=>{
  const one=JSON.parse(await backend.push('alice',push('cp1',1,[mutation(1,'hello','cp-a')])));
@@ -234,6 +238,17 @@ test('checkpoint is the single notified channel; several need an explicit choice
  assert.deepEqual(picked.requiredCheckpoints.map(c=>c.scope),['other']);
  const silent=createBackend({config,database:prisma(db),authenticate,handlers:{async edit(){}},loaders:{async task({ids}){return ids.map(()=>null)}}});
  await assert.rejects(()=>silent.push('alice',push('cp4',1,[mutation(1,'hello','cp-d')])),/handler\.no_channel:edit/);
+});
+test('checkpoint errors bypass translateRejection and abort the batch instead of settling as a rejection',async()=>{
+ const silentTranslated=createBackend({config,database:prisma(db),authenticate,translateRejection:()=>'task.translated',handlers:{async edit(){}},loaders:{async task({ids}){return ids.map(()=>null)}}});
+ await assert.rejects(()=>silentTranslated.push('alice',push('cp-none-t',1,[mutation(1,'hello','cp-none-t')])),/handler\.no_channel:edit/);
+ const ambiguousTranslated=createBackend({config,database:prisma(db),authenticate,translateRejection:()=>'task.translated',handlers:{async edit({input,tx,notify}){const {identity,patch}=input.task;await tx.$executeRawUnsafe('INSERT INTO business_task(id,title) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET title=$2',identity.id,patch.title);notify({channel:'shared',records:[input.task]});notify({channel:'other',records:[input.task]});}},loaders:{async task({ids,tx}){return Promise.all(ids.map(async identity=>{const rows=await tx.$queryRawUnsafe('SELECT title FROM business_task WHERE id=$1',identity.id);return rows[0]??null;}));}}});
+ await assert.rejects(()=>ambiguousTranslated.push('alice',push('cp-amb-t',1,[mutation(1,'x','cp-amb-t')])),/handler\.ambiguous_checkpoint:edit/);
+});
+test('notify validates channel and records before dispatching to native publish',async()=>{
+ await assert.rejects(()=>backend.push('alice',push('badchan',1,[mutation(1,'empty-channel','bad-a')])),/notify: channel must be a non-empty string/);
+ await assert.rejects(()=>backend.push('alice',push('badrecs',1,[mutation(1,'bad-records','bad-b')])),/notify: records must be an array/);
+ await assert.rejects(()=>backend.push('alice',push('badbogus',1,[mutation(1,'bogus-record','bad-c')])),/notify: record must be/);
 });
 test('an all-rejected batch settles with no checkpoints',async()=>{
  const receipt=JSON.parse(await backend.push('alice',push('allrej',1,[mutation(1,'refuse','rej-a')])));
