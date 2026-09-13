@@ -3,7 +3,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$root/scripts/env.sh"
 bash "$root/scripts/build.sh"
-(cd "$root" && cargo run -p otter-compiler -- compile examples/rust-round-trip/models examples/rust-round-trip/generated)
+(cd "$root" && cargo run -p otter-compiler -- compile examples/rust-round-trip/models examples/rust-round-trip/generated --backend-runtime ../../../packages/server/index.mts)
 (cd "$root/examples/rust-round-trip" && npm ci && npm run generate)
 cluster="$(mktemp -d "${TMPDIR:-/tmp}/otter-demo-pg.XXXXXX")"
 cleanup(){ pg_ctl -D "$cluster/data" -m immediate stop >/dev/null 2>&1 || true; rm -rf -- "$cluster"; }

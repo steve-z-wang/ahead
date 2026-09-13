@@ -44,3 +44,29 @@ fn cli_retains_history_and_does_not_overwrite_on_break() {
     );
     fs::remove_dir_all(root).unwrap();
 }
+#[test]
+fn cli_writes_backend_ts_with_the_requested_runtime_import() {
+    let root = std::env::temp_dir().join(format!("otter-compiler-backend-{}", std::process::id()));
+    let input = root.join("input");
+    let out = root.join("out");
+    fs::create_dir_all(&input).unwrap();
+    fs::write(
+        input.join("test.model"),
+        "model A { id UUID title String @@id(id) } mutation Save { a A.create }",
+    )
+    .unwrap();
+    let status = Command::new(env!("CARGO_BIN_EXE_otter-sync"))
+        .arg("compile")
+        .arg(&input)
+        .arg(&out)
+        .arg("--backend-runtime")
+        .arg("../../packages/server/index.mts")
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let backend = fs::read_to_string(out.join("backend.ts")).unwrap();
+    assert!(backend.contains("from \"../../packages/server/index.mts\""));
+    assert!(backend.contains(" save(call: HandlerCall<Tx, SaveInput>)"));
+    assert!(backend.contains(" a(call: LoaderCall<Tx, AIdentity>)"));
+    fs::remove_dir_all(root).unwrap();
+}

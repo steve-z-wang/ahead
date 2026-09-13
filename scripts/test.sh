@@ -9,7 +9,7 @@ cargo fmt --all --check
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 (cd examples/rust-round-trip && npm ci && npx prisma generate)
-cargo run -p otter-compiler -- compile examples/rust-round-trip/models examples/rust-round-trip/generated
+cargo run -p otter-compiler -- compile examples/rust-round-trip/models examples/rust-round-trip/generated --backend-runtime ../../../packages/server/index.mts
 npm run typecheck
 node --test integration/bindings/client-js/*.test.mjs
 bash integration/persistence/transaction-probe/run.sh
