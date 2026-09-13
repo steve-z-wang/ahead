@@ -42,9 +42,8 @@ await client.transaction(async (tx) => {
 });
 ```
 
-Where `client` comes from:
-
 ```ts
+// Open the local database and connect.
 import { GeneratedClient, httpTransport } from "./generated/client.ts";
 
 const client = await GeneratedClient.open({
