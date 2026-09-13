@@ -1,11 +1,8 @@
 import { PrismaClient, type Prisma } from "@prisma/client";
-import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import {
   createBackend,
-  createHttpHandler,
-  attachLive,
   devAuth,
   MutationRejected,
 } from "../../packages/server/index.mts";
@@ -25,48 +22,39 @@ export async function createExample() {
     config,
     database: prisma<Prisma.TransactionClient>(db),
     authenticate: devAuth(),
-    principalChannel: () => "book:demo",
-    authorize: async (c) => c.channel === "book:demo",
     handlers: {
-      Edit: {
-        1: async (ctx, args) => {
-          calls++;
-          const { identity, patch } = args.entry;
-          if (patch.text === "reject")
-            throw new MutationRejected("entry.denied");
-          await ctx.transaction.entry.update({
-            where: identity,
-            data: {
-              ...patch,
-              ...(typeof patch.text === "string"
-                ? { text: patch.text.trim() }
-                : {}),
-            },
-          });
-          await ctx.publish([{ model: "Entry", identity }], ["book:demo"]);
-          return { channel: "book:demo" };
-        },
+      async edit({ input, tx, notify }) {
+        calls++;
+        const { identity, patch } = input.entry;
+        if (patch.text === "reject") throw new MutationRejected("entry.denied");
+        await tx.entry.update({
+          where: identity,
+          data: {
+            ...patch,
+            ...(typeof patch.text === "string"
+              ? { text: patch.text.trim() }
+              : {}),
+          },
+        });
+        notify({ channel: "book:demo", records: [input.entry] });
       },
     },
     loaders: {
-      Entry: {
-        load: async (ctx, identities) =>
-          Promise.all(
-            identities.map((identity) =>
-              ctx.transaction.entry.findUnique({ where: identity }),
-            ),
-          ),
+      async entry({ ids, tx }) {
+        return Promise.all(
+          ids.map((identity) => tx.entry.findUnique({ where: identity })),
+        );
       },
     },
   });
-  const authenticate = async (req: any) =>
-    req.headers.authorization === "Bearer demo-user" ? "demo-user" : null;
-  const http = createServer(createHttpHandler({ backend, authenticate }));
-  const closeLive = attachLive(http, { backend, authenticate });
+  let server: Awaited<ReturnType<typeof backend.listen>> | undefined;
   return {
     db,
     backend,
-    http,
+    async listen(port: number) {
+      server = await backend.listen({ port });
+      return server;
+    },
     schema,
     get handlerCalls() {
       return calls;
@@ -94,19 +82,14 @@ export async function createExample() {
           create: { id: "entry-1", text: "Hello from the server" },
           update: {},
         });
-        await backend.publish(
-          tx,
-          [{ model: "Entry", identity: { id: "entry-1" } }],
-          ["book:demo"],
-        );
+        await backend.notify(tx, {
+          channel: "book:demo",
+          records: [{ model: "Entry", identity: { id: "entry-1" } }],
+        });
       });
     },
     async close() {
-      await closeLive.close();
-      if (http.listening)
-        await new Promise<void>((resolve, reject) =>
-          http.close((error) => (error ? reject(error) : resolve())),
-        );
+      if (server) await server.close();
       await db.$disconnect();
     },
   };
@@ -115,9 +98,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const app = await createExample();
   await app.initialize();
   const port = Number(process.env.PORT ?? 4242);
-  app.http.listen(port, "127.0.0.1", () =>
-    console.log(`Example listening at http://127.0.0.1:${port}`),
-  );
+  const started = await app.listen(port);
+  console.log(`Example listening at ${started.url}`);
   for (const signal of ["SIGINT", "SIGTERM"] as const)
     process.once(signal, () => void app.close());
 }

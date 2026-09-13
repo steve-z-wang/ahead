@@ -67,39 +67,60 @@ export class MutationRejected extends Error {
     this.code = code;
   }
 }
-export type Changes = readonly { model: string; identity: object }[];
-export interface WriteContext<T> {
-  transaction: T;
-  actorUserId: string;
-  publish(changes: Changes, channels: readonly string[]): Promise<unknown>;
+export interface RecordRef {
+  model: string;
+  identity: object;
 }
-export interface ReadContext<T> {
-  transaction: T;
-  viewerUserId: string;
+export type NotifyArgs = {
   channel: string;
+  records: readonly (RecordRef | object)[];
+};
+export type Notify = (args: NotifyArgs) => void;
+export interface HandlerCall<Tx, Input> {
+  input: Input;
+  tx: Tx;
+  userId: string;
+  notify: Notify;
 }
-export type Handler<T, Input = Record<string, any>> = (
-  context: WriteContext<T>,
-  args: Input,
+export interface LoaderCall<Tx, Identity> {
+  ids: readonly Identity[];
+  tx: Tx;
+  userId: string;
+}
+export type Handler<Tx, Input = any> = (
+  call: HandlerCall<Tx, Input>,
 ) => Promise<void | { channel: string }>;
-export interface Loader<T> {
-  load(
-    context: ReadContext<T>,
-    identities: readonly any[],
-  ): Promise<readonly (object | null)[]>;
-  prepareForViewer?(
-    context: ReadContext<T>,
-    identities: readonly any[],
-  ): Promise<void>;
+export type Loader<Tx, Identity = any, Row = object> = (
+  call: LoaderCall<Tx, Identity>,
+) => Promise<readonly (Row | null)[]>;
+export const RECORD: unique symbol = Symbol("otter.record");
+function toRef(value: unknown): RecordRef {
+  if (value !== null && typeof value === "object") {
+    const tagged = (value as { [RECORD]?: RecordRef })[RECORD];
+    if (tagged) return tagged;
+    const { model, identity } = value as Partial<RecordRef>;
+    if (typeof model === "string" && identity && typeof identity === "object")
+      return { model, identity };
+  }
+  throw new Error("notify: record must be a slot argument or { model, identity }");
+}
+function tag<T extends object>(value: T, ref: RecordRef): T {
+  Object.defineProperty(value, RECORD, { value: ref, enumerable: false });
+  return value;
+}
+function lowerFirst(name: string): string {
+  return name.charAt(0).toLowerCase() + name.slice(1);
 }
 export interface BackendOptions<T> {
   config: object;
   database: Database<T>;
   authenticate: Authenticate;
-  principalChannel: (owner: string) => string;
-  authorize: (context: ReadContext<T>) => Promise<boolean>;
-  handlers: Record<string, Record<number, Handler<T, any>>>;
+  handlers: Record<string, Handler<T>>;
   loaders: Record<string, Loader<T>>;
+  loaderHooks?: Record<
+    string,
+    { prepareForViewer(call: LoaderCall<T, any>): Promise<void> }
+  >;
   translateRejection?: (error: unknown) => string | null | undefined;
   native?: Native;
 }
@@ -177,32 +198,54 @@ class Session {
     if (this.closed) throw new Error("transaction session closed");
   }
 }
+type MutationSlot = {
+  name: string;
+  operation: string;
+  cardinality: string;
+  model: string;
+};
+type MutationDescriptor = {
+  name: string;
+  version: number;
+  slots?: MutationSlot[];
+};
 export function createBackend<T>(options: BackendOptions<T>) {
   const native =
     options.native ?? (require("../../bindings/node/otter-node.node") as Native);
+  const descriptor = options.config as {
+    schema?: { models?: { name: string }[] };
+    mutations?: MutationDescriptor[];
+  };
+  const latest = new Map<string, number>();
+  for (const m of descriptor.mutations ?? [])
+    latest.set(m.name, Math.max(latest.get(m.name) ?? 0, m.version));
+  const handlerKey = (name: string, version: number) =>
+    lowerFirst(name) + (version === latest.get(name) ? "" : `V${version}`);
+  const loaderTable = new Map<string, Loader<T>>();
+  for (const model of descriptor.schema?.models ?? []) {
+    const loader = options.loaders[lowerFirst(model.name)];
+    if (typeof loader !== "function")
+      throw new Error(`Missing loader ${model.name}`);
+    loaderTable.set(model.name, loader);
+  }
   const config = JSON.stringify({
     ...options.config,
-    loaders: Object.keys(options.loaders),
+    loaders: [...loaderTable.keys()],
   });
   native.validateConfig(config);
-  const descriptor = options.config as {
-    schema?: { models?: { name?: unknown }[] };
-    mutations?: { name?: unknown; version?: unknown }[];
-  };
-  for (const mutation of descriptor.mutations ?? []) {
-    if (
-      typeof mutation.name === "string" &&
-      typeof mutation.version === "number" &&
-      typeof options.handlers[mutation.name]?.[mutation.version] !== "function"
-    )
-      throw new Error(`Missing handler ${mutation.name} v${mutation.version}`);
-  }
-  for (const model of descriptor.schema?.models ?? []) {
-    if (
-      typeof model.name === "string" &&
-      typeof options.loaders[model.name]?.load !== "function"
-    )
-      throw new Error(`Missing loader ${model.name}`);
+  const handlerTable = new Map<
+    string,
+    { handler: Handler<T>; slots: MutationSlot[] }
+  >();
+  for (const m of descriptor.mutations ?? []) {
+    const key = handlerKey(m.name, m.version);
+    const handler = options.handlers[key];
+    if (typeof handler !== "function")
+      throw new Error(`Missing handler ${m.name} v${m.version}`);
+    handlerTable.set(`${m.name}:${m.version}`, {
+      handler,
+      slots: m.slots ?? [],
+    });
   }
   const sessions = new Map<T, Session>();
   const wakes = new WakeHub();
@@ -219,19 +262,57 @@ export function createBackend<T>(options: BackendOptions<T>) {
         if (req.op === "rollback") session.rollback(req.ordinal);
         if (req.op === "release") session.release(req.ordinal);
         if (req.op === "handle") {
-          const handler = options.handlers[req.name]?.[req.version];
-          if (!handler)
+          const entry = handlerTable.get(`${req.name}:${req.version}`);
+          if (!entry)
             throw new Error(`Missing handler ${req.name} v${req.version}`);
+          const shape = (slot: MutationSlot, raw: any) => {
+            if (raw === null || raw === undefined) return null;
+            const ref: RecordRef = { model: slot.model, identity: raw.identity };
+            if (slot.operation === "create")
+              return tag({ ...raw.identity, ...raw.data }, ref);
+            if (slot.operation === "update")
+              return tag({ identity: raw.identity, patch: raw.patch }, ref);
+            return tag({ identity: raw.identity }, ref);
+          };
+          const input: Record<string, unknown> = {};
+          for (const slot of entry.slots) {
+            const raw = req.arguments[slot.name];
+            input[slot.name] =
+              slot.cardinality === "list"
+                ? (raw as any[]).map((item) => shape(slot, item))
+                : shape(slot, raw);
+          }
+          const notified = new Set<string>();
+          let chain: Promise<unknown> = Promise.resolve();
+          const notify: Notify = ({ channel, records }) => {
+            if (typeof channel !== "string" || channel === "")
+              throw new Error("notify: channel must be a non-empty string");
+            if (!Array.isArray(records))
+              throw new Error("notify: records must be an array");
+            notified.add(channel);
+            const refs = records.map(toRef);
+            chain = chain.then(() => publish(tx, refs, [channel]));
+          };
           try {
-            result = await handler(
-              {
-                transaction: tx,
-                actorUserId: req.owner,
-                publish: (changes, channels) => publish(tx, changes, channels),
-              },
-              req.arguments,
-            );
+            const returned = await entry.handler({
+              input,
+              tx,
+              userId: req.owner,
+              notify,
+            });
+            await chain;
+            if (
+              returned &&
+              typeof returned === "object" &&
+              typeof (returned as { channel?: unknown }).channel === "string"
+            )
+              result = { channel: (returned as { channel: string }).channel };
+            else if (notified.size === 1) result = { channel: [...notified][0] };
+            else if (notified.size === 0)
+              throw new Error(`handler.no_channel:${req.name}`);
+            else throw new Error(`handler.ambiguous_checkpoint:${req.name}`);
           } catch (error) {
+            await chain.catch(() => {});
             const code =
               error instanceof MutationRejected
                 ? error.code
@@ -239,25 +320,16 @@ export function createBackend<T>(options: BackendOptions<T>) {
             if (code == null) throw error;
             result = { rejection: new MutationRejected(code).code };
           }
-          if (result === undefined) result = null;
-          if (result === null)
-            result = { channel: options.principalChannel(req.owner) };
         } else if (req.op === "authorize") {
-          result = await options.authorize({
-            transaction: tx,
-            viewerUserId: req.owner,
-            channel: req.channel,
-          });
+          result = true;
         } else if (req.op === "load") {
-          const loader = options.loaders[req.model];
+          const loader = loaderTable.get(req.model);
           if (!loader) throw new Error(`Missing loader ${req.model}`);
-          const context = {
-            transaction: tx,
-            viewerUserId: req.owner,
-            channel: req.channel,
-          };
-          await loader.prepareForViewer?.(context, req.identities);
-          result = await loader.load(context, req.identities);
+          const call = { ids: req.identities, tx, userId: req.owner };
+          await options.loaderHooks?.[lowerFirst(req.model)]?.prepareForViewer(
+            call,
+          );
+          result = await loader(call);
           if (
             !Array.isArray(result) ||
             result.some((value) => value === undefined)
@@ -269,7 +341,7 @@ export function createBackend<T>(options: BackendOptions<T>) {
   };
   const publish = (
     tx: T,
-    changes: Changes,
+    changes: readonly RecordRef[],
     channels: readonly string[],
   ): Promise<unknown> => {
     const session = sessions.get(tx) ?? new Session();
@@ -291,8 +363,8 @@ export function createBackend<T>(options: BackendOptions<T>) {
     const session = new Session();
     sessions.set(tx, session);
     return {
-      publish: (changes: Changes, channels: readonly string[]) =>
-        publish(tx, changes, channels),
+      notify: ({ channel, records }: NotifyArgs) =>
+        publish(tx, records.map(toRef), [channel]),
       assertCommittable: () => session.assertCommittable(),
       afterCommit: () => {
         const scopes = [...session.touched];
@@ -353,7 +425,8 @@ export function createBackend<T>(options: BackendOptions<T>) {
       wakes.subscribe(scope, wake),
     notifyCommitted: (scopes: readonly string[]) => wakes.notify(scopes),
     closeLive: () => wakes.clear(),
-    publish,
+    notify: (tx: T, args: NotifyArgs) =>
+      publish(tx, args.records.map(toRef), [args.channel]),
     bindTransaction,
   };
   const authenticate = async (request: IncomingMessage) => {
@@ -375,9 +448,12 @@ export function createBackend<T>(options: BackendOptions<T>) {
     });
     const address = server.address();
     const actual = typeof address === "object" && address ? address.port : port;
+    let closed = false;
     return {
       url: `http://${host}:${actual}`,
       close: async () => {
+        if (closed) return;
+        closed = true;
         await live.close();
         await new Promise<void>((resolve, reject) =>
           server.close((error) => (error ? reject(error) : resolve())),
@@ -387,11 +463,11 @@ export function createBackend<T>(options: BackendOptions<T>) {
   };
   return { ...api, listen };
 }
-export interface HttpBackend {
+interface HttpBackend {
   push(owner: string, request: Uint8Array | string): Promise<string>;
   pull(owner: string, request: Uint8Array | string): Promise<string>;
 }
-export function createHttpHandler(options: {
+function createHttpHandler(options: {
   backend: HttpBackend;
   authenticate: (request: IncomingMessage) => Promise<string | null>;
   maxBodyBytes?: number;
@@ -485,7 +561,7 @@ export function createHttpHandler(options: {
   };
 }
 
-export interface LiveBackend {
+interface LiveBackend {
   negotiateLive(
     owner: string,
     request: Uint8Array | string,
@@ -501,7 +577,7 @@ export interface LiveBackend {
   onCommitted(scope: string, wake: () => void): () => void;
 }
 
-export function attachLive(
+function attachLive(
   server: Server,
   options: {
     backend: LiveBackend;
