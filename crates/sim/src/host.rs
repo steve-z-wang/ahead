@@ -40,6 +40,8 @@ struct State {
     fail_next: bool,
     handler_calls: usize,
     accepted: usize,
+    rejected: usize,
+    failed: usize,
 }
 
 pub struct MemHost(Mutex<State>);
@@ -139,6 +141,39 @@ impl MemHost {
     }
     pub fn accepted(&self) -> usize {
         self.0.lock().unwrap().accepted
+    }
+    pub fn rejected(&self) -> usize {
+        self.0.lock().unwrap().rejected
+    }
+    pub fn failed(&self) -> usize {
+        self.0.lock().unwrap().failed
+    }
+    pub fn stamped_keys(&self) -> Vec<RecordKey> {
+        let s = self.0.lock().unwrap();
+        let mut by_encoded: BTreeMap<String, RecordKey> = BTreeMap::new();
+        for row in s.tables.invalidations.values() {
+            let key = key_of(&row.model, &row.identity);
+            by_encoded.insert(key.encoded().unwrap(), key);
+        }
+        by_encoded.into_values().collect()
+    }
+    pub fn channel_records(&self, channel: &str) -> Vec<RecordKey> {
+        let s = self.0.lock().unwrap();
+        s.tables
+            .invalidations
+            .iter()
+            .filter(|((c, _), _)| c == channel)
+            .map(|(_, row)| key_of(&row.model, &row.identity))
+            .collect()
+    }
+    pub fn receipt(&self, client_id: &str, sequence: u64) -> Option<String> {
+        let s = self.0.lock().unwrap();
+        let row = s.clients.get(client_id)?;
+        if row["sequence"].as_u64() == Some(sequence) {
+            row["receipt"].as_str().map(str::to_string)
+        } else {
+            None
+        }
     }
     pub fn push(&self, owner: &str, bytes: &[u8]) -> Result<String, String> {
         let (before, depth) = {
@@ -307,9 +342,11 @@ impl Host for MemHost {
                     s.handler_calls += 1;
                     if s.fail_next {
                         s.fail_next = false;
+                        s.failed += 1;
                         return Err("injected failure".into());
                     }
                     if let Some(code) = s.reject_next.take() {
+                        s.rejected += 1;
                         return Ok(json!({ "rejection": code }));
                     }
                     let name = r["name"].as_str().unwrap();

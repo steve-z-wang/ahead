@@ -128,6 +128,8 @@ pub struct Sim {
     pub rng: Rng,
     pub trace: Vec<Action>,
     pub clients: Vec<Slot>,
+    pub seen_stamps: BTreeMap<(usize, String), u64>,
+    pub seen_cursors: BTreeMap<(usize, String), u64>,
     _dir: tempfile::TempDir,
 }
 
@@ -170,8 +172,13 @@ impl Sim {
             rng: Rng::new(seed),
             trace: vec![],
             clients,
+            seen_stamps: BTreeMap::new(),
+            seen_cursors: BTreeMap::new(),
             _dir: dir,
         }
+    }
+    pub fn check(&mut self) -> Result<(), String> {
+        crate::invariants::check(self)
     }
     pub fn client(&mut self, i: usize) -> &mut Client<SqliteStore> {
         self.clients[i].client.as_mut().expect("client is crashed")
