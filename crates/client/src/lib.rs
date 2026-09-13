@@ -355,6 +355,15 @@ impl<S: ClientStore> Client<S> {
             )
         })
     }
+    pub fn query_spec(&mut self, model: &str, spec: &QuerySpec) -> Result<Vec<Value>> {
+        self.view(|e| query::evaluate(e, model, spec))
+    }
+    pub fn related(&mut self, key: &RecordKey, name: &str) -> Result<Option<Value>> {
+        self.view(|e| query::related(e, key, name))
+    }
+    pub fn referencing(&mut self, key: &RecordKey, source: &str, name: &str) -> Result<Vec<Value>> {
+        self.view(|e| query::referencing(e, key, source, name))
+    }
     pub fn read_sql(&mut self, sql: &str, parameters: &[Value]) -> Result<Vec<Value>> {
         let rows = self.store.query_committed(sql, parameters)?;
         query::rows_to_objects(rows)
@@ -546,6 +555,26 @@ impl<S: ClientStore> ClientTransaction<'_, S> {
     }
     pub fn enqueue(&mut self, mutation: Mutation) -> Result<u64> {
         self.savepoint(|tx| tx.engine.enqueue(mutation))
+    }
+    pub fn query(&mut self, model: &str, filter: &Value) -> Result<Vec<Value>> {
+        let filter: BTreeMap<String, Value> = serde_json::from_value(filter.clone())?;
+        query::evaluate(
+            &mut self.engine,
+            model,
+            &QuerySpec {
+                filter,
+                ..Default::default()
+            },
+        )
+    }
+    pub fn query_spec(&mut self, model: &str, spec: &QuerySpec) -> Result<Vec<Value>> {
+        query::evaluate(&mut self.engine, model, spec)
+    }
+    pub fn related(&mut self, key: &RecordKey, name: &str) -> Result<Option<Value>> {
+        query::related(&mut self.engine, key, name)
+    }
+    pub fn referencing(&mut self, key: &RecordKey, source: &str, name: &str) -> Result<Vec<Value>> {
+        query::referencing(&mut self.engine, key, source, name)
     }
     pub fn direct(&mut self, operation: Operation) -> Result<()> {
         self.savepoint(|tx| tx.engine.direct(operation))
