@@ -53,6 +53,8 @@ const client = await GeneratedClient.open({
     token: "demo-user",
   }),
 });
+
+// Subscribe to the channels you want to sync.
 await client.channels.subscribe("todos");
 ```
 
