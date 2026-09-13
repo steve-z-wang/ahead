@@ -1,14 +1,116 @@
-# Otter Sync
+# Ahead
 
-A local-first state framework with TypeScript and Dart clients, a TypeScript backend SDK, and a shared Rust runtime.
+Local-first state for TypeScript and Dart. Write your API as handlers. Call it like a local function. It works offline, and the client is always one step ahead of the server.
 
-The first implementation runs local SQLite clients against an embedded Node backend with Prisma/PostgreSQL. Rust owns schema validation, optimistic state, durable mutation batches, channel cursors and ACK/Pull settlement. Business code supplies Handlers, Loaders and explicit channel publication inside application-owned transactions. Generated business types stay in Dart/TypeScript.
+Ahead is a library, not a service. Mutations settle in your own database transaction, and your app reads from a local SQLite copy that catches up as the server confirms.
 
-[Documentation website setup and preview](website/README.md)
+## How it works
+
+### 1. Describe your data and your mutations
+
+```
+model Todo {
+  id    String
+  title String
+  done  Boolean
+  @@id(id)
+}
+
+mutation AddTodo      { todo Todo.create }
+mutation CompleteTodo { todo Todo.update<done> }
+```
+
+The compiler turns this file into a typed client for TypeScript and Dart, and into `Handlers` and `Loaders` types for the backend.
+
+### 2. Read and write on the client
+
+```ts
+// Read. Always local, including changes the server has not confirmed yet.
+const open = await client.models.todo.query({ where: { done: false } });
+
+// Watch. Fires now with the local state, and again whenever it changes.
+client.models.todo.watch({ where: { done: false } }, (todos) => render(todos));
+
+// Write, inside a transaction. Returns once the change is in local SQLite.
+await client.transaction(async (tx) => {
+  await tx.mutate.addTodo({
+    todo: { id: "t1", title: "Buy milk", done: false },
+  });
+  await tx.mutate.completeTodo({
+    todo: { identity: { id: "t1" }, values: { done: true } },
+  });
+});
+```
+
+Where `client` comes from:
+
+```ts
+import { GeneratedClient, httpTransport } from "./generated/client.ts";
+
+const client = await GeneratedClient.open({
+  path: "local.sqlite",
+  transport: httpTransport({
+    url: "http://127.0.0.1:4242",
+    token: "demo-user",
+  }),
+});
+await client.channels.subscribe("todos");
+```
+
+The connection sends queued mutations when the network allows, retries on its own, and pulls every record the backend notified about.
+
+### 3. Write the backend
+
+```ts
+import {
+  createBackend,
+  devAuth,
+  type Handlers,
+  type Loaders,
+} from "./generated/backend.ts";
+
+// Implement a handler for each mutation. It runs in one database transaction.
+// notify tells every client subscribed to the channel to reload these records.
+const handlers: Handlers<Tx> = {
+  async addTodo({ input, tx, notify }) {
+    await tx.todo.create({ data: input.todo });
+    notify({ channel: "todos", records: [input.todo] });
+  },
+  async completeTodo({ input, tx, notify }) {
+    await tx.todo.update({
+      where: input.todo.identity,
+      data: input.todo.patch,
+    });
+    notify({ channel: "todos", records: [input.todo] });
+  },
+};
+
+// Tell the framework how to load a record by id.
+const loaders: Loaders<Tx> = {
+  todo: ({ ids, tx }) =>
+    Promise.all(ids.map((identity) => tx.todo.findUnique({ where: identity }))),
+};
+
+// Put them together and start the server.
+const backend = createBackend({
+  database: prisma(new PrismaClient()),
+  authenticate: devAuth(),
+  handlers,
+  loaders,
+});
+await backend.listen({ port: 4242 });
+```
+
+## What you get
+
+- **Offline writes.** Mutations queue locally and are sent in order when a connection is available.
+- **Reads that never wait.** Every read is a local SQLite read, including changes the server has not confirmed yet.
+- **Your transaction, your rules.** A handler can reject a mutation. The client rolls the optimistic change back and keeps the server's state.
+- **No vendor service.** The backend is a function you host. Data lives in your database.
 
 ## Try it
 
-With Rust, Node 22.18+, Python 3 and PostgreSQL command-line tools installed:
+You need Rust, Node 22.18+, Python 3 and the PostgreSQL command-line tools.
 
 ```sh
 bash examples/rust-round-trip/run.sh
@@ -20,35 +122,10 @@ In another terminal:
 node examples/rust-round-trip/client.mts
 ```
 
-Use `sync`, `edit TEXT`, `show`, and `status` to observe offline edits, server normalization and durable retry. [Example instructions](examples/rust-round-trip/README.md) describe the complete setup. Add Dart to run both clients through the real backend with `bash integration/e2e/run.sh`.
+Type `edit some text`. The entry prints twice: first the local change, then the server's version. Stop the server, edit again, and start it back up to watch the queue settle. The [example README](examples/rust-round-trip/README.md) walks through the setup.
 
-## Packages
+## Status
 
-| Area | Implementation |
-| --- | --- |
-| Shared values and protocol | `crates/core` |
-| Client state and scheduling | `crates/client` |
-| Server state machine | `crates/server` |
-| Local persistence and read-only SQL | `crates/sqlite` |
-| Schema compiler and language generators | `crates/compiler` |
-| Native boundary | `bindings/common`, `bindings/node`, `bindings/dart` |
-| Frontend APIs | [TypeScript](packages/client-js/README.md), [Dart](packages/dart/README.md) |
-| Embedded backend | [Server](packages/server/README.md), [Prisma](packages/persistence-prisma/README.md) |
+Ahead is a source alpha. There is no package release and no license grant yet. The client runs on native macOS through Node and Dart; browser and mobile builds are separate targets.
 
-## Test and design
-
-`bash scripts/test.sh` builds and verifies the supported native host. [Testing](integration/README.md) explains the three layers and shared fixture folders. [Implementation evidence](docs/implementation-progress.md) records verified coverage and remaining platform limitations.
-
-- [Concepts and accepted naming](docs/architecture/concepts-and-naming.md)
-- [Code organization and language boundary](docs/architecture/code-organization.md)
-- [Compatibility and recovery](docs/architecture/compatibility-and-recovery.md)
-- [Next things](docs/next-things.md)
-- [Architecture decisions](docs/superpowers/specs/2026-09-10-rust-core-design.md)
-- [Implementation roadmap](docs/superpowers/plans/2026-09-10-rust-rebuild.md)
-- [Reference behavior inventory](docs/superpowers/specs/2026-09-10-existing-logic-audit.md)
-
-- [Documentation maintenance](docs/documentation.md)
-
-This is a source alpha. Cross-channel record revisions and their new conflict rules remain deferred. The original per-change invalid Pull skip behavior and overlapping channel limitations are retained. Live wakeups are process-local; multi-process deployments need a host-provided committed notification mechanism. The first SQLite implementation keeps a snapshot in memory and writes changed documents; large-cache performance still needs dedicated work. It does not import the original database layout.
-
-The reference implementation is retained in Git history at commit `989c4c769b1d41b4b3276f8c97f6bd8ef9eb4fb8`. This branch is a fresh implementation, with shared wire behavior covered by tests; it is not a drop-in database migration. No package release or license grant has been added.
+Everything else lives on the [documentation site](website/README.md): concepts, the wire protocol, testing, and the architecture decisions behind the Rust core.
