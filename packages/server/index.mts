@@ -9,7 +9,6 @@ export type Native = {
   processPush(
     config: string,
     owner: string,
-    channel: string,
     request: string,
     callback: (request: string) => Promise<string>,
   ): Promise<string>;
@@ -224,6 +223,8 @@ export function createBackend<T>(options: BackendOptions<T>) {
             result = { rejection: new MutationRejected(code).code };
           }
           if (result === undefined) result = null;
+          if (result === null)
+            result = { channel: options.principalChannel(req.owner) };
         } else if (req.op === "authorize") {
           result = await options.authorize({
             transaction: tx,
@@ -317,13 +318,7 @@ export function createBackend<T>(options: BackendOptions<T>) {
   return {
     push: (owner: string, request: Uint8Array | string) =>
       run((tx, session) =>
-        native.processPush(
-          config,
-          owner,
-          options.principalChannel(owner),
-          text(request),
-          host(tx, session),
-        ),
+        native.processPush(config, owner, text(request), host(tx, session)),
       ),
     pull: (owner: string, request: Uint8Array | string) =>
       run((tx, session) =>

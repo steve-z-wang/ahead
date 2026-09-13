@@ -295,7 +295,6 @@ async fn head(host: &impl Host, channel: &str) -> Result<u64> {
 pub async fn process_push(
     config: &Config,
     owner: &str,
-    channel: &str,
     bytes: &[u8],
     host: &impl Host,
 ) -> Result<String> {
@@ -370,20 +369,13 @@ pub async fn process_push(
                 code: code.into(),
             });
         } else {
-            let selected = if result.is_null() {
-                channel
-            } else {
-                result["channel"]
-                    .as_str()
-                    .ok_or("invalid handler settlement")?
-            };
+            let selected = result["channel"]
+                .as_str()
+                .ok_or("invalid handler settlement")?;
             channels.insert(selected.to_string());
         }
         host.call(json!({"op":"release","ordinal":m.ordinal}))
             .await?;
-    }
-    if channels.is_empty() {
-        channels.insert(channel.into());
     }
     let mut checkpoints = vec![];
     for ch in channels {
@@ -393,14 +385,14 @@ pub async fn process_push(
         });
     }
     checkpoints.sort_by(|a, b| a.channel.encode_utf16().cmp(b.channel.encode_utf16()));
-    let legacy = match checkpoints.iter().find(|cp| cp.channel == channel) {
-        Some(cp) => cp.cursor,
-        None => head(host, channel).await?,
+    let (required_channel, required_cursor) = match checkpoints.first() {
+        Some(cp) => (cp.channel.clone(), cp.cursor),
+        None => (String::new(), 0),
     };
     let receipt = PushReceipt {
         required_checkpoints: checkpoints,
-        required_channel: channel.into(),
-        required_cursor: legacy,
+        required_channel,
+        required_cursor,
         rejections,
     };
     let text = String::from_utf8(receipt.encode().map_err(err)?).map_err(err)?;

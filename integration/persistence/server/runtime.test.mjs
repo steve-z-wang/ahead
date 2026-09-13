@@ -41,7 +41,7 @@ test('Prisma persistence supports reusable bind without owning a transaction',as
  assert.equal(calls,1);
 });
 test('push commits business + compacted publication + exact durable receipt together',async()=>{
- const request=push('dedup',1,[mutation(1,'first')]);const receipt=await backend.push('alice',request);assert.deepEqual(JSON.parse(receipt),{requiredCheckpoints:[{scope:'shared',syncId:1}],requiredScope:'alice',requiredSyncId:0,rejections:[]});const calls=called;
+ const request=push('dedup',1,[mutation(1,'first')]);const receipt=await backend.push('alice',request);assert.deepEqual(JSON.parse(receipt),{requiredCheckpoints:[{scope:'shared',syncId:1}],requiredScope:'shared',requiredSyncId:1,rejections:[]});const calls=called;
  assert.equal(await backend.push('alice',request),receipt);assert.equal(called,calls);
  await assert.rejects(()=>backend.push('alice',push('dedup',1,[mutation(1,'changed')])),/request_conflict/);
  await assert.rejects(()=>backend.push('bob',request),/owner_mismatch/);
@@ -58,9 +58,9 @@ test('unknown error rolls back entire batch including earlier effects and client
  await assert.rejects(()=>backend.push('alice',push('crash',1,[mutation(1,'before','e'),mutation(2,'crash','f')])),/business crash/);
  assert.equal(await count('business_task'),3);assert.equal((await pull()).toCursor,head);assert.equal((await db.$queryRawUnsafe("SELECT * FROM otter_client WHERE client_id='crash'")).length,0);
 });
-test('unsupported versions abort before handlers, invalid bodies settle, all refused fallback principal',async()=>{
+test('unsupported versions abort before handlers, invalid bodies settle with empty checkpoints',async()=>{
  const before=called;await assert.rejects(()=>backend.push('alice',push('version',1,[mutation(1,'ignored','v'),{...mutation(2,'bad','w'),version:2}])),/mutation_version_unsupported/);assert.equal(called,before);
- const result=JSON.parse(await backend.push('alice',push('invalid',1,[{ordinal:1,name:'absent',operations:[]}])));assert.deepEqual(result,{requiredCheckpoints:[{scope:'alice',syncId:0}],requiredScope:'alice',requiredSyncId:0,rejections:[{ordinal:1,code:'mutation.invalid'}]});
+ const result=JSON.parse(await backend.push('alice',push('invalid',1,[{ordinal:1,name:'absent',operations:[]}])));assert.deepEqual(result,{requiredCheckpoints:[],requiredScope:'',requiredSyncId:0,rejections:[{ordinal:1,code:'mutation.invalid'}]});
 });
 test('compaction materializes latest state; deletion is aligned null; authorizer runs first',async()=>{
  await backend.push('alice',push('dedup',2,[mutation(1,'updated')]));await assert.rejects(()=>backend.push('alice',push('dedup',1,[mutation(1,'first')])),/overlap/);
