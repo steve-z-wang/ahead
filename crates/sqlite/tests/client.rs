@@ -149,15 +149,13 @@ fn stale_writer_cannot_overwrite_committed_database() {
     let mut a = open(&path);
     let mut b = open(&path);
     seed(&mut a, "A");
-    let result = b.transaction(|tx| {
-        tx.direct(Operation {
-            model: "Entry".into(),
-            op: OperationKind::Create,
-            identity: json!({"id":"e"}),
-            values: Some(json!({"text":"B","note":null})),
-        })
-    });
-    assert!(result.is_err());
+    let error = b
+        .transaction(|tx| tx.direct(update("B")))
+        .expect_err("the stale handle must be fenced out");
+    assert!(
+        error.to_string().contains("stale client writer"),
+        "the write itself would succeed; only the fence refuses it: {error}"
+    );
     assert_eq!(open(&path).read(&key()).unwrap().unwrap()["text"], "A");
 }
 
