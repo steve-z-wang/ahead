@@ -43,7 +43,9 @@ export const handlers: Handlers<Tx> = {
 import type { Loaders } from "./generated/backend.ts";
 
 export const loaders: Loaders<Tx> = {
-  task: ({ ids, tx }) => Promise.all(ids.map((id) => tx.task.findUnique({ where: id }))),
+  async task({ ids, tx }) {
+    return Promise.all(ids.map((id) => tx.task.findUnique({ where: id })));
+  },
 };
 ```
 
