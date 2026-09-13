@@ -5,6 +5,14 @@ use std::fmt;
 
 const CHANNELS: [&str; 3] = ["a", "b", "c"];
 
+/// `Action::Direct`'s fields are `&'static str` (every other call site uses string
+/// literals). The random generator has to build a key/text from a runtime-picked
+/// entry id and counter, so it leaks the handful of bytes needed to get a `'static`
+/// reference - negligible for a process that runs a few hundred steps and exits.
+fn leak(s: String) -> &'static str {
+    Box::leak(s.into_boxed_str())
+}
+
 pub struct Failure {
     pub seed: u64,
     pub step: usize,
@@ -60,11 +68,11 @@ impl Sim {
                     channel,
                 }
             }
-            46..72 => Action::Deliver,
-            72..76 => Action::Drop,
-            76..80 => Action::Duplicate,
-            80..85 => Action::Hold,
-            85..88 => {
+            46..68 => Action::Deliver,
+            68..72 => Action::Drop,
+            72..76 => Action::Duplicate,
+            76..81 => Action::Hold,
+            81..84 => {
                 let n = self.net.len() as u64;
                 if n < 2 {
                     Action::Deliver
@@ -75,8 +83,8 @@ impl Sim {
                     }
                 }
             }
-            88..90 => Action::Crash { client: client? },
-            90..94 => {
+            84..86 => Action::Crash { client: client? },
+            86..90 => {
                 let crashed = self.crashed();
                 if crashed.is_empty() {
                     Action::Deliver
@@ -86,21 +94,21 @@ impl Sim {
                     }
                 }
             }
-            94..96 => {
+            90..92 => {
                 let channel = self.pick_channel();
                 Action::Subscribe {
                     client: client?,
                     channel,
                 }
             }
-            96 => {
+            92 => {
                 let channel = self.pick_channel();
                 Action::Unsubscribe {
                     client: client?,
                     channel,
                 }
             }
-            97..99 => {
+            93..96 => {
                 if self.known_entries.is_empty() {
                     return Some(Action::Deliver);
                 }
@@ -123,13 +131,21 @@ impl Sim {
                     channels,
                 }
             }
+            96..98 => Action::RejectNext {
+                code: "sim.denied".into(),
+            },
+            98 => Action::FailNext,
             _ => {
-                if self.rng.chance(1, 2) {
-                    Action::RejectNext {
-                        code: "sim.denied".into(),
-                    }
-                } else {
-                    Action::FailNext
+                if self.known_entries.is_empty() {
+                    return Some(Action::Deliver);
+                }
+                let client = client?;
+                let id = self.rng.pick(&self.known_entries).clone();
+                self.next_id += 1;
+                Action::Direct {
+                    client,
+                    key: leak(format!("Entry:{id}")),
+                    text: leak(format!("d{}", self.next_id)),
                 }
             }
         })

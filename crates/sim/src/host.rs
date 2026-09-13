@@ -26,6 +26,15 @@ struct Invalidation {
 struct Tables {
     records: BTreeMap<String, Value>,
     stamps: BTreeMap<String, u64>,
+    /// Per key, the smallest stamp allocated by the publishes that followed its most
+    /// recent *content* change (see `publish_many`). Distinct from `stamps` (the
+    /// ever-growing per-key counter every channel's publish draws from): a single
+    /// change notified to two member channels in the same call allocates them
+    /// consecutive stamps even though both carry identical content, so comparing a
+    /// channel's own last stamp against the raw counter would call the first of the
+    /// two "behind" forever. Comparing against this instead treats every channel a
+    /// change actually reached as caught up with it.
+    content_stamps: BTreeMap<String, u64>,
     heads: BTreeMap<String, u64>,
     invalidations: BTreeMap<(String, String), Invalidation>,
 }
@@ -96,9 +105,7 @@ impl MemHost {
     }
     pub fn notify(&self, key: &RecordKey, channels: &[&str]) {
         let mut s = self.0.lock().unwrap();
-        for c in channels {
-            publish_one(&mut s.tables, c, key);
-        }
+        publish_many(&mut s.tables, channels, key);
     }
     pub fn set_state(&self, key: &RecordKey, state: Option<Value>) {
         let mut s = self.0.lock().unwrap();
@@ -131,6 +138,21 @@ impl MemHost {
             .unwrap()
             .tables
             .stamps
+            .get(&encoded(key))
+            .copied()
+            .unwrap_or(0)
+    }
+    /// The smallest stamp allocated by the publishes that followed `key`'s most
+    /// recent content change - see `Tables::content_stamps`. A bare `set_state` with
+    /// no accompanying `notify`/`publish_many` call (used to simulate a change no
+    /// channel is ever told about) deliberately leaves this untouched, so that fault
+    /// is still caught as a divergence rather than masked as "behind."
+    pub fn content_stamp(&self, key: &RecordKey) -> u64 {
+        self.0
+            .lock()
+            .unwrap()
+            .tables
+            .content_stamps
             .get(&encoded(key))
             .copied()
             .unwrap_or(0)
@@ -255,13 +277,41 @@ fn publish_one(t: &mut Tables, channel: &str, key: &RecordKey) -> (u64, u64) {
     (cursor, stamp)
 }
 
+/// Publish `key` to every channel in `channels`, all stemming from one logical
+/// content change, then record that change's `content_stamp` as the smallest stamp
+/// this batch allocates - the first one, computed before any of this batch's
+/// `publish_one` calls run. Every channel here ends up with a stamp `>=` that value,
+/// so all of them, not just the one that happened to publish last, compare as
+/// caught up with this change (see `Tables::content_stamps`). A change published to
+/// no channels (empty membership) leaves `content_stamps` untouched: nothing was
+/// told, so there is nothing to be "caught up" with yet.
+fn publish_many(t: &mut Tables, channels: &[&str], key: &RecordKey) {
+    if channels.is_empty() {
+        return;
+    }
+    let start = t.stamps.get(&encoded(key)).copied().unwrap_or(0) + 1;
+    for c in channels {
+        publish_one(t, c, key);
+    }
+    t.content_stamps.insert(encoded(key), start);
+}
+
 fn key_of(model: &str, identity: &Value) -> RecordKey {
     crate::schema::schema().record_key(model, identity).unwrap()
 }
 
 /// Apply one decoded handler argument to the business tables and collect the records
 /// that changed, in the order they changed. Delete cascades to Comments of an Entry.
-fn apply_business(t: &mut Tables, name: &str, arguments: &Value) -> Vec<RecordKey> {
+/// `Err` is a rejection code: the mutation is refused, nothing it did survives (the
+/// caller never publishes for an `Err`), and the caller counts it as `rejected`
+/// rather than `accepted` - the same outcome a real per-mutation rejection produces,
+/// so the client processes it through the ordinary rejection/rollback path instead of
+/// being left with a push that neither settles nor ever gets a channel checkpoint.
+fn apply_business(
+    t: &mut Tables,
+    name: &str,
+    arguments: &Value,
+) -> Result<Vec<RecordKey>, &'static str> {
     let (model, slot) = match name {
         "CreateEntry" | "Edit" | "DeleteEntry" => ("Entry", "entry"),
         "CreateComment" | "EditComment" | "DeleteComment" => ("Comment", "comment"),
@@ -285,7 +335,7 @@ fn apply_business(t: &mut Tables, name: &str, arguments: &Value) -> Vec<RecordKe
                 let entry_id = arg["data"]["entryId"].clone();
                 let entry_key = encoded(&key_of("Entry", &json!({ "id": entry_id })));
                 if !t.records.contains_key(&entry_key) {
-                    return changed;
+                    return Err("comment.entry_missing");
                 }
             }
             let mut state = arg["data"].as_object().cloned().unwrap_or_default();
@@ -321,7 +371,7 @@ fn apply_business(t: &mut Tables, name: &str, arguments: &Value) -> Vec<RecordKe
             changed.push(key);
         }
     }
-    changed
+    Ok(changed)
 }
 
 impl Host for MemHost {
@@ -388,21 +438,28 @@ impl Host for MemHost {
                         return Ok(json!({ "rejection": code }));
                     }
                     let name = r["name"].as_str().unwrap();
-                    let changed = apply_business(&mut s.tables, name, &r["arguments"]);
-                    let mut selected: Option<String> = None;
-                    for key in &changed {
-                        let channels = s.membership.get(&encoded(key)).cloned().unwrap_or_default();
-                        for c in &channels {
-                            publish_one(&mut s.tables, c, key);
+                    match apply_business(&mut s.tables, name, &r["arguments"]) {
+                        Ok(changed) => {
+                            let mut selected: Option<String> = None;
+                            for key in &changed {
+                                let channels =
+                                    s.membership.get(&encoded(key)).cloned().unwrap_or_default();
+                                let refs: Vec<&str> = channels.iter().map(String::as_str).collect();
+                                publish_many(&mut s.tables, &refs, key);
+                                if selected.is_none() {
+                                    selected = channels.first().cloned();
+                                }
+                            }
+                            s.accepted += 1;
+                            match selected {
+                                Some(c) => json!({ "channel": c }),
+                                None => json!({}),
+                            }
                         }
-                        if selected.is_none() {
-                            selected = channels.first().cloned();
+                        Err(code) => {
+                            s.rejected += 1;
+                            json!({ "rejection": code })
                         }
-                    }
-                    s.accepted += 1;
-                    match selected {
-                        Some(c) => json!({ "channel": c }),
-                        None => json!({}),
                     }
                 }
                 "publish" => {
@@ -606,6 +663,33 @@ mod tests {
         let page = PullPage::decode(host.pull("u", &req).unwrap().as_bytes()).unwrap();
         assert_eq!(page.changes.len(), 2);
         assert!(page.changes.iter().all(|c| c.state.is_null()));
+    }
+
+    #[test]
+    fn create_comment_against_a_missing_entry_is_deterministically_rejected() {
+        let host = MemHost::new();
+        host.set_membership(&schema::comment_key("c1"), &["a"]);
+        // No Entry e1 was ever created: the schema's onDelete: delete relation means
+        // a real FK-backed store would refuse this insert outright.
+        let r = PushReceipt::decode(
+            host.push(
+                "u",
+                &push_bytes("c1", 1, &schema::create_comment("c1", "e1", "hi")),
+            )
+            .unwrap()
+            .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(r.rejections.len(), 1);
+        assert_eq!(r.rejections[0].code, "comment.entry_missing");
+        assert!(host.state(&schema::comment_key("c1")).is_none());
+        assert_eq!(host.rejected(), 1);
+        assert_eq!(host.accepted(), 0);
+        assert_eq!(
+            host.handler_calls(),
+            host.accepted() + host.rejected() + host.failed(),
+            "handler_calls_match_outcomes must hold for a rejection too"
+        );
     }
 
     #[test]

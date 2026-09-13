@@ -10,7 +10,10 @@ use otter_client::{Client, Operation, OperationKind};
 use otter_core::{PullPage, PullRequest, PushReceipt, PushRequest, RecordKey};
 use otter_sqlite::SqliteStore;
 use serde_json::json;
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::PathBuf,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MutationSpec {
@@ -133,6 +136,11 @@ pub struct Sim {
     pub known_entries: Vec<String>,
     pub known_comments: Vec<String>,
     pub(crate) next_id: u64,
+    /// (client, encoded key) pairs that received a direct write since the last
+    /// authoritative content for that key landed on that client. A direct write
+    /// diverges from the server by design (N4/L4); `no_pending_means_converged`
+    /// exempts exactly these pairs rather than the whole client or channel.
+    pub direct_writes: BTreeSet<(usize, String)>,
     _dir: tempfile::TempDir,
 }
 
@@ -180,6 +188,7 @@ impl Sim {
             known_entries: vec![],
             known_comments: vec![],
             next_id: 0,
+            direct_writes: BTreeSet::new(),
             _dir: dir,
         }
     }
@@ -240,6 +249,7 @@ impl Sim {
                 self.client(client)
                     .transaction(|tx| tx.direct(op))
                     .map_err(|e| e.to_string())?;
+                self.direct_writes.insert((client, key.encoded().unwrap()));
             }
             Action::Subscribe { client, channel } => {
                 self.client(client)
@@ -406,9 +416,23 @@ impl Sim {
                     return Ok(());
                 }
                 let page = PullPage::decode(&bytes).map_err(|e| e.to_string())?;
+                // A key this page carries an authoritative change for is no longer
+                // shadowed by an earlier direct write on this client, regardless of
+                // whether that particular change ends up newer than local content -
+                // any real invalidation for a direct-written key's own stamp (left
+                // untouched by `direct`) is newer by construction.
+                let touched: Vec<String> = page
+                    .changes
+                    .iter()
+                    .filter_map(|c| schema::schema().record_key(&c.model, &c.identity).ok())
+                    .map(|k| k.encoded().unwrap())
+                    .collect();
                 self.client(client)
                     .apply_page(page)
                     .map_err(|e| e.to_string())?;
+                for key in touched {
+                    self.direct_writes.remove(&(client, key));
+                }
             }
             Message::PushFailed { .. } => {}
         }

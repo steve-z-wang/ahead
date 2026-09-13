@@ -52,8 +52,11 @@ fn stamps_never_decrease(sim: &mut Sim) -> Result<(), String> {
             // A client with no local row for this key (never synced it, or dropped it
             // after unsubscribing / a delete) has nothing to compare: its absence is
             // not a stamp of 0, so leave the high-water mark untouched until the row
-            // reappears.
+            // reappears. Purge the stale entry too - the same reason `seen_cursors`
+            // is purged on unsubscribe below: a lingering high mark for a row this
+            // client no longer holds must not outlive the row.
             let Some(now) = rows.first().and_then(|r| r["stamp"].as_u64()) else {
+                sim.seen_stamps.remove(&(i, key.encoded().unwrap()));
                 continue;
             };
             let slot = sim
@@ -126,6 +129,13 @@ fn no_pending_means_converged(sim: &mut Sim) -> Result<(), String> {
                 continue;
             }
             for key in sim.host.channel_records(&channel) {
+                // A direct write shadows this (client, key) pair on purpose (N4/L4):
+                // it never reaches the server, so no channel's invalidation stream
+                // can ever agree with it. Exempt exactly this pair, not the whole
+                // client or channel.
+                if sim.direct_writes.contains(&(i, key.encoded().unwrap())) {
+                    continue;
+                }
                 // A record's invalidation history on this channel can outlive its
                 // membership (ServerChange can notify a channel outside a record's
                 // real membership, and a record can move to another channel
@@ -138,16 +148,20 @@ fn no_pending_means_converged(sim: &mut Sim) -> Result<(), String> {
                 {
                     continue;
                 }
-                // This channel's own invalidation for `key` can be behind the key's
-                // shared stamp counter when a change was notified to a different
-                // channel only (a `ServerChange` fault, or a record whose other
-                // member channel was notified in the same call): being at this
-                // channel's head then proves nothing about the record's very latest
-                // content, only about what this channel itself has been told.
+                // This channel's own invalidation for `key` can be behind the *last
+                // content change's* stamp when a change was notified to a different
+                // channel only (a `ServerChange` fault). Compare against
+                // `content_stamp`, not the ever-growing shared per-key `stamp`
+                // counter: a single change published to two member channels in the
+                // same call allocates them consecutive stamps even though both carry
+                // identical content, so gating on the raw counter would skip the
+                // first of the two indefinitely. `content_stamp` is pinned to the
+                // smallest stamp any one change's publishes produced, so every
+                // channel that change actually reached compares as caught up.
                 if sim
                     .host
                     .channel_stamp(&channel, &key)
-                    .is_some_and(|stamp| stamp < sim.host.stamp(&key))
+                    .is_some_and(|stamp| stamp < sim.host.content_stamp(&key))
                 {
                     continue;
                 }
