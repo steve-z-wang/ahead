@@ -186,11 +186,18 @@ impl<S: ClientStore> Engine<'_, S> {
         if mutations.rows.is_empty() {
             return Ok(vec![]);
         }
-        let ops = self.ops_by_ordinal("", &[])?;
-        let deps = self.rows("SELECT ordinal, depends_on, kind FROM otter_mutation_dependency ORDER BY ordinal, depends_on", &[])?;
+        let ops = self.ops_by_ordinal(filter, params)?;
+        let deps = self.rows(
+            &format!(
+                "SELECT ordinal, depends_on, kind FROM otter_mutation_dependency {filter} ORDER BY ordinal, depends_on"
+            ),
+            params,
+        )?;
         let prerequisites = self.rows(
-            "SELECT ordinal, key FROM otter_mutation_prerequisite ORDER BY ordinal, key",
-            &[],
+            &format!(
+                "SELECT ordinal, key FROM otter_mutation_prerequisite {filter} ORDER BY ordinal, key"
+            ),
+            params,
         )?;
         let mut result = vec![];
         for row in &mutations.rows {
