@@ -70,7 +70,7 @@ import {
   type Loaders,
 } from "./generated/backend.ts";
 
-// Implement a handler for each mutation. notify tells subscribers what to reload.
+// Implement the handlers from the generated interface, one per mutation.
 const handlers: Handlers<Tx> = {
   async addTodo({ input, tx, notify }) {
     await tx.todo.create({ data: input.todo });
@@ -85,7 +85,7 @@ const handlers: Handlers<Tx> = {
   },
 };
 
-// Load records by id.
+// Implement the loaders from the generated interface, one per model.
 const loaders: Loaders<Tx> = {
   todo: ({ ids, tx }) =>
     Promise.all(ids.map((identity) => tx.todo.findUnique({ where: identity }))),
