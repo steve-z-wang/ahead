@@ -239,7 +239,7 @@ A later edit notified to both channels moves A's row to `cursor 11, stamp 9` and
 
 ## Acceptance scenarios
 
-Each is a scenario under `fixtures/scenarios` run by `integration/rust/tests/scenarios.rs`, plus unit coverage where noted.
+Client scenarios are tests in `crates/sqlite/tests/stamp_scenarios.rs` and `crates/sqlite/tests/downlink.rs`, with prose descriptions under `fixtures/scenarios`; server scenarios are in `integration/persistence/server/runtime.test.mjs` and `crates/server/tests/stamp.rs`.
 
 1. **Delayed page.** Same record through A and B; newer content arrives first through B; A's delayed older page cannot regress content or the visible replayed result. A's cursor advances.
 2. **Idempotent redelivery.** The same page delivered twice on one channel is a no-op. The same row with different content on redelivery produces the diagnostic and advances the cursor.
