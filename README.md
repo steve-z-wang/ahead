@@ -74,6 +74,7 @@ import {
 const handlers: Handlers<Tx> = {
   async addTodo({ input, tx, notify }) {
     await tx.todo.create({ data: input.todo });
+
     // Notify the subscribed clients to reload these records.
     notify({ channel: "todos", records: [input.todo] });
   },
@@ -82,6 +83,7 @@ const handlers: Handlers<Tx> = {
       where: input.todo.identity,
       data: input.todo.patch,
     });
+
     notify({ channel: "todos", records: [input.todo] });
   },
 };
