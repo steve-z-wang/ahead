@@ -2,6 +2,10 @@
 mod query;
 pub use query::{Direction, QueryOrder, QuerySpec};
 pub mod ddl;
+pub mod engine;
+pub mod ledger;
+pub mod queue;
+pub mod rows;
 pub mod store;
 pub use store::*;
 mod migration;
