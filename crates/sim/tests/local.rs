@@ -75,8 +75,8 @@ fn l4_direct_write_is_never_pushed_and_survives_rejection() {
     let calls = sim.host.handler_calls();
     sim.apply(Action::Direct {
         client: 0,
-        key: "Entry:e1",
-        text: "local only",
+        key: "Entry:e1".into(),
+        text: "local only".into(),
     })
     .unwrap();
     sim.settle();

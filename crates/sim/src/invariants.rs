@@ -51,10 +51,12 @@ fn stamps_never_decrease(sim: &mut Sim) -> Result<(), String> {
                 .map_err(|e| e.to_string())?;
             // A client with no local row for this key (never synced it, or dropped it
             // after unsubscribing / a delete) has nothing to compare: its absence is
-            // not a stamp of 0, so leave the high-water mark untouched until the row
-            // reappears. Purge the stale entry too - the same reason `seen_cursors`
-            // is purged on unsubscribe below: a lingering high mark for a row this
-            // client no longer holds must not outlive the row.
+            // not a stamp of 0. Purge the high-water mark rather than keep it around
+            // for a row that is gone - the same reason `seen_cursors` is purged on
+            // unsubscribe below: a lingering high mark for a row this client no
+            // longer holds must not outlive the row, and would wrongly gate the mark
+            // the row picks up if it reappears with a lower legitimate stamp (e.g.
+            // after unsubscribe/resubscribe resets state).
             let Some(now) = rows.first().and_then(|r| r["stamp"].as_u64()) else {
                 sim.seen_stamps.remove(&(i, key.encoded().unwrap()));
                 continue;

@@ -75,8 +75,8 @@ pub enum Action {
     },
     Direct {
         client: usize,
-        key: &'static str,
-        text: &'static str,
+        key: String,
+        text: String,
     },
     Subscribe {
         client: usize,
@@ -141,6 +141,11 @@ pub struct Sim {
     /// diverges from the server by design (N4/L4); `no_pending_means_converged`
     /// exempts exactly these pairs rather than the whole client or channel.
     pub direct_writes: BTreeSet<(usize, String)>,
+    /// Whether the random stepper (`step.rs::choose`) may generate `Action::Direct`.
+    /// Defaults to true; the R2 runner in tests/invariants.rs turns it off to keep a
+    /// running proof against the known client bug in issue #33, which only a direct
+    /// write can trigger.
+    pub generate_direct: bool,
     _dir: tempfile::TempDir,
 }
 
@@ -189,6 +194,7 @@ impl Sim {
             known_comments: vec![],
             next_id: 0,
             direct_writes: BTreeSet::new(),
+            generate_direct: true,
             _dir: dir,
         }
     }
@@ -239,7 +245,7 @@ impl Sim {
                 self.clients[client].enqueued.push(ordinal);
             }
             Action::Direct { client, key, text } => {
-                let key = parse_key(key);
+                let key = parse_key(&key);
                 let op = Operation {
                     model: key.model.clone(),
                     op: OperationKind::Update,

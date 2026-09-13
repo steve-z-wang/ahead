@@ -5,14 +5,6 @@ use std::fmt;
 
 const CHANNELS: [&str; 3] = ["a", "b", "c"];
 
-/// `Action::Direct`'s fields are `&'static str` (every other call site uses string
-/// literals). The random generator has to build a key/text from a runtime-picked
-/// entry id and counter, so it leaks the handful of bytes needed to get a `'static`
-/// reference - negligible for a process that runs a few hundred steps and exits.
-fn leak(s: String) -> &'static str {
-    Box::leak(s.into_boxed_str())
-}
-
 pub struct Failure {
     pub seed: u64,
     pub step: usize,
@@ -136,7 +128,7 @@ impl Sim {
             },
             98 => Action::FailNext,
             _ => {
-                if self.known_entries.is_empty() {
+                if !self.generate_direct || self.known_entries.is_empty() {
                     return Some(Action::Deliver);
                 }
                 let client = client?;
@@ -144,8 +136,8 @@ impl Sim {
                 self.next_id += 1;
                 Action::Direct {
                     client,
-                    key: leak(format!("Entry:{id}")),
-                    text: leak(format!("d{}", self.next_id)),
+                    key: format!("Entry:{id}"),
+                    text: format!("d{}", self.next_id),
                 }
             }
         })
@@ -226,7 +218,16 @@ impl Sim {
         }
     }
     pub fn run(seed: u64, clients: usize, steps: usize) -> Result<(), Failure> {
+        Sim::run_with(seed, clients, steps, true)
+    }
+    pub fn run_with(
+        seed: u64,
+        clients: usize,
+        steps: usize,
+        generate_direct: bool,
+    ) -> Result<(), Failure> {
         let mut sim = Sim::new(seed, clients);
+        sim.generate_direct = generate_direct;
         for i in 0..clients {
             sim.apply(Action::Subscribe {
                 client: i,
