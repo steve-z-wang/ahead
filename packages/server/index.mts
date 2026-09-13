@@ -358,14 +358,20 @@ export function createBackend<T>(options: BackendOptions<T>) {
   };
   const authenticate = async (request: IncomingMessage) => {
     const id = await options.authenticate(request);
-    return typeof id === "string" && id.trim() !== "" ? id : null;
+    if (typeof id !== "string") return null;
+    const trimmed = id.trim();
+    return trimmed === "" ? null : trimmed;
   };
   const listen = async ({ port, host = "127.0.0.1" }: { port: number; host?: string }) => {
     const server = createServer(createHttpHandler({ backend: api, authenticate }));
     const live = attachLive(server, { backend: api, authenticate });
     await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(port, host, () => resolve());
+      const onError = (error: Error) => reject(error);
+      server.once("error", onError);
+      server.listen(port, host, () => {
+        server.off("error", onError);
+        resolve();
+      });
     });
     const address = server.address();
     const actual = typeof address === "object" && address ? address.port : port;
