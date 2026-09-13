@@ -10,7 +10,7 @@ The user approved end-to-end implementation on 2026-09-10. The Rust rewrite now 
 | Persistent client | SQLite transactions/savepoints, direct and optimistic writes, sparse before images, durable queue/frozen batches, ACK checkpoint barriers and accepted-prefix settlement. |
 | Existing client behavior | Channel claims, companion/cascade effects, lifecycle/sequence dependencies, prerequisites, rejection inbox/status, queries/relations/watch, read-only SQL and background scheduling. |
 | Backend | Generic Rust Push/Pull/notification state machines, application-owned transaction callbacks, per-mutation savepoints, durable batch receipts and coherent Loader snapshots. Handlers and Loaders implement compiler-generated interfaces; notify from handlers selects receipt checkpoints. |
-| Integration | Node/N-API and Dart FFI worker, Prisma/PostgreSQL persistence with reusable `bind`, HTTP/WebSocket attachment to the application's server. |
+| Integration | Node/N-API and Dart FFI worker, Prisma/PostgreSQL persistence with reusable `bind`, HTTP and WebSocket served by `listen()`. |
 | Compiler | Rust `.model` parser/validation/history; generated Dart and TypeScript identities, model/patch types, operation builders, typed queries, relations and backend inputs, and generated/backend.ts with typed Handlers, Loaders and a bound createBackend. |
 | Developer workflow | Independent runnable example, build/test scripts, host CI definition, shared fixtures, compatibility/recovery documentation and a repeatable small capacity diagnostic. |
 

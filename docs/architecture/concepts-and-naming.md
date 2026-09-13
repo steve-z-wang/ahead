@@ -34,17 +34,17 @@
 
 The following only illustrates the names. Complete callback signatures and registration mechanisms will be determined during implementation:
 
-```ts
-Entry.loader(async (ctx, identities) => {
-  return entries.readVisible(ctx, identities);
-});
+> This section is a historical record of the pre-implementation naming proposal; the code block below was updated on 2026-09-12 to the current surface.
 
-// store is bound to the application transaction; see the architecture for Handler batch deduplication and receipts.
-await publisher.publish(store, {
-  channels: [bookChannel(bookId)],
-  model: Entry,
-  identity: { id: entryId },
-});
+```ts
+export const loaders: Loaders<Tx> = {
+  async entry({ ids, tx }) {
+    return Promise.all(ids.map((id) => tx.entry.findUnique({ where: id })));
+  },
+};
+
+// notify is called from within a Handler; see the architecture for Handler batch deduplication and receipts.
+notify({ channel: "book:demo", records: [input.entry] });
 ```
 
 ## Semantic boundaries

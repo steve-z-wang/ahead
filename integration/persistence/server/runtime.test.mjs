@@ -22,8 +22,10 @@ const backend=createBackend({config,database:prisma(db),authenticate,handlers:{
   if(patch.title==='bogus-record')notify({channel:'shared',records:[{bogus:true}]});
   notify({channel:'shared',records:[input.task]});
   if(patch.title==='refuse')throw new MutationRejected('task.refused');if(patch.title==='crash')throw new Error('business crash');
-  if(patch.title==='two')notify({channel:'other',records:[input.task]});
+  if(patch.title==='two'||patch.title==='pick')notify({channel:'other',records:[input.task]});
   if(patch.title==='pick')return {channel:'other'};
+  if(patch.title==='empty-checkpoint')return {channel:''};
+  if(patch.title==='never-checkpoint')return {channel:'never'};
  }},
  loaders:{async task({ids,tx}){return Promise.all(ids.map(async identity=>{const rows=await tx.$queryRawUnsafe('SELECT title FROM business_task WHERE id=$1',identity.id);return rows[0]??null;}));}},
  loaderHooks:{task:{async prepareForViewer(){prepared++}}},
@@ -62,6 +64,12 @@ test('explicit rejection rolls back only mutation and its publication',async()=>
  const result=JSON.parse(await backend.push('alice',push('refusal',1,[mutation(1,'good','b'),mutation(2,'refuse','c'),mutation(3,'last','d')])));
  assert.deepEqual(result.rejections,[{ordinal:2,code:'task.refused'}]);assert.equal(await count('business_task'),3);assert.equal(result.requiredCheckpoints[0].syncId,3);
  assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='c'")).length,0);
+});
+test('rejected mutation publishes nothing even though it called notify first',async()=>{
+ const head=(await pull()).toCursor;
+ const result=JSON.parse(await backend.push('alice',push('refuse-only',1,[mutation(1,'refuse','refuse-only-a')])));
+ assert.deepEqual(result.rejections,[{ordinal:1,code:'task.refused'}]);
+ assert.equal((await pull()).toCursor,head);
 });
 test('unknown error rolls back entire batch including earlier effects and client claim',async()=>{
  const head=(await pull()).toCursor;
@@ -217,11 +225,23 @@ test('prisma() bundles the transaction runner and the persistence factory',async
  const bound=adapter.persistence({$queryRawUnsafe:async()=>[{head:7}],$executeRawUnsafe:async()=>1});
  assert.equal(await bound.call({op:'head',channel:'x'}),7);
 });
-test('listen serves push, pull and live on one port and closes cleanly',async()=>{
+test('listen answers pull over HTTP with authentication and closes cleanly',async()=>{
  const server=await backend.listen({port:0});
  try{
   const denied=await fetch(`${server.url}/sync/pull`,{method:'POST',body:'{}'});assert.equal(denied.status,401);
   const ok=await fetch(`${server.url}/sync/pull`,{method:'POST',headers:{authorization:'Bearer alice'},body:JSON.stringify({clientId:'listen',scope:'shared',fromCursor:0})});assert.equal(ok.status,200);
+ }finally{await server.close();}
+});
+test('onError captures server-side failures and HTTP responds with {code:"server"}',async()=>{
+ const errors=[];
+ const boomBackend=createBackend({config,database:prisma(db),authenticate,onError:e=>errors.push(e),handlers:{async edit(){throw new Error('boom')}},loaders:{async task({ids}){return ids.map(()=>null)}}});
+ const server=await boomBackend.listen({port:0});
+ try{
+  const result=await fetch(`${server.url}/sync/mutations`,{method:'POST',headers:{authorization:'Bearer alice'},body:push('boom',1,[mutation(1,'x','boom-a')])});
+  assert.equal(result.status,500);
+  assert.deepEqual(await result.json(),{code:'server'});
+  assert.equal(errors.length,1);
+  assert.equal(errors[0].message,'boom');
  }finally{await server.close();}
 });
 test('slot arguments are tagged so notify accepts them directly',async()=>{
@@ -238,6 +258,8 @@ test('checkpoint is the single notified channel; several need an explicit choice
  assert.deepEqual(picked.requiredCheckpoints.map(c=>c.scope),['other']);
  const silent=createBackend({config,database:prisma(db),authenticate,handlers:{async edit(){}},loaders:{async task({ids}){return ids.map(()=>null)}}});
  await assert.rejects(()=>silent.push('alice',push('cp4',1,[mutation(1,'hello','cp-d')])),/handler\.no_channel:edit/);
+ await assert.rejects(()=>backend.push('alice',push('cp5',1,[mutation(1,'empty-checkpoint','cp-e')])),/handler\.invalid_checkpoint:edit/);
+ await assert.rejects(()=>backend.push('alice',push('cp6',1,[mutation(1,'never-checkpoint','cp-f')])),/handler\.unnotified_checkpoint:edit/);
 });
 test('checkpoint errors bypass translateRejection and abort the batch instead of settling as a rejection',async()=>{
  const silentTranslated=createBackend({config,database:prisma(db),authenticate,translateRejection:()=>'task.translated',handlers:{async edit(){}},loaders:{async task({ids}){return ids.map(()=>null)}}});
@@ -249,6 +271,20 @@ test('notify validates channel and records before dispatching to native publish'
  await assert.rejects(()=>backend.push('alice',push('badchan',1,[mutation(1,'empty-channel','bad-a')])),/notify: channel must be a non-empty string/);
  await assert.rejects(()=>backend.push('alice',push('badrecs',1,[mutation(1,'bad-records','bad-b')])),/notify: records must be an array/);
  await assert.rejects(()=>backend.push('alice',push('badbogus',1,[mutation(1,'bogus-record','bad-c')])),/notify: record must be/);
+});
+test('handler awaiting the tx after notify still drains pending publication before checkpoint',async()=>{
+ const deferredBackend=createBackend({config,database:prisma(db),authenticate,handlers:{async edit({input,tx,notify}){
+  const {identity,patch}=input.task;
+  await tx.$executeRawUnsafe('INSERT INTO business_task(id,title) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET title=$2',identity.id,patch.title);
+  notify({channel:'deferred',records:[input.task]});
+  await tx.$queryRawUnsafe('SELECT 1');
+ }},loaders:{async task({ids,tx}){return Promise.all(ids.map(async identity=>{const rows=await tx.$queryRawUnsafe('SELECT title FROM business_task WHERE id=$1',identity.id);return rows[0]??null;}));}}});
+ const receipt=JSON.parse(await deferredBackend.push('alice',push('deferred',1,[mutation(1,'deferred','deferred-a')])));
+ assert.deepEqual(receipt.rejections,[]);
+ assert.deepEqual(receipt.requiredCheckpoints.map(c=>c.scope),['deferred']);
+ const page=JSON.parse(await deferredBackend.pull('alice',JSON.stringify({clientId:'deferred-reader',scope:'deferred',fromCursor:0})));
+ assert.equal(page.changes.at(-1).identity.id,'deferred-a');
+ assert.equal(page.changes.at(-1).state.title,'deferred');
 });
 test('an all-rejected batch settles with no checkpoints',async()=>{
  const receipt=JSON.parse(await backend.push('alice',push('allrej',1,[mutation(1,'refuse','rej-a')])));

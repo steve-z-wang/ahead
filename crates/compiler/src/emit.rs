@@ -401,7 +401,7 @@ pub fn backend_typescript(v: &Value, runtime: &str) -> String {
         backend["mutations"] = history.clone();
         backend.as_object_mut().unwrap().remove("backendMutations");
     }
-    writeln!(o, "export const schema = {} as const;", backend).unwrap();
+    writeln!(o, "const schema = {} as const;", backend).unwrap();
     let mutations = arr(&backend, "mutations");
     let latest = |name: &str| {
         mutations

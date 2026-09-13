@@ -53,7 +53,8 @@ export type Authenticate = (
 export function devAuth(): Authenticate {
   return (request) => {
     const header = request.headers.authorization;
-    if (typeof header !== "string" || !header.startsWith("Bearer ")) return null;
+    if (typeof header !== "string" || !header.startsWith("Bearer "))
+      return null;
     const id = header.slice("Bearer ".length).trim();
     return id === "" ? null : id;
   };
@@ -102,7 +103,9 @@ function toRef(value: unknown): RecordRef {
     if (typeof model === "string" && identity && typeof identity === "object")
       return { model, identity };
   }
-  throw new Error("notify: record must be a slot argument or { model, identity }");
+  throw new Error(
+    "notify: record must be a slot argument or { model, identity }",
+  );
 }
 function tag<T extends object>(value: T, ref: RecordRef): T {
   Object.defineProperty(value, RECORD, { value: ref, enumerable: false });
@@ -125,6 +128,8 @@ export interface BackendOptions<T> {
   >;
   translateRejection?: (error: unknown) => string | null | undefined;
   native?: Native;
+  /** Called for server-side failures that clients only see as `{ code: "server" }`: authenticate throws, persistence faults, checkpoint errors, live drain failures. */
+  onError?: (error: unknown) => void;
 }
 /** JSON cannot represent nonfinite values or undefined array items. Never turn either into null. */
 function callbackJson(value: unknown): string {
@@ -213,7 +218,8 @@ type MutationDescriptor = {
 };
 export function createBackend<T>(options: BackendOptions<T>) {
   const native =
-    options.native ?? (require("../../bindings/node/otter-node.node") as Native);
+    options.native ??
+    (require("../../bindings/node/otter-node.node") as Native);
   const descriptor = options.config as {
     schema?: { models?: { name: string }[] };
     mutations?: MutationDescriptor[];
@@ -223,18 +229,20 @@ export function createBackend<T>(options: BackendOptions<T>) {
     latest.set(m.name, Math.max(latest.get(m.name) ?? 0, m.version));
   const handlerKey = (name: string, version: number) =>
     lowerFirst(name) + (version === latest.get(name) ? "" : `V${version}`);
-  const loaderTable = new Map<string, Loader<T>>();
-  for (const model of descriptor.schema?.models ?? []) {
-    const loader = options.loaders[lowerFirst(model.name)];
-    if (typeof loader !== "function")
-      throw new Error(`Missing loader ${model.name}`);
-    loaderTable.set(model.name, loader);
-  }
+  const modelNames = (descriptor.schema?.models ?? []).map(
+    (model) => model.name,
+  );
   const config = JSON.stringify({
     ...options.config,
-    loaders: [...loaderTable.keys()],
+    loaders: modelNames,
   });
   native.validateConfig(config);
+  const loaderTable = new Map<string, Loader<T>>();
+  for (const name of modelNames) {
+    const loader = options.loaders[lowerFirst(name)];
+    if (typeof loader !== "function") throw new Error(`Missing loader ${name}`);
+    loaderTable.set(name, loader);
+  }
   const handlerTable = new Map<
     string,
     { handler: Handler<T>; slots: MutationSlot[] }
@@ -269,7 +277,10 @@ export function createBackend<T>(options: BackendOptions<T>) {
             throw new Error(`Missing handler ${req.name} v${req.version}`);
           const shape = (slot: MutationSlot, raw: any) => {
             if (raw === null || raw === undefined) return null;
-            const ref: RecordRef = { model: slot.model, identity: raw.identity };
+            const ref: RecordRef = {
+              model: slot.model,
+              identity: raw.identity,
+            };
             if (slot.operation === "create")
               return tag({ ...raw.identity, ...raw.data }, ref);
             if (slot.operation === "update")
@@ -285,15 +296,15 @@ export function createBackend<T>(options: BackendOptions<T>) {
                 : shape(slot, raw);
           }
           const notified = new Set<string>();
-          let chain: Promise<unknown> = Promise.resolve();
+          const pending: { channel: string; refs: RecordRef[] }[] = [];
           const notify: Notify = ({ channel, records }) => {
             if (typeof channel !== "string" || channel === "")
               throw new Error("notify: channel must be a non-empty string");
             if (!Array.isArray(records))
               throw new Error("notify: records must be an array");
-            notified.add(channel);
             const refs = records.map(toRef);
-            chain = chain.then(() => publish(tx, refs, [channel]));
+            notified.add(channel);
+            pending.push({ channel, refs });
           };
           try {
             const returned = await entry.handler({
@@ -302,14 +313,25 @@ export function createBackend<T>(options: BackendOptions<T>) {
               userId: req.owner,
               notify,
             });
-            await chain;
+            for (const item of pending)
+              await publish(tx, item.refs, [item.channel]);
             if (
               returned &&
               typeof returned === "object" &&
               typeof (returned as { channel?: unknown }).channel === "string"
-            )
-              result = { channel: (returned as { channel: string }).channel };
-            else if (notified.size === 1) result = { channel: [...notified][0] };
+            ) {
+              const channel = (returned as { channel: string }).channel;
+              if (channel === "")
+                throw new CheckpointError(
+                  `handler.invalid_checkpoint:${req.name}`,
+                );
+              if (!notified.has(channel))
+                throw new CheckpointError(
+                  `handler.unnotified_checkpoint:${req.name}`,
+                );
+              result = { channel };
+            } else if (notified.size === 1)
+              result = { channel: [...notified][0] };
             else if (notified.size === 0)
               throw new CheckpointError(`handler.no_channel:${req.name}`);
             else
@@ -317,7 +339,6 @@ export function createBackend<T>(options: BackendOptions<T>) {
                 `handler.ambiguous_checkpoint:${req.name}`,
               );
           } catch (error) {
-            await chain.catch(() => {});
             if (error instanceof CheckpointError) throw error;
             const code =
               error instanceof MutationRejected
@@ -411,6 +432,7 @@ export function createBackend<T>(options: BackendOptions<T>) {
     typeof request === "string"
       ? request
       : new TextDecoder("utf-8", { fatal: true }).decode(request);
+  /** @internal Raw protocol seams used by the framework's own tests; not part of the supported surface. */
   const api = {
     push: (owner: string, request: Uint8Array | string) =>
       run((tx, session) =>
@@ -443,9 +465,25 @@ export function createBackend<T>(options: BackendOptions<T>) {
     const trimmed = id.trim();
     return trimmed === "" ? null : trimmed;
   };
-  const listen = async ({ port, host = "127.0.0.1" }: { port: number; host?: string }) => {
-    const server = createServer(createHttpHandler({ backend: api, authenticate }));
-    const live = attachLive(server, { backend: api, authenticate });
+  const listen = async ({
+    port,
+    host = "127.0.0.1",
+  }: {
+    port: number;
+    host?: string;
+  }) => {
+    const server = createServer(
+      createHttpHandler({
+        backend: api,
+        authenticate,
+        ...(options.onError ? { onError: options.onError } : {}),
+      }),
+    );
+    const live = attachLive(server, {
+      backend: api,
+      authenticate,
+      ...(options.onError ? { onError: options.onError } : {}),
+    });
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => reject(error);
       server.once("error", onError);
@@ -456,13 +494,22 @@ export function createBackend<T>(options: BackendOptions<T>) {
     });
     const address = server.address();
     const actual = typeof address === "object" && address ? address.port : port;
+    const urlHost =
+      host === "0.0.0.0"
+        ? "127.0.0.1"
+        : host === "::"
+          ? "localhost"
+          : host.includes(":")
+            ? `[${host}]`
+            : host;
     let closed = false;
     return {
-      url: `http://${host}:${actual}`,
+      url: `http://${urlHost}:${actual}`,
       close: async () => {
         if (closed) return;
         closed = true;
         await live.close();
+        server.closeIdleConnections();
         await new Promise<void>((resolve, reject) =>
           server.close((error) => (error ? reject(error) : resolve())),
         );

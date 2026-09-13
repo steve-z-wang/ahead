@@ -50,11 +50,15 @@ A Handler receives a `HandlerCall<Tx, Input>`: `{ input, tx, userId, notify }`. 
 
 `notify({ channel, records })` declares that `records` (an array of slot arguments or `{ model, identity }` refs, such as those returned by the generated `Entry({ id })` constructor) changed and should be invalidated on `channel`, a non-empty string. A Handler may call `notify` zero, one, or several times before it returns.
 
-The receipt's checkpoint is chosen from what was notified: if exactly one channel was notified, that channel is the checkpoint automatically. If several channels were notified, the Handler must `return { channel }` to pick one explicitly. If no channel was notified, the batch aborts with `handler.no_channel`.
+The receipt's checkpoint is chosen from what was notified: if exactly one channel was notified, that channel is the checkpoint automatically. If several channels were notified, the Handler must `return { channel }` to pick one explicitly. The returned channel must be one the handler notified. If no channel was notified, the batch aborts with `handler.no_channel`; if several were notified and the Handler did not disambiguate, it aborts with `handler.ambiguous_checkpoint`.
 
 ## Authentication
 
 `authenticate` is `(request) => userId | null | undefined`, called per HTTP/WebSocket request; returning `null` or `undefined` rejects the request. `devAuth()` is a development-only implementation that trusts the `Authorization: Bearer <userId>` header verbatim — never use it in production.
+
+## Errors
+
+`onError?: (error) => void` on `BackendOptions` is called for server-side failures that clients only see as `{ code: "server" }` over HTTP: `authenticate` throws, persistence faults, checkpoint errors, and live drain failures.
 
 ## Background jobs
 
@@ -76,7 +80,7 @@ The outer transaction belongs to the application. Persistence, Handler, and Load
 
 ## Mutation results
 
-A successful Handler returns `{channel: string}` to select its receipt checkpoint or returns `undefined` to use the single notified channel. Notification is explicit and can target several channels, but the receipt still settles against exactly one. An explicit `MutationRejected` or registered `translateRejection` code rolls back that mutation's savepoint, including business effects and notification; every other exception aborts the batch. Translation must produce a stable machine code. A known unsupported mutation version aborts the batch before any handler executes.
+A successful Handler returns `{channel: string}` to select its receipt checkpoint or returns `undefined` to use the single notified channel. Notification is explicit and can target several channels, but the receipt still settles against exactly one. An explicit `MutationRejected` or registered `translateRejection` code rolls back that mutation's savepoint, including business effects and notification; every other exception aborts the batch. Translation must produce a stable machine code. A known unsupported mutation version aborts the batch before any handler executes. The `handlers` key for a mutation's latest version is its lowerFirst name (e.g. `editTask`); a non-latest version appends `V<n>` (e.g. `editTaskV1`).
 
 ## Loaders and Pull
 

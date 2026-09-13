@@ -121,26 +121,19 @@ Retain the outer batch transaction and per-mutation savepoints, with a user-prov
 
 The following illustrates usage; concrete imports/types will be determined during interface implementation:
 
+> This section is a historical record of the pre-implementation design sketch; the code block below was updated on 2026-09-12 to the current surface.
+
 ```ts
-const persistence = new PrismaPersistence();
-
-await prisma.$transaction(async tx => {
-  const store = persistence.bind(tx);
-
-  await tx.entry.update({
-    where: { id: entryId },
-    data: { text },
-  });
-
-  await publisher.publish(store, {
-    channels: [bookChannel(bookId)],
-    model: Entry,
-    identity: { id: entryId },
-  });
-});
+export const handlers: Handlers<Tx> = {
+  async edit({ input, tx, notify }) {
+    const { identity, patch } = input.entry;
+    await tx.entry.update({ where: identity, data: patch });
+    notify({ channel: "book:demo", records: [input.entry] });
+  },
+};
 ```
 
-This example only shows direct business writes and publication sharing a transaction. When processing Push, a batch wrapper must still deduplicate before business writes and store the receipt in the same transaction. A direct-publication example is not the complete handler protocol.
+This example only shows direct business writes and notification sharing a transaction. When processing Push, a batch wrapper must still deduplicate before business writes and store the receipt in the same transaction. A direct-notify example is not the complete handler protocol.
 
 Rust defines the meaning and workflow of framework records; the adapter implements actual database operations, including atomic increments, locking claims, transactional upserts and snapshot reads. A CRUD wrapper with matching method names is insufficient if it cannot provide these guarantees.
 
@@ -245,6 +238,6 @@ Next, complete a full single-channel loop. Fill in existing multi-channel behavi
 
 The executable Rust workspace is now `crates/{otter-core,otter-client,otter-server,otter-sqlite,otter-compiler}` plus `bindings/{common,dart}`; `bindings/node` has its own N-API build manifest. Public host packages are `packages/{client-js,dart,server,persistence-prisma}`. Cross-component tests live in `integration/{rust,bindings,persistence,generated-api,e2e,platform}`, and reusable inputs remain in `fixtures/`. `scripts/test.sh` runs the native host gate; platform simulator tests have separate scripts.
 
-The Rust client contains generic records and schema descriptors. Language generators emit business types, encoding/decoding, typed query options, relation accessors and mutation builders. They do not emit replay, settlement or scheduling algorithms. Host connection classes supply timers/network cancellation; Rust selects actions and retry delays. Backend registration remains available as ordinary functions, and HTTP/WebSocket attach to an application-owned server.
+The Rust client contains generic records and schema descriptors. Language generators emit business types, encoding/decoding, typed query options, relation accessors and mutation builders. They do not emit replay, settlement or scheduling algorithms. Host connection classes supply timers/network cancellation; Rust selects actions and retry delays. Backend registration remains available as ordinary functions, and `listen()` serves HTTP and WebSocket on the framework's own port.
 
 The initial SQLite adapter stores changed keyed documents and keeps a full in-memory state snapshot. Read-only SQL evaluates that optimistic snapshot in an isolated SQLite connection. These choices make the first implementation verifiable; dedicated projection tables/indexes and large-cache optimization require performance work before claiming production scale.
