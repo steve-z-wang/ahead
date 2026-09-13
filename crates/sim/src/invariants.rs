@@ -49,7 +49,13 @@ fn stamps_never_decrease(sim: &mut Sim) -> Result<(), String> {
                     &[json!(key.model), json!(key.encoded_identity().unwrap())],
                 )
                 .map_err(|e| e.to_string())?;
-            let now = rows.first().and_then(|r| r["stamp"].as_u64()).unwrap_or(0);
+            // A client with no local row for this key (never synced it, or dropped it
+            // after unsubscribing / a delete) has nothing to compare: its absence is
+            // not a stamp of 0, so leave the high-water mark untouched until the row
+            // reappears.
+            let Some(now) = rows.first().and_then(|r| r["stamp"].as_u64()) else {
+                continue;
+            };
             let slot = sim
                 .seen_stamps
                 .entry((i, key.encoded().unwrap()))
@@ -69,7 +75,15 @@ fn stamps_never_decrease(sim: &mut Sim) -> Result<(), String> {
 
 fn cursors_never_decrease(sim: &mut Sim) -> Result<(), String> {
     for i in up(sim) {
-        for (channel, cursor) in sim.client(i).subscriptions().map_err(|e| e.to_string())? {
+        let subs = sim.client(i).subscriptions().map_err(|e| e.to_string())?;
+        // Unsubscribing and resubscribing intentionally restarts a channel's cursor at
+        // 0 (the claims were dropped, so the next sync is a fresh one): forget the
+        // high-water mark for any channel the client is not currently subscribed to,
+        // so that legitimate reset is not mistaken for a regression.
+        let subscribed: BTreeSet<String> = subs.iter().map(|(c, _)| c.clone()).collect();
+        sim.seen_cursors
+            .retain(|(ci, channel), _| *ci != i || subscribed.contains(channel));
+        for (channel, cursor) in subs {
             let slot = sim.seen_cursors.entry((i, channel.clone())).or_insert(0);
             if cursor < *slot {
                 return Err(format!(
@@ -112,6 +126,31 @@ fn no_pending_means_converged(sim: &mut Sim) -> Result<(), String> {
                 continue;
             }
             for key in sim.host.channel_records(&channel) {
+                // A record's invalidation history on this channel can outlive its
+                // membership (ServerChange can notify a channel outside a record's
+                // real membership, and a record can move to another channel
+                // entirely). Once `channel` is no longer among the record's real
+                // members, being at its head proves nothing about this record - its
+                // current content, if the client has any, may be supplied by another
+                // channel the client is also subscribed to.
+                if sim.host.has_membership(&key)
+                    && !sim.host.membership(&key).iter().any(|m| m == &channel)
+                {
+                    continue;
+                }
+                // This channel's own invalidation for `key` can be behind the key's
+                // shared stamp counter when a change was notified to a different
+                // channel only (a `ServerChange` fault, or a record whose other
+                // member channel was notified in the same call): being at this
+                // channel's head then proves nothing about the record's very latest
+                // content, only about what this channel itself has been told.
+                if sim
+                    .host
+                    .channel_stamp(&channel, &key)
+                    .is_some_and(|stamp| stamp < sim.host.stamp(&key))
+                {
+                    continue;
+                }
                 let local = sim.client(i).read(&key).map_err(|e| e.to_string())?;
                 let server = normalized(sim.host.state(&key), &key.model);
                 if local != server {

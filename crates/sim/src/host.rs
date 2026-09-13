@@ -166,6 +166,20 @@ impl MemHost {
         }
         by_encoded.into_values().collect()
     }
+    /// The stamp a (channel, key) invalidation was published with, if the channel has
+    /// ever been notified of `key`. `ServerChange` can notify a subset of channels
+    /// that excludes one of a record's real member channels, in which case that
+    /// member channel's own last-known stamp falls behind `stamp(key)` (the shared
+    /// per-key counter every channel's publish draws from) until it is next notified.
+    pub fn channel_stamp(&self, channel: &str, key: &RecordKey) -> Option<u64> {
+        self.0
+            .lock()
+            .unwrap()
+            .tables
+            .invalidations
+            .get(&(channel.to_string(), encoded(key)))
+            .map(|row| row.stamp)
+    }
     pub fn channel_records(&self, channel: &str) -> Vec<RecordKey> {
         let s = self.0.lock().unwrap();
         s.tables
@@ -259,6 +273,21 @@ fn apply_business(t: &mut Tables, name: &str, arguments: &Value) -> Vec<RecordKe
     let mut changed = vec![];
     match name {
         "CreateEntry" | "CreateComment" => {
+            // The schema declares Comment.entryId as a real relation to Entry with
+            // onDelete: delete (see schema.rs) - a real FK-backed store would refuse
+            // an insert whose parent row is missing. Two clients racing a delete of
+            // the parent against a create of the child (both accepted independently
+            // by the mutation queue, which never checks against remote state) is
+            // exactly the case that constraint exists to catch: without it, the
+            // comment lands as a permanent orphan no future delete will ever cascade
+            // into, because that delete already happened.
+            if name == "CreateComment" {
+                let entry_id = arg["data"]["entryId"].clone();
+                let entry_key = encoded(&key_of("Entry", &json!({ "id": entry_id })));
+                if !t.records.contains_key(&entry_key) {
+                    return changed;
+                }
+            }
             let mut state = arg["data"].as_object().cloned().unwrap_or_default();
             for (f, v) in arg["identity"].as_object().unwrap() {
                 state.insert(f.clone(), v.clone());

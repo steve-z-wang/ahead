@@ -130,6 +130,9 @@ pub struct Sim {
     pub clients: Vec<Slot>,
     pub seen_stamps: BTreeMap<(usize, String), u64>,
     pub seen_cursors: BTreeMap<(usize, String), u64>,
+    pub known_entries: Vec<String>,
+    pub known_comments: Vec<String>,
+    pub(crate) next_id: u64,
     _dir: tempfile::TempDir,
 }
 
@@ -174,6 +177,9 @@ impl Sim {
             clients,
             seen_stamps: BTreeMap::new(),
             seen_cursors: BTreeMap::new(),
+            known_entries: vec![],
+            known_comments: vec![],
+            next_id: 0,
             _dir: dir,
         }
     }
@@ -309,6 +315,32 @@ impl Sim {
                         json!({"id": id, "entryId": "e1", "text": t})
                     }
                 });
+                // A real DeleteEntry mutation cascades: the client-side engine drops a
+                // Comment locally the moment it learns its parent Entry's authority
+                // went to None (`set_authority` in mutate.rs walks `descendants`).
+                // Nulling an Entry here without also removing its Comments would leave
+                // the server holding a Comment the client is bound to cascade-drop, a
+                // state the real handler never produces - so mirror the cascade,
+                // notifying each dropped Comment on its own real channels.
+                if state.is_none() && k.model == "Entry" {
+                    for (encoded_key, value) in self.host.records() {
+                        if !encoded_key.starts_with("[\"Comment\"") || value["entryId"] != id {
+                            continue;
+                        }
+                        let Some(comment_id) = value["id"].as_str() else {
+                            continue;
+                        };
+                        let child_key = schema::comment_key(comment_id);
+                        self.host.set_state(&child_key, None);
+                        let membership = self.host.membership(&child_key);
+                        let child_refs: Vec<&str> = if membership.is_empty() {
+                            channels.iter().map(String::as_str).collect()
+                        } else {
+                            membership.iter().map(String::as_str).collect()
+                        };
+                        self.host.notify(&child_key, &child_refs);
+                    }
+                }
                 self.host.set_state(&k, state);
                 let refs: Vec<&str> = channels.iter().map(String::as_str).collect();
                 self.host.notify(&k, &refs);

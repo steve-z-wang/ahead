@@ -6,5 +6,7 @@ pub mod net;
 pub mod rng;
 pub mod schema;
 pub mod sim;
+pub mod step;
 pub use rng::Rng;
 pub use sim::{Action, MutationSpec, Sim, Slot};
+pub use step::Failure;
