@@ -5,6 +5,7 @@ pub mod invariants;
 pub mod net;
 pub mod rng;
 pub mod schema;
+pub mod shrink;
 pub mod sim;
 pub mod step;
 pub use rng::Rng;

@@ -1,6 +1,6 @@
 //! Random stepping. One weighted choice per step; every choice comes from the seeded
 //! RNG so a seed reproduces a run.
-use crate::{Action, MutationSpec, Sim};
+use crate::{Action, MutationSpec, Sim, shrink};
 use std::fmt;
 
 const CHANNELS: [&str; 3] = ["a", "b", "c"];
@@ -10,6 +10,7 @@ pub struct Failure {
     pub step: usize,
     pub error: String,
     pub trace: Vec<Action>,
+    pub minimal: Vec<Action>,
 }
 
 impl fmt::Display for Failure {
@@ -20,6 +21,10 @@ impl fmt::Display for Failure {
             self.seed, self.step, self.error
         )?;
         for (i, a) in self.trace.iter().enumerate() {
+            writeln!(f, "  {i:4}  {a:?}")?;
+        }
+        writeln!(f, "minimal:")?;
+        for (i, a) in self.minimal.iter().enumerate() {
             writeln!(f, "  {i:4}  {a:?}")?;
         }
         Ok(())
@@ -237,11 +242,13 @@ impl Sim {
         }
         for step in 0..steps {
             if let Err(error) = sim.step().and_then(|()| sim.check()) {
+                let minimal = shrink::shrink(seed, clients, sim.trace.clone());
                 return Err(Failure {
                     seed,
                     step,
                     error,
                     trace: sim.trace.clone(),
+                    minimal,
                 });
             }
         }
