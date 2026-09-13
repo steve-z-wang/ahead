@@ -74,7 +74,7 @@ import {
   type Loaders,
 } from "./generated/backend.ts";
 
-// Implement the handler from the generated interface.
+// Implement the handler from the generated mutation interface.
 const handlers: Handlers<Tx> = {
   async addTodo({ input, tx, notify }) {
     await tx.todo.create({ data: input.todo });
@@ -84,7 +84,7 @@ const handlers: Handlers<Tx> = {
   },
 };
 
-// Implement the loader from the generated interface.
+// Implement the loader from the generated model interface.
 const loaders: Loaders<Tx> = {
   todo: ({ ids, tx }) =>
     Promise.all(ids.map((identity) => tx.todo.findUnique({ where: identity }))),
