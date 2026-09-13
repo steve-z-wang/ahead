@@ -1,4 +1,5 @@
 import 'connection.dart';
+import 'port.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi';
@@ -51,7 +52,7 @@ void _nativeWorker(List<Object?> args) {
 }
 
 /// Typed generated model APIs delegate to this generic native client.
-class Client {
+class Client implements ReadPort {
   final SendPort _worker;
   final Isolate _isolate;
   final int _handle;
@@ -420,7 +421,7 @@ class Client {
   }
 }
 
-class Transaction {
+class Transaction implements WritePort {
   final Client _client;
   bool _open = true;
   Transaction._(this._client);

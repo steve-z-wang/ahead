@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'package:test/test.dart';
-import 'package:otter_sync/otter_sync.dart';
 import 'generated.dart';
 void main(){
  const id='123e4567-e89b-42d3-a456-426614174000';
@@ -14,21 +13,30 @@ void main(){
  });
  test('generated mutations and query use real native client',()async{
   final temp=await Directory.systemTemp.createTemp('generated-api-');
-  final client=await Client.open(path:'${temp.path}/state.sqlite',schema:schema,libraryPath:Platform.environment['OTTER_DART_LIBRARY'] ?? '../../target/debug/libotter_dart.dylib');
+  final client=await GeneratedClient.open(path:'${temp.path}/state.sqlite',libraryPath:Platform.environment['OTTER_DART_LIBRARY'] ?? '../../target/debug/libotter_dart.dylib');
   try{
-   final api=GeneratedClient(client);
-   expect(await api.mutate(createEntry(entry:row)),1);
-   expect((await api.readEntry(const EntryIdentity(id:id)))?.title,'hello');
-   await api.mutate(editEntry(entry:const EditEntryEntryUpdate(identity:EntryIdentity(id:id),note:Present('changed'))));
-   await api.mutate(editEntry(entry:const EditEntryEntryUpdate(identity:EntryIdentity(id:id),note:Present(null))));
-   final loaded=(await api.entry()).single;
+   expect(await client.transaction((tx)=>tx.mutate.createEntry(entry:row)),1);
+   expect((await client.models.entry.get(const EntryIdentity(id:id)))?.title,'hello');
+   await client.transaction((tx)async{
+    await tx.mutate.editEntry(entry:const EditEntryEntryUpdate(identity:EntryIdentity(id:id),note:Present('changed')));
+    await tx.mutate.editEntry(entry:const EditEntryEntryUpdate(identity:EntryIdentity(id:id),note:Present(null)));
+    expect((await tx.models.entry.get(const EntryIdentity(id:id)))?.note,isNull);
+   });
+   final loaded=(await client.models.entry.query()).single;
    expect(loaded.note,isNull);expect(loaded.title,'hello');expect(loaded.at,row.at);
-   expect((await api.queryEntry(where:EntryFilter(at:Present(DateTime.parse('2026-01-01T01:00:00+01:00')),note:const Present(null)),orderBy:const [EntryOrder(EntryOrderField.byTitle,descending:true)],limit:1)).length,1);
-   await api.mutate(addBook(book:const Book(id:'b',title:'Book')));
-   await api.mutate(addComment(comment:const Comment(id:'c',bookId:'b',text:'Comment')));
-   expect((await api.commentBook(const CommentIdentity(id:'c')))?.id,'b');
-   expect((await api.bookComments(const BookIdentity(id:'b'))).length,1);
-   expect(await client.freeze(),isNotNull);
+   expect((await client.models.entry.query(where:EntryFilter(at:Present(DateTime.parse('2026-01-01T01:00:00+01:00')),note:const Present(null)),orderBy:const [EntryOrder(EntryOrderField.byTitle,descending:true)],limit:1)).length,1);
+   await client.transaction((tx)async{
+    await tx.mutate.addBook(book:const Book(id:'b',title:'Book'));
+    await tx.mutate.addComment(comment:const Comment(id:'c',bookId:'b',text:'Comment'));
+   });
+   expect((await client.models.comment.book(const CommentIdentity(id:'c')))?.id,'b');
+   expect((await client.models.book.comments(const BookIdentity(id:'b'))).length,1);
+   await client.transaction((tx)async{
+    await tx.models.book.create(const Book(id:'local',title:'Local only'));
+    await tx.models.book.update(const BookIdentity(id:'local'),const BookPatch(title:Present('Local edited')));
+   });
+   expect((await client.models.book.get(const BookIdentity(id:'local')))?.title,'Local edited');
+   expect(await client.client.freeze(),isNotNull);
   }finally{await client.close();await temp.delete(recursive:true);}
  });
 }

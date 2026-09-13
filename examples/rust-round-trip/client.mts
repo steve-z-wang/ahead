@@ -2,37 +2,37 @@ import { createInterface } from "node:readline/promises";
 import { resolve } from "node:path";
 import { stdin, stdout } from "node:process";
 import { GeneratedClient, httpTransport } from "./generated/client.ts";
+
+// Open the local database and start syncing with the backend.
 const client = await GeneratedClient.open({
   path: resolve(process.env.OTTER_DATABASE ?? "example-client.sqlite"),
+  transport: httpTransport({
+    url: process.env.OTTER_URL ?? "http://127.0.0.1:4242",
+    token: "demo-user",
+  }),
+  connection: { onError: (error) => console.error(`sync: ${String(error)}`) },
 });
-await client.subscribe("book:demo");
-const transport = httpTransport({
-  url: process.env.OTTER_URL ?? "http://127.0.0.1:4242",
-  token: "demo-user",
-});
-const show = async () => console.log(await client.readEntry({ id: "entry-1" }));
+await client.channels.subscribe("book:demo");
+
+// Print the entry whenever it changes: first the local edit, then the server's version.
+client.models.entry.watch({}, (rows) => console.log(rows[0] ?? null));
+
 const terminal = createInterface({ input: stdin, output: stdout });
 console.log(
-  "Commands: sync | edit TEXT | show | status | quit. Edits are local until sync.",
+  "Commands: edit TEXT | status | quit. Edits apply locally at once and sync in the background.",
 );
 try {
   for (;;) {
     const line = await terminal.question("> ");
     try {
       if (line === "quit") break;
-      if (line === "sync") {
-        await client.sync(transport);
-        await show();
-      } else if (line.startsWith("edit ")) {
-        await client.edit({
-          entry: {
-            identity: { id: "entry-1" },
-            values: { text: line.slice(5) },
-          },
-        });
-        await show();
-      } else if (line === "show") await show();
-      else if (line === "status") console.log(await client.status());
+      if (line.startsWith("edit ")) {
+        await client.transaction((tx) =>
+          tx.mutate.edit({
+            entry: { identity: { id: "entry-1" }, values: { text: line.slice(5) } },
+          }),
+        );
+      } else if (line === "status") console.log(await client.status());
     } catch (error) {
       console.error(String(error));
     }
