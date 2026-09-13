@@ -441,12 +441,13 @@ pub async fn process_pull(
         if row["identityKey"] != key.encoded_identity().map_err(err)? {
             return Err("noncanonical identity".into());
         }
+        let stamp = read_counter(&row["stamp"], true).map_err(|e| format!("invalid stamp: {e}"))?;
         groups.entry(model.into()).or_default().push(changes.len());
         changes.push(RecordChange {
             cursor,
             model: model.into(),
             identity: key.identity,
-            stamp: None,
+            stamp: Some(stamp),
             state: Value::Null,
         });
     }
@@ -503,8 +504,11 @@ pub async fn publish(
     let mut result = vec![];
     for channel in selected {
         for key in keys.values() {
-            let cursor=host.call(json!({"op":"publish","channel":channel,"model":key.model,"identity":key.identity,"identityKey":key.encoded_identity().map_err(err)?})).await?;
-            read_counter(&cursor, true).map_err(err)?;
+            let result=host.call(json!({"op":"publish","channel":channel,"model":key.model,"identity":key.identity,"identityKey":key.encoded_identity().map_err(err)?})).await?;
+            read_counter(&result["cursor"], true)
+                .map_err(|e| format!("invalid publish cursor: {e}"))?;
+            read_counter(&result["stamp"], true)
+                .map_err(|e| format!("invalid publish stamp: {e}"))?;
         }
         result.push(json!({"scope":channel,"syncId":head(host,channel).await?}));
     }
