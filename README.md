@@ -28,7 +28,7 @@ The compiler turns this file into a typed client for TypeScript and Dart, and in
 // Read.
 const open = await client.models.todo.query({ where: { done: false } });
 
-// Watch. Re-runs on every change.
+// Watch. Updates on every change.
 client.models.todo.watch({ where: { done: false } }, (todos) => render(todos));
 
 // Write, inside a transaction.
