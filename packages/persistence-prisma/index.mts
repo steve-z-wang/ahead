@@ -29,7 +29,7 @@ export class PrismaPersistence {
           r.owner,
         );
         const rows = await tx.$queryRawUnsafe<any[]>(
-          "SELECT client_id, owner_id, sequence, request_hash, receipt FROM otter_client WHERE client_id=$1 FOR UPDATE",
+          "SELECT client_id, owner_id, sequence, receipt FROM otter_client WHERE client_id=$1 FOR UPDATE",
           r.clientId,
         );
         if (rows.length !== 1) throw new Error("Failed to lock client");
@@ -38,17 +38,15 @@ export class PrismaPersistence {
           clientId: row.client_id,
           owner: row.owner_id,
           sequence: safe(row.sequence),
-          hash: row.request_hash,
           receipt: row.receipt,
         };
       }
       case "saveReceipt": {
         const count = await tx.$executeRawUnsafe(
-          "UPDATE otter_client SET sequence=$3, request_hash=$4, receipt=$5 WHERE client_id=$1 AND owner_id=$2",
+          "UPDATE otter_client SET sequence=$3, receipt=$4 WHERE client_id=$1 AND owner_id=$2",
           r.clientId,
           r.owner,
           BigInt(r.sequence),
-          r.hash,
           r.receipt,
         );
         if (count !== 1) throw new Error("Receipt owner mismatch");

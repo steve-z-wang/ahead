@@ -2,7 +2,6 @@ CREATE TABLE IF NOT EXISTS otter_client (
  client_id text PRIMARY KEY,
  owner_id text NOT NULL,
  sequence bigint NOT NULL DEFAULT 0 CHECK(sequence >= 0 AND sequence <= 9007199254740991),
- request_hash text,
  receipt text
 );
 CREATE TABLE IF NOT EXISTS otter_channel (

@@ -16,7 +16,7 @@ This source alpha uses a new local SQLite layout. Open a new database path; do n
 
 ## Application recovery
 
-- A lost Push response is retried with the stored bytes and batch sequence. Keep the same local database and client identity; the backend receipt prevents a second business execution.
+- A lost Push response is retried by re-encoding the same push sequence from the queued operations. The backend replays the stored receipt for a repeated `(clientId, sequence)` without inspecting the body, so one client identity must never push from two databases; the second database's push would receive the first one's receipt.
 - A received ACK keeps optimistic changes until the required Pull checkpoints arrive. Diagnose channel access/publication and connectivity before attempting to clear local state.
 - Business rejections appear in the durable inbox. Display the code, inspect `recordStatus`, and dismiss the rejection after the user has seen it. A new edit is a new mutation.
 - Failed prerequisite work remains visible locally. The host retries by returning its readiness key to `pending` and running its prerequisite callback again. Callbacks must tolerate retries after restart.

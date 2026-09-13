@@ -301,7 +301,6 @@ pub async fn process_push(
 ) -> Result<String> {
     principal(owner)?;
     let request = PushRequest::decode(bytes).map_err(|e| format!("request.invalid:{e}"))?;
-    let hash = request.semantic_hash().map_err(err)?;
     let locked = host
         .call(json!({"op":"claim","owner":owner,"clientId":request.client_id}))
         .await?;
@@ -313,13 +312,10 @@ pub async fn process_push(
     }
     let last = read_counter(&locked["sequence"], false).map_err(err)?;
     if request.batch_sequence == last {
-        if locked["hash"] != hash {
-            return Err("request_conflict".into());
-        }
         return locked["receipt"]
             .as_str()
             .map(str::to_owned)
-            .ok_or("request_conflict".into());
+            .ok_or("receipt missing".into());
     }
     if request.batch_sequence < last {
         return Err("overlap".into());
@@ -404,7 +400,7 @@ pub async fn process_push(
         rejections,
     };
     let text = String::from_utf8(receipt.encode().map_err(err)?).map_err(err)?;
-    host.call(json!({"op":"saveReceipt","owner":owner,"clientId":request.client_id,"sequence":request.batch_sequence,"hash":hash,"receipt":text})).await?;
+    host.call(json!({"op":"saveReceipt","owner":owner,"clientId":request.client_id,"sequence":request.batch_sequence,"receipt":text})).await?;
     Ok(text)
 }
 pub async fn process_pull(

@@ -86,8 +86,8 @@ impl Host for Backend {
         Box::pin(async move {
             let mut db = self.0.lock().unwrap();
             Ok(match r["op"].as_str().unwrap(){
- "claim"=>db.clients.entry(r["clientId"].as_str().unwrap().into()).or_insert_with(||json!({"clientId":r["clientId"],"owner":r["owner"],"sequence":0,"hash":null,"receipt":null})).clone(),
- "saveReceipt"=>{db.clients.insert(r["clientId"].as_str().unwrap().into(),json!({"clientId":r["clientId"],"owner":r["owner"],"sequence":r["sequence"],"hash":r["hash"],"receipt":r["receipt"]}));Value::Null},
+ "claim"=>db.clients.entry(r["clientId"].as_str().unwrap().into()).or_insert_with(||json!({"clientId":r["clientId"],"owner":r["owner"],"sequence":0,"receipt":null})).clone(),
+ "saveReceipt"=>{db.clients.insert(r["clientId"].as_str().unwrap().into(),json!({"clientId":r["clientId"],"owner":r["owner"],"sequence":r["sequence"],"receipt":r["receipt"]}));Value::Null},
  "head"=>json!(db.head),"authorize"=>json!(true),"savepoint"|"release"|"rollback"=>Value::Null,
  "handle"=>{db.calls+=1;let text=r["arguments"]["entry"]["patch"]["text"].as_str().unwrap();if text=="reject"{json!({"rejection":"entry.denied"})}else{db.text=text.trim().into();db.head+=1;json!({"channel":"book"})}},
  "scan"=>if r["after"].as_u64().unwrap()<db.head{json!([{"channel":"book","cursor":db.head,"model":"Entry","identity":{"id":"e"},"identityKey":"{\"id\":\"e\"}"}])}else{json!([])},
