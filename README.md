@@ -4,6 +4,16 @@ Local-first state for TypeScript and Dart. Write your API as handlers. Call it l
 
 Ahead is a library, not a service. Mutations settle in your own database transaction, and your app reads from a local SQLite copy that catches up as the server confirms.
 
+## How it fits together
+
+![How Ahead fits together](docs/architecture.svg)
+
+1. Your app writes in a transaction. The change lands in local SQLite, and reads see it at once.
+2. The connection pushes the mutation to your backend when the network allows.
+3. The handler runs in one database transaction and calls `notify` with the records that changed.
+4. Every client subscribed to that channel pulls those records. The backend answers through the loader.
+5. Local SQLite updates and `watch` fires again. If the handler rejected the mutation, the local change rolls back instead.
+
 ## How it works
 
 ### 1. Describe the local data and the mutations it sends to the backend
@@ -89,25 +99,6 @@ const backend = createBackend({
 });
 await backend.listen({ port: 4242 });
 ```
-
-## How it fits together
-
-```mermaid
-flowchart LR
-  App[Your app] -- 1 transaction --> Local[(Local SQLite)]
-  Local -- 2 push --> Backend[Your backend]
-  Backend -- 3 handler --> DB[(Your database)]
-  Backend -- 3 notify --> Local
-  Local -- 4 pull --> Backend
-  Backend -- 4 loader --> DB
-  Local -- 5 watch --> App
-```
-
-1. Your app writes in a transaction. The change lands in local SQLite, and reads see it at once.
-2. The connection pushes the mutation to your backend when the network allows.
-3. The handler runs in one database transaction and calls `notify` with the records that changed.
-4. Every client subscribed to that channel pulls those records. The backend answers through the loader.
-5. Local SQLite updates and `watch` fires again. If the handler rejected the mutation, the local change rolls back instead.
 
 ## Try it
 

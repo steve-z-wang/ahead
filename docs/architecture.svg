@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="230" viewBox="0 0 880 230" font-family="ui-sans-serif, system-ui, -apple-system, Helvetica, Arial, sans-serif" font-size="14">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6b7280"/>
+    </marker>
+  </defs>
+  <g stroke="#9ca3af" stroke-width="1.5" fill="#f9fafb">
+    <rect x="20"  y="80" width="160" height="70" rx="10"/>
+    <rect x="250" y="80" width="160" height="70" rx="10"/>
+    <rect x="480" y="80" width="160" height="70" rx="10"/>
+    <rect x="710" y="80" width="150" height="70" rx="10"/>
+  </g>
+  <g fill="#111827" text-anchor="middle" font-weight="600">
+    <text x="100" y="121">Your app</text>
+    <text x="330" y="121">Local SQLite</text>
+    <text x="560" y="121">Your backend</text>
+    <text x="785" y="121">Your database</text>
+  </g>
+  <g stroke="#6b7280" stroke-width="1.5" fill="none" marker-end="url(#a)">
+    <path d="M180,100 L250,100"/>
+    <path d="M250,130 L180,130"/>
+    <path d="M410,100 L480,100"/>
+    <path d="M480,130 L410,130"/>
+    <path d="M640,100 L710,100"/>
+    <path d="M710,130 L640,130"/>
+    <path d="M560,80 C560,30 330,30 330,80" stroke-dasharray="5 4"/>
+  </g>
+  <g fill="#374151" text-anchor="middle">
+    <text x="215" y="92">1 write</text>
+    <text x="215" y="150">5 watch</text>
+    <text x="445" y="92">2 push</text>
+    <text x="445" y="150">4 pull</text>
+    <text x="675" y="92">3 handler</text>
+    <text x="675" y="150">4 loader</text>
+    <text x="445" y="40">3 notify</text>
+  </g>
+  <g fill="#6b7280" text-anchor="middle" font-size="12">
+    <text x="100" y="180">reads and writes</text>
+    <text x="330" y="180">one file, yours</text>
+    <text x="560" y="180">handlers and loaders</text>
+    <text x="785" y="180">any, via Prisma</text>
+  </g>
+</svg>
