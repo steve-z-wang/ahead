@@ -37,9 +37,7 @@ const client = await GeneratedClient.open({
 
 // Subscribe to the channels you want to sync.
 await client.channels.subscribe("todos");
-```
 
-```ts
 // Read.
 const open = await client.models.todo.query({ where: { done: false } });
 
