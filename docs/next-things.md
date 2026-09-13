@@ -10,7 +10,7 @@ Implement a schema-driven Rust client/server runtime, language SDKs, generators,
 
 ## Later work
 
-- [ ] **Cross-channel record revision**: compare content versions when the same record arrives from different channels; do not use the channel cursor as a cross-channel recency measure.
+- [x] **Cross-channel record revision**: compare content versions when the same record arrives from different channels; do not use the channel cursor as a cross-channel recency measure.
 - [ ] Consistent reads of recordRevision and loaded state; distribute the same version to multiple channels from one publication.
 - [ ] Tests for same-version idempotence, conflict diagnostics, late old pages, and Move A→B→A.
 - [ ] When extending cross-channel semantics, explicitly distinguish remove-from-channel from true delete, and design tombstone/watermark retention and safe cleanup.
@@ -18,7 +18,7 @@ Implement a schema-driven Rust client/server runtime, language SDKs, generators,
 - [ ] Review separately the current behavior that skips/advances the cursor after a pull failure; record the risk, and do not casually turn it into atomic whole-page apply during the rewrite.
 - [ ] If needed, revisit per-mutation receipts / independent transactions and removal of accepted-prefix blocking; the current scope preserves batch transactions, batch receipts, and prefix settlement.
 - [ ] A new wire version, decimal-string counters, epoch/reset, and automatic GC; these are separately designed protocol changes and are not enabled by default with the Rust migration.
-- [ ] Extend the schema compatibility fence to inspect identity/type/nullability changes; preserve the current fence first, then design this independently.
+- [x] Extend the schema compatibility fence to inspect identity/type/nullability changes; preserve the current fence first, then design this independently.
 - [ ] Wake after external user-transaction commits, additional polling, and multi-process notification strategy; first verify the current notification boundary.
 - [ ] Improve settlement witness coverage, recovery after permission revocation, and the current channel-authorizer/host policy; do not remove old behavior without review.
 - [ ] Client `openClient`: open in one step with a built-in transport, symmetric with the backend's `createBackend`.

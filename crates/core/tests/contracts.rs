@@ -194,3 +194,37 @@ fn shared_wire_fixtures_preserve_counter_and_checkpoint_boundaries() {
         }
     }
 }
+
+#[test]
+fn field_default_and_record_stamp_round_trip_and_otter_prefix_is_rejected() {
+    let field: FieldDescriptor = serde_json::from_value(
+        json!({"name":"rank","nullable":false,"type":{"kind":"scalar","name":"int"},"default":0}),
+    )
+    .unwrap();
+    assert_eq!(field.default, Some(json!(0)));
+    let plain: FieldDescriptor = serde_json::from_value(
+        json!({"name":"t","nullable":true,"type":{"kind":"scalar","name":"string"}}),
+    )
+    .unwrap();
+    assert_eq!(plain.default, None);
+    assert!(!serde_json::to_string(&plain).unwrap().contains("default"));
+    let page = PullPage::decode(
+        br#"{"scope":"c","fromCursor":0,"toCursor":1,"changes":[{"syncId":1,"model":"E","identity":{"id":"e"},"stamp":7,"state":null}]}"#,
+    )
+    .unwrap();
+    assert_eq!(page.changes[0].stamp, Some(7));
+    let unstamped_page = PullPage::decode(
+        br#"{"scope":"c","fromCursor":0,"toCursor":1,"changes":[{"syncId":1,"model":"E","identity":{"id":"e"},"state":null}]}"#,
+    )
+    .unwrap();
+    assert_eq!(unstamped_page.changes[0].stamp, None);
+    assert!(
+        !String::from_utf8(unstamped_page.encode().unwrap())
+            .unwrap()
+            .contains("stamp")
+    );
+    let bad = Schema::from_value(
+        json!({"enums":[],"models":[{"name":"otter_x","identity":["id"],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}}]}]}),
+    );
+    assert!(bad.is_err());
+}

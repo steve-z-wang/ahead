@@ -56,11 +56,11 @@ impl Backend {
             }
         }
     }
-    fn pull(&self, client: &Client<SqliteStore>) -> PullPage {
+    fn pull(&self, client: &mut Client<SqliteStore>) -> PullPage {
         let body = PullRequest {
             channel: "book".into(),
             client_id: client.client_id().into(),
-            from_cursor: client.cursor("book"),
+            from_cursor: client.cursor("book").unwrap(),
         }
         .encode()
         .unwrap();
@@ -80,8 +80,8 @@ impl Host for Backend {
         Box::pin(async move {
             let mut db = self.0.lock().unwrap();
             Ok(match r["op"].as_str().unwrap(){
- "claim"=>db.clients.entry(r["clientId"].as_str().unwrap().into()).or_insert_with(||json!({"clientId":r["clientId"],"owner":r["owner"],"sequence":0,"hash":null,"receipt":null})).clone(),
- "saveReceipt"=>{db.clients.insert(r["clientId"].as_str().unwrap().into(),json!({"clientId":r["clientId"],"owner":r["owner"],"sequence":r["sequence"],"hash":r["hash"],"receipt":r["receipt"]}));Value::Null},
+ "claim"=>db.clients.entry(r["clientId"].as_str().unwrap().into()).or_insert_with(||json!({"clientId":r["clientId"],"owner":r["owner"],"sequence":0,"receipt":null})).clone(),
+ "saveReceipt"=>{db.clients.insert(r["clientId"].as_str().unwrap().into(),json!({"clientId":r["clientId"],"owner":r["owner"],"sequence":r["sequence"],"receipt":r["receipt"]}));Value::Null},
  "head"=>json!(db.head),"authorize"=>json!(true),"savepoint"|"release"|"rollback"=>Value::Null,
  "handle"=>{db.calls+=1;let text=r["arguments"]["entry"]["patch"]["text"].as_str().unwrap();if text=="reject"{json!({"rejection":"entry.denied"})}else{db.text=text.trim().into();db.head+=1;json!({"channel":"book"})}},
  "scan"=>if r["after"].as_u64().unwrap()<db.head{json!([{"channel":"book","cursor":db.head,"model":"Entry","identity":{"id":"e"},"identityKey":"{\"id\":\"e\"}"}])}else{json!([])},
@@ -91,7 +91,13 @@ impl Host for Backend {
     }
 }
 fn open(path: &std::path::Path) -> Client<SqliteStore> {
-    Client::open(SqliteStore::open(path).unwrap(), schema(), "u".into()).unwrap()
+    let mut client = Client::open(SqliteStore::open(path).unwrap(), schema()).unwrap();
+    // Only a subscribed channel is pulled and applied. A reopen keeps the row, so
+    // this is one write per database; the repeat call finds the row and does nothing.
+    client
+        .transaction(|tx| tx.set_channel("book".into(), true))
+        .unwrap();
+    client
 }
 fn edit(client: &mut Client<SqliteStore>, text: &str) {
     client
@@ -109,7 +115,7 @@ fn edit(client: &mut Client<SqliteStore>, text: &str) {
         })
         .unwrap();
 }
-fn visible(client: &Client<SqliteStore>) -> String {
+fn visible(client: &mut Client<SqliteStore>) -> String {
     client
         .read(&schema().record_key("Entry", &json!({"id":"e"})).unwrap())
         .unwrap()
@@ -125,7 +131,8 @@ fn deterministic_interleavings_preserve_local_priority_and_eventually_converge()
         let path = dir.path().join("client.sqlite");
         let server = Backend::new();
         let mut client = open(&path);
-        client.apply_page(server.pull(&client)).unwrap();
+        let page = server.pull(&mut client);
+        client.apply_page(page).unwrap();
         edit(&mut client, "  first  ");
         let request = client.freeze().unwrap().unwrap();
         let receipt = server.push(&request);
@@ -141,7 +148,7 @@ fn deterministic_interleavings_preserve_local_priority_and_eventually_converge()
             edit(&mut client, "  second  ");
         }
         let ack = PushReceipt::decode(receipt.as_bytes()).unwrap();
-        let page = server.pull(&client);
+        let page = server.pull(&mut client);
         if seed & 4 != 0 {
             client.apply_page(page).unwrap();
             if seed & 8 != 0 {
@@ -158,15 +165,16 @@ fn deterministic_interleavings_preserve_local_priority_and_eventually_converge()
             client.apply_page(page).unwrap();
         }
         let expected = if seed & 2 != 0 { "  second  " } else { "first" };
-        assert_eq!(visible(&client), expected, "seed {seed}");
+        assert_eq!(visible(&mut client), expected, "seed {seed}");
         if seed & 2 != 0 {
             let body = client.freeze().unwrap().unwrap();
             let receipt = server.push(&body);
             client
                 .acknowledge(2, PushReceipt::decode(receipt.as_bytes()).unwrap())
                 .unwrap();
-            client.apply_page(server.pull(&client)).unwrap();
-            assert_eq!(visible(&client), "second");
+            let page = server.pull(&mut client);
+            client.apply_page(page).unwrap();
+            assert_eq!(visible(&mut client), "second");
         }
         if seed & 16 != 0 {
             edit(&mut client, "reject");
@@ -178,14 +186,14 @@ fn deterministic_interleavings_preserve_local_priority_and_eventually_converge()
             client
                 .acknowledge(seq, PushReceipt::decode(ack.as_bytes()).unwrap())
                 .unwrap();
-            assert_eq!(client.rejections().len(), 1);
+            assert_eq!(client.rejections().unwrap().len(), 1);
         }
         if seed & 32 != 0 {
             drop(client);
             client = open(&path);
         }
-        assert_eq!(client.pending_count(), 0, "seed {seed}");
-        assert_eq!(client.before_image_count(), 0);
-        assert_eq!(visible(&client), server.0.lock().unwrap().text);
+        assert_eq!(client.pending_count().unwrap(), 0, "seed {seed}");
+        assert_eq!(client.before_image_count().unwrap(), 0);
+        assert_eq!(visible(&mut client), server.0.lock().unwrap().text);
     }
 }

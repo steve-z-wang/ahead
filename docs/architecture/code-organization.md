@@ -143,7 +143,7 @@ Consistent reads must ensure heads, invalidations and related business reads by 
 
 ### Client: a separate local storage contract
 
-`ClientStore` / `ClientTransaction` cover visible records, the authoritative base, pending queue, readiness, channel cursors/claims, queries and post-commit change notifications. The default `otter-sqlite` implements them, and the Rust client manages local transaction flow.
+`ClientStore` is a SQL executor: `begin`/`commit`/`rollback`, savepoints, `execute`, `query` on the writer connection and `query_committed` on a read-only connection. `otter-client` owns the schema of the local database: one table per model named as the model, `otter_before_<Model>` twins that hold server truth while a row has pending edits, and the `otter_` framework tables (`otter_client`, `otter_record`, `otter_claim`, `otter_subscription`, `otter_mutation` and its `_operation`, `_dependency`, `_prerequisite` children, `otter_push_checkpoint`, `otter_rejection`). The engine works row by row inside SQLite transactions; nothing is held in memory between calls. Every write transaction increments `otter_client.generation` with a `WHERE generation = ?` fence so a stale instance fails instead of overwriting.
 
 They do not share a large class with server persistence: the backend participates in user transactions, while the client owns its local database by default; their storage objects and query needs also differ. Future client storage adapters need only implement the client contract.
 

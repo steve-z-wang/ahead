@@ -49,13 +49,13 @@ test('Prisma persistence supports reusable bind without owning a transaction',as
  const reusable=new PrismaPersistence();let calls=0;
  const tx={$queryRawUnsafe:async()=>[{head:4}],$executeRawUnsafe:async()=>{calls++;return 1}};
  assert.equal(await reusable.bind(tx).call({op:'head',channel:'x'}),4);
- await reusable.bind(tx).call({op:'saveReceipt',clientId:'c',owner:'o',sequence:1,hash:'h',receipt:'r'});
+ await reusable.bind(tx).call({op:'saveReceipt',clientId:'c',owner:'o',sequence:1,receipt:'r'});
  assert.equal(calls,1);
 });
 test('push commits business + compacted publication + exact durable receipt together',async()=>{
  const request=push('dedup',1,[mutation(1,'first')]);const receipt=await backend.push('alice',request);assert.deepEqual(JSON.parse(receipt),{requiredCheckpoints:[{scope:'shared',syncId:1}],requiredScope:'shared',requiredSyncId:1,rejections:[]});const calls=called;
  assert.equal(await backend.push('alice',request),receipt);assert.equal(called,calls);
- await assert.rejects(()=>backend.push('alice',push('dedup',1,[mutation(1,'changed')])),/request_conflict/);
+ assert.equal(await backend.push('alice',push('dedup',1,[mutation(1,'changed')])),receipt);assert.equal(called,calls);
  await assert.rejects(()=>backend.push('bob',request),/owner_mismatch/);
  await assert.rejects(()=>backend.push('alice',push('dedup',3,[mutation(1,'gap')])),/gap/);
  const page=await pull();assert.deepEqual(page,{scope:'shared',fromCursor:0,toCursor:1,changes:[{syncId:1,model:'Task',identity:{id:'a'},state:{title:'first'}}]});assert.equal(prepared,1);

@@ -1,0 +1,240 @@
+//! The tables are the schema record. Reconciliation makes them match the compiled schema or fails.
+use crate::store::ClientStore;
+use otter_core::{
+    FieldDescriptor, ModelDescriptor, Result, ScalarType, Schema, ValueType, invalid,
+};
+use serde_json::Value;
+use std::collections::BTreeMap;
+
+pub const FRAMEWORK_TABLES: &[&str] = &[
+    "otter_client",
+    "otter_record",
+    "otter_claim",
+    "otter_subscription",
+    "otter_mutation",
+    "otter_mutation_operation",
+    "otter_mutation_dependency",
+    "otter_mutation_prerequisite",
+    "otter_push_checkpoint",
+    "otter_rejection",
+];
+
+pub const FRAMEWORK_DDL: &str = "
+CREATE TABLE IF NOT EXISTS otter_client (
+  client_id    TEXT PRIMARY KEY,
+  next_ordinal INTEGER NOT NULL,
+  next_push    INTEGER NOT NULL,
+  generation   INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS otter_record (
+  model TEXT NOT NULL, identity TEXT NOT NULL, stamp INTEGER NOT NULL,
+  PRIMARY KEY (model, identity)
+);
+CREATE TABLE IF NOT EXISTS otter_claim (
+  channel TEXT NOT NULL, model TEXT NOT NULL, identity TEXT NOT NULL,
+  PRIMARY KEY (channel, model, identity)
+);
+CREATE INDEX IF NOT EXISTS otter_claim_record ON otter_claim (model, identity);
+CREATE TABLE IF NOT EXISTS otter_subscription (
+  channel TEXT PRIMARY KEY, cursor INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS otter_mutation (
+  ordinal INTEGER PRIMARY KEY, name TEXT NOT NULL, version INTEGER NOT NULL, push INTEGER
+);
+CREATE TABLE IF NOT EXISTS otter_mutation_operation (
+  ordinal INTEGER NOT NULL REFERENCES otter_mutation(ordinal) ON DELETE CASCADE,
+  position INTEGER NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('wire','companion','effect')),
+  model TEXT NOT NULL, identity TEXT NOT NULL,
+  op TEXT NOT NULL CHECK (op IN ('create','update','delete')),
+  \"values\" TEXT,
+  PRIMARY KEY (ordinal, position)
+);
+CREATE INDEX IF NOT EXISTS otter_mutation_operation_record ON otter_mutation_operation (model, identity, ordinal, position);
+CREATE TABLE IF NOT EXISTS otter_mutation_dependency (
+  ordinal INTEGER NOT NULL REFERENCES otter_mutation(ordinal) ON DELETE CASCADE,
+  depends_on INTEGER NOT NULL REFERENCES otter_mutation(ordinal) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('lifecycle','sequence')),
+  PRIMARY KEY (ordinal, depends_on),
+  CHECK (depends_on < ordinal)
+);
+CREATE TABLE IF NOT EXISTS otter_mutation_prerequisite (
+  ordinal INTEGER NOT NULL REFERENCES otter_mutation(ordinal) ON DELETE CASCADE,
+  key TEXT NOT NULL, error TEXT,
+  PRIMARY KEY (ordinal, key)
+);
+CREATE TABLE IF NOT EXISTS otter_push_checkpoint (
+  push INTEGER NOT NULL, channel TEXT NOT NULL, cursor INTEGER NOT NULL,
+  PRIMARY KEY (push, channel)
+);
+CREATE TABLE IF NOT EXISTS otter_rejection (
+  ordinal INTEGER PRIMARY KEY, name TEXT NOT NULL, code TEXT NOT NULL, detail TEXT
+);
+";
+
+pub fn quote(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+pub fn before_table(model: &str) -> String {
+    format!("otter_before_{model}")
+}
+
+pub fn storage_type(value_type: &ValueType) -> &'static str {
+    match value_type {
+        ValueType::Scalar {
+            name: ScalarType::Boolean | ScalarType::Int,
+        } => "INTEGER",
+        ValueType::Scalar {
+            name: ScalarType::Float,
+        } => "REAL",
+        _ => "TEXT",
+    }
+}
+
+fn literal(field: &FieldDescriptor) -> Result<String> {
+    let value = field.default.as_ref().ok_or_else(|| {
+        invalid(format!(
+            "column {} is not nullable and has no default",
+            field.name
+        ))
+    })?;
+    Ok(match value {
+        Value::Bool(b) => i64::from(*b).to_string(),
+        Value::Number(n) => n.to_string(),
+        Value::String(s) => format!("'{}'", s.replace('\'', "''")),
+        Value::Null => {
+            return Err(invalid(format!(
+                "column {} default cannot be null",
+                field.name
+            )));
+        }
+        other => format!("'{}'", serde_json::to_string(other)?.replace('\'', "''")),
+    })
+}
+
+fn column(field: &FieldDescriptor) -> String {
+    let null = if field.nullable { "" } else { " NOT NULL" };
+    format!(
+        "{} {}{null}",
+        quote(&field.name),
+        storage_type(&field.value_type)
+    )
+}
+
+fn table_ddl(table: &str, model: &ModelDescriptor) -> String {
+    let columns = model
+        .fields
+        .iter()
+        .map(column)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let key = model
+        .identity
+        .iter()
+        .map(|f| quote(f))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "CREATE TABLE IF NOT EXISTS {} ({columns}, PRIMARY KEY ({key}))",
+        quote(table)
+    )
+}
+
+pub fn model_ddl(model: &ModelDescriptor) -> Vec<String> {
+    let mut statements = vec![
+        table_ddl(&model.name, model),
+        table_ddl(&before_table(&model.name), model),
+    ];
+    for fields in &model.unique {
+        let name = format!("{}_{}_unique", model.name, fields.join("_"));
+        let columns = fields
+            .iter()
+            .map(|f| quote(f))
+            .collect::<Vec<_>>()
+            .join(", ");
+        statements.push(format!(
+            "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} ({columns})",
+            quote(&name),
+            quote(&model.name)
+        ));
+    }
+    statements
+}
+
+struct Existing {
+    columns: BTreeMap<String, String>, // name -> declared type
+    identity: Vec<String>,             // pk columns in key order
+}
+
+fn existing<S: ClientStore>(store: &mut S, table: &str) -> Result<Option<Existing>> {
+    let rows = store.query(&format!("PRAGMA table_info({})", quote(table)), &[])?;
+    if rows.rows.is_empty() {
+        return Ok(None);
+    }
+    let mut columns = BTreeMap::new();
+    let mut keyed = vec![];
+    for row in rows.rows {
+        let name = row[1]
+            .as_str()
+            .ok_or_else(|| invalid("table_info name"))?
+            .to_string();
+        let ty = row[2].as_str().unwrap_or("").to_ascii_uppercase();
+        let pk = row[5].as_i64().unwrap_or(0);
+        if pk > 0 {
+            keyed.push((pk, name.clone()));
+        }
+        columns.insert(name, ty);
+    }
+    keyed.sort();
+    Ok(Some(Existing {
+        columns,
+        identity: keyed.into_iter().map(|(_, n)| n).collect(),
+    }))
+}
+
+pub fn reconcile<S: ClientStore>(store: &mut S, schema: &Schema) -> Result<()> {
+    for model in &schema.models {
+        let Some(current) = existing(store, &model.name)? else {
+            for statement in model_ddl(model) {
+                store.execute(&statement, &[])?;
+            }
+            continue;
+        };
+        if current.identity != model.identity {
+            return Err(invalid(format!(
+                "identity columns of {} changed; cannot open",
+                model.name
+            )));
+        }
+        for field in &model.fields {
+            match current.columns.get(&field.name) {
+                Some(ty) if ty == storage_type(&field.value_type) => {}
+                Some(ty) => {
+                    return Err(invalid(format!(
+                        "column {}.{} is {ty} in the database but {} in the schema",
+                        model.name,
+                        field.name,
+                        storage_type(&field.value_type)
+                    )));
+                }
+                None => {
+                    let mut definition = column(field);
+                    if !field.nullable {
+                        definition.push_str(&format!(" DEFAULT {}", literal(field)?));
+                    }
+                    for table in [model.name.clone(), before_table(&model.name)] {
+                        store.execute(
+                            &format!("ALTER TABLE {} ADD COLUMN {definition}", quote(&table)),
+                            &[],
+                        )?;
+                    }
+                }
+            }
+        }
+        for statement in model_ddl(model).into_iter().skip(2) {
+            store.execute(&statement, &[])?;
+        }
+    }
+    Ok(())
+}

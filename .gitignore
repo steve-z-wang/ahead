@@ -23,3 +23,6 @@ artifacts/
 /website/site/
 /website/.venv/
 /website/__pycache__/
+
+# Optional workspace-local Rust toolchain (symlink or directory)
+.tools
