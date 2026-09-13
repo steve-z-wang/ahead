@@ -25,13 +25,13 @@ The compiler turns this file into a typed client for TypeScript and Dart, and in
 ### 2. Read and write on the client
 
 ```ts
-// Read. Always local, including changes the server has not confirmed yet.
+// Read.
 const open = await client.models.todo.query({ where: { done: false } });
 
-// Watch. Fires now with the local state, and again whenever it changes.
+// Watch.
 client.models.todo.watch({ where: { done: false } }, (todos) => render(todos));
 
-// Write, inside a transaction. Returns once the change is in local SQLite.
+// Write, inside a transaction.
 await client.transaction(async (tx) => {
   await tx.mutate.addTodo({
     todo: { id: "t1", title: "Buy milk", done: false },
@@ -69,8 +69,7 @@ import {
   type Loaders,
 } from "./generated/backend.ts";
 
-// Implement a handler for each mutation. It runs in one database transaction.
-// notify tells every client subscribed to the channel to reload these records.
+// Implement a handler for each mutation. notify tells subscribers what to reload.
 const handlers: Handlers<Tx> = {
   async addTodo({ input, tx, notify }) {
     await tx.todo.create({ data: input.todo });
@@ -85,13 +84,13 @@ const handlers: Handlers<Tx> = {
   },
 };
 
-// Tell the framework how to load a record by id.
+// Load records by id.
 const loaders: Loaders<Tx> = {
   todo: ({ ids, tx }) =>
     Promise.all(ids.map((identity) => tx.todo.findUnique({ where: identity }))),
 };
 
-// Put them together and start the server.
+// Start the server.
 const backend = createBackend({
   database: prisma(new PrismaClient()),
   authenticate: devAuth(),
