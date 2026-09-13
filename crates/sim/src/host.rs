@@ -141,7 +141,10 @@ impl MemHost {
         self.0.lock().unwrap().accepted
     }
     pub fn push(&self, owner: &str, bytes: &[u8]) -> Result<String, String> {
-        let before = self.0.lock().unwrap().tables.clone();
+        let (before, depth) = {
+            let s = self.0.lock().unwrap();
+            (s.tables.clone(), s.savepoints.len())
+        };
         let result = block_on(otter_server::process_push(
             &crate::schema::config(),
             owner,
@@ -150,9 +153,18 @@ impl MemHost {
         ));
         if result.is_err() {
             // An aborted batch is a rolled-back transaction: nothing it did survives.
-            self.0.lock().unwrap().tables = before;
+            // A `handle` error short-circuits process_push after `savepoint` but before
+            // the matching `release`, so the savepoint stack must also be restored to
+            // its pre-call depth here — this is the same invariant a successful push
+            // already leaves it at (every `savepoint` is paired with a `release`).
+            let mut s = self.0.lock().unwrap();
+            s.tables = before;
+            s.savepoints.truncate(depth);
         }
         result
+    }
+    pub fn savepoint_depth(&self) -> usize {
+        self.0.lock().unwrap().savepoints.len()
     }
     pub fn pull(&self, owner: &str, bytes: &[u8]) -> Result<String, String> {
         block_on(otter_server::process_pull(
@@ -462,6 +474,11 @@ mod tests {
         );
         assert_eq!(host.state(&entry_key("e1")).unwrap()["text"], "hi");
         assert_eq!(host.head("a"), 1);
+        assert_eq!(
+            host.savepoint_depth(),
+            0,
+            "the failed batch's savepoint must not leak"
+        );
         // The failed batch left no receipt, so sequence 3 is still next.
         let ok = host
             .push("u", &push_bytes("c1", 3, &schema::edit("e1", "yes")))
