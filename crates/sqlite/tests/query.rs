@@ -62,6 +62,7 @@ fn query_normalizes_filters_orders_nulls_and_resolves_relationships() {
 fn readonly_sql_sees_optimistic_rows_and_refuses_write_statements() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = open(&dir.path().join("db"));
+    subscribe(&mut c, "book");
     c.apply_page(page("book", 0, 1, Some("A"))).unwrap();
     c.transaction(|tx| {
         tx.enqueue(mutation("B"))?;
@@ -93,11 +94,10 @@ fn readonly_sql_sees_optimistic_rows_and_refuses_write_statements() {
 }
 
 #[test]
-fn transport_pulls_subscribed_and_checkpoint_channels_after_pushing() {
+fn transport_pulls_only_subscribed_channels_and_unawaitable_checkpoints_settle() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = open(&dir.path().join("db"));
-    c.transaction(|tx| tx.set_channel("book".into(), true))
-        .unwrap();
+    subscribe(&mut c, "book");
     seed(&mut c, "A");
     c.transaction(|tx| {
         tx.enqueue(mutation("B"))?;
@@ -117,6 +117,12 @@ fn transport_pulls_subscribed_and_checkpoint_channels_after_pushing() {
         rejections: vec![],
     };
     cycle.complete(&mut c, &receipt.encode().unwrap()).unwrap();
+    assert_eq!(
+        c.pending_count().unwrap(),
+        0,
+        "a checkpoint on a channel nothing pulls cannot be awaited, so the push settles"
+    );
+    assert_eq!(table_count(&mut c, "otter_push_checkpoint"), 0);
     let first = cycle.next(&mut c).unwrap().unwrap();
     assert_eq!(first.kind, "pull");
     let request = PullRequest::decode(first.body.as_bytes()).unwrap();
@@ -134,9 +140,8 @@ fn transport_pulls_subscribed_and_checkpoint_channels_after_pushing() {
             .unwrap(),
         )
         .unwrap();
-    let second = PullRequest::decode(cycle.next(&mut c).unwrap().unwrap().body.as_bytes()).unwrap();
-    assert_eq!(
-        second.channel, "other",
-        "checkpoint channels are pulled even when not subscribed"
+    assert!(
+        cycle.next(&mut c).unwrap().is_none(),
+        "the unsubscribed checkpoint channel is never pulled"
     );
 }

@@ -3,7 +3,10 @@ use crate::engine::Engine;
 use crate::queue::Queued;
 use crate::store::ClientStore;
 use crate::{Mutation, Operation, OperationKind, mutate::apply_to_row};
-use otter_core::{PushReceipt, PushRequest, RecordKey, Rejection, Result, canonical_json, invalid};
+use otter_core::{
+    ChannelCheckpoint, PushReceipt, PushRequest, RecordKey, Rejection, Result, canonical_json,
+    invalid,
+};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -126,9 +129,7 @@ impl<S: ClientStore> Engine<'_, S> {
             .collect();
         let existing = self.checkpoints(push)?;
         if !existing.is_empty() {
-            let mut incoming = receipt.required_checkpoints.clone();
-            incoming.sort_by(|a, b| a.channel.cmp(&b.channel));
-            if incoming != existing {
+            if self.awaitable(&receipt.required_checkpoints)? != existing {
                 return Err(invalid("receipt changed"));
             }
             return Ok(());
@@ -146,23 +147,42 @@ impl<S: ClientStore> Engine<'_, S> {
         }
         self.remove_rejected(&receipt.rejections)?;
         let remaining = self.queued()?.into_iter().any(|q| q.push == Some(push));
-        if receipt.required_checkpoints.is_empty() || !remaining {
+        let awaited = self.awaitable(&receipt.required_checkpoints)?;
+        if awaited.is_empty() || !remaining {
             if remaining {
                 self.settle_push(push)?;
             }
             return Ok(());
         }
-        self.insert_checkpoints(push, &receipt.required_checkpoints)?;
+        self.insert_checkpoints(push, &awaited)?;
         self.settle()
+    }
+    /// The checkpoints this client can ever meet: only a subscribed channel has a
+    /// cursor that advances, so a checkpoint on any other channel cannot be awaited
+    /// and is dropped, which settles the push as if the receipt had not named it.
+    fn awaitable(&mut self, checkpoints: &[ChannelCheckpoint]) -> Result<Vec<ChannelCheckpoint>> {
+        let mut awaited = vec![];
+        for cp in checkpoints {
+            if self.cursor(&cp.channel)?.is_some() {
+                awaited.push(cp.clone());
+            }
+        }
+        awaited.sort_by(|a, b| a.channel.cmp(&b.channel));
+        Ok(awaited)
     }
     /// Settle the accepted prefix of frozen pushes.
     pub fn settle(&mut self) -> Result<()> {
+        self.settle_satisfied(&BTreeSet::new())
+    }
+    /// `satisfied` names acknowledged pushes whose last checkpoint row was just
+    /// deleted (an unsubscribe); without it they would read as in flight forever.
+    pub fn settle_satisfied(&mut self, satisfied: &BTreeSet<u64>) -> Result<()> {
         loop {
             let Some(push) = self.pushes()?.into_iter().next() else {
                 return Ok(());
             };
             let checkpoints = self.checkpoints(push)?;
-            if checkpoints.is_empty() {
+            if checkpoints.is_empty() && !satisfied.contains(&push) {
                 return Ok(()); // in flight; nothing later may settle first
             }
             for cp in &checkpoints {

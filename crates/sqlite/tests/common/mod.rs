@@ -43,6 +43,11 @@ pub fn page(channel: &str, from: u64, to: u64, text: Option<&str>) -> PullPage {
         }],
     }
 }
+/// Only a subscribed channel may be pulled: `apply_page` drops a page for any other.
+pub fn subscribe(c: &mut Client<SqliteStore>, channel: &str) {
+    c.transaction(|tx| tx.set_channel(channel.into(), true))
+        .unwrap();
+}
 pub fn seed(c: &mut Client<SqliteStore>, text: &str) {
     c.transaction(|tx| {
         tx.direct(Operation {

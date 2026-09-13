@@ -344,6 +344,11 @@ impl<S: ClientStore> Engine<'_, S> {
                 self.set_authority(&key, None)?;
             }
         }
-        self.delete_subscription(channel)
+        self.delete_subscription(channel)?;
+        // Nothing will advance this channel's cursor again, so a push waiting on it
+        // would wait forever: drop those checkpoints and settle what they were holding.
+        let awaiting = self.pushes_awaiting(channel)?;
+        self.delete_channel_checkpoints(channel)?;
+        self.settle_satisfied(&awaiting)
     }
 }

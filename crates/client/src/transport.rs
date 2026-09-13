@@ -30,8 +30,9 @@ impl SyncCycle {
             self.active = Some(action.clone());
             return Ok(Some(action));
         }
-        let mut channels = client.desired_channels()?;
-        channels.extend(client.checkpoint_channels()?);
+        // Subscribed channels only: a pull on any other channel would be discarded by
+        // `apply_page`, and a checkpoint the client cannot await settles on arrival.
+        let channels = client.desired_channels()?;
         if let Some(channel) = channels.iter().find(|c| !self.completed.contains(*c)) {
             let request = PullRequest {
                 client_id: client.client_id().into(),

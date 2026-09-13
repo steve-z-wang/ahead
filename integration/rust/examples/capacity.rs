@@ -25,6 +25,9 @@ fn main() {
                 state: json!({"text":"authority","note":null}),
             }],
         };
+        client
+            .transaction(|tx| tx.set_channel("book".into(), true))
+            .unwrap();
         client.apply_page(page(0, 1)).unwrap();
         let mut samples = Vec::new();
         for i in 0..count {

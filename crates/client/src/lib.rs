@@ -206,7 +206,12 @@ impl<S: ClientStore> Client<S> {
         ));
         match applied.and_then(|value| self.fence().map(|()| value)) {
             Ok(value) => {
-                self.store.commit()?;
+                // A failed COMMIT leaves the transaction open; without this rollback
+                // every later `begin` would fail. The commit error is what we report.
+                if let Err(e) = self.store.commit() {
+                    let _ = self.store.rollback();
+                    return Err(e);
+                }
                 self.generation += 1;
                 changed.insert("otter_client".into());
                 self.notify(changed);
@@ -291,7 +296,12 @@ impl<S: ClientStore> Client<S> {
             self.store.rollback()?;
             return Err(e);
         }
-        self.store.commit()?;
+        // The session is already taken; a failed COMMIT must also close the
+        // transaction, or every later `begin` would fail. Report the commit error.
+        if let Err(e) = self.store.commit() {
+            let _ = self.store.rollback();
+            return Err(e);
+        }
         self.generation += 1;
         let mut changed = session.changed;
         changed.insert("otter_client".into());

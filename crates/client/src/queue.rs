@@ -365,6 +365,22 @@ impl<S: ClientStore> Engine<'_, S> {
         )?;
         Ok(())
     }
+    /// The pushes waiting on `channel`, taken before its checkpoint rows are deleted.
+    pub fn pushes_awaiting(&mut self, channel: &str) -> Result<BTreeSet<u64>> {
+        let rows = self.rows(
+            "SELECT DISTINCT push FROM otter_push_checkpoint WHERE channel=?",
+            &[json!(channel)],
+        )?;
+        rows.rows.iter().map(|r| as_u64(&r[0])).collect()
+    }
+    pub fn delete_channel_checkpoints(&mut self, channel: &str) -> Result<()> {
+        self.exec(
+            "otter_push_checkpoint",
+            "DELETE FROM otter_push_checkpoint WHERE channel=?",
+            &[json!(channel)],
+        )?;
+        Ok(())
+    }
     pub fn checkpoint_channels(&mut self) -> Result<BTreeSet<String>> {
         let rows = self.rows("SELECT DISTINCT channel FROM otter_push_checkpoint", &[])?;
         Ok(rows.rows.iter().map(|r| text(&r[0])).collect())

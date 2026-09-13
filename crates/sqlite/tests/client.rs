@@ -108,6 +108,7 @@ fn watch_fires_only_for_declared_tables() {
 fn session_reads_own_writes_without_notifying_until_commit_and_blocks_other_writes() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = open(&dir.path().join("db"));
+    subscribe(&mut c, "book");
     seed(&mut c, "A");
     let events = c.watch(BTreeSet::from(["Entry".to_string()]));
     c.begin_session().unwrap();
@@ -279,6 +280,8 @@ fn creating_then_editing_a_record_automatically_has_lifecycle_dependency() {
 fn unsubscribe_drops_records_nobody_else_claims_and_restarts_from_zero() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = open(&dir.path().join("db"));
+    subscribe(&mut c, "a");
+    subscribe(&mut c, "b");
     c.apply_page(page("a", 0, 1, Some("A"))).unwrap();
     c.apply_page(page("b", 0, 1, Some("B"))).unwrap();
     let mut other = page("a", 1, 2, Some("O"));

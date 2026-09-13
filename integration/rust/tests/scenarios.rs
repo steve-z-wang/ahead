@@ -97,7 +97,13 @@ impl Host for Backend {
     }
 }
 fn open(path: &std::path::Path) -> Client<SqliteStore> {
-    Client::open(SqliteStore::open(path).unwrap(), schema()).unwrap()
+    let mut client = Client::open(SqliteStore::open(path).unwrap(), schema()).unwrap();
+    // Only a subscribed channel is pulled and applied. A reopen keeps the row, so
+    // this is one write per database; the repeat call finds the row and does nothing.
+    client
+        .transaction(|tx| tx.set_channel("book".into(), true))
+        .unwrap();
+    client
 }
 fn edit(client: &mut Client<SqliteStore>, text: &str) {
     client

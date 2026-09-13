@@ -21,6 +21,7 @@ fn offline_queue_and_frozen_bytes_survive_restart_and_ack_waits_for_pull() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("client.sqlite");
     let mut c = open(&path);
+    subscribe(&mut c, "book");
     c.apply_page(page("book", 0, 1, Some("A"))).unwrap();
     c.transaction(|tx| {
         tx.enqueue(mutation("B"))?;
@@ -51,6 +52,7 @@ fn offline_queue_and_frozen_bytes_survive_restart_and_ack_waits_for_pull() {
 fn pull_before_ack_and_later_local_edit_replay_in_order() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = open(&dir.path().join("db"));
+    subscribe(&mut c, "book");
     c.apply_page(page("book", 0, 1, Some("A"))).unwrap();
     c.transaction(|tx| {
         tx.enqueue(mutation("B"))?;
@@ -75,6 +77,7 @@ fn rejection_removes_optimism_preserves_direct_truth_and_has_durable_inbox() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("db");
     let mut c = open(&path);
+    subscribe(&mut c, "book");
     c.apply_page(page("book", 0, 1, Some("A"))).unwrap();
     c.transaction(|tx| {
         tx.enqueue(mutation("B"))?;
@@ -114,6 +117,8 @@ fn rejection_removes_optimism_preserves_direct_truth_and_has_durable_inbox() {
 fn accepted_batches_only_settle_in_ready_prefix() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = open(&dir.path().join("db"));
+    subscribe(&mut c, "book");
+    subscribe(&mut c, "slow");
     c.apply_page(page("book", 0, 1, Some("A"))).unwrap();
     c.transaction(|tx| {
         tx.enqueue(mutation("B"))?;
@@ -144,6 +149,7 @@ fn accepted_batches_only_settle_in_ready_prefix() {
 fn failed_prerequisite_stays_optimistic_independent_work_can_overtake() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = open(&dir.path().join("db"));
+    subscribe(&mut c, "book");
     c.apply_page(page("book", 0, 1, Some("A"))).unwrap();
     c.transaction(|tx| {
         let mut m = mutation("B");
@@ -167,6 +173,7 @@ fn failed_prerequisite_stays_optimistic_independent_work_can_overtake() {
 fn lifecycle_dependency_waits_for_parent_ack_but_sequence_can_share_batch() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = open(&dir.path().join("db"));
+    subscribe(&mut c, "book");
     c.apply_page(page("book", 0, 1, Some("A"))).unwrap();
     c.transaction(|tx| {
         let parent = tx.enqueue(mutation("B"))?;
@@ -187,6 +194,7 @@ fn lifecycle_dependency_waits_for_parent_ack_but_sequence_can_share_batch() {
 fn accepted_wire_rows_do_not_promote_companion_over_server_authority() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = open(&dir.path().join("db"));
+    subscribe(&mut c, "book");
     c.apply_page(page("book", 0, 1, Some("A"))).unwrap();
     c.transaction(|tx| {
         let mut m = mutation("B");
@@ -211,6 +219,7 @@ fn schema_requirements_create_durable_tasks_and_gate_only_dependent_mutation() {
     value["prerequisites"] = json!([{"name":"Upload","fields":[{"name":"key","type":"String"}]}]);
     let schema = Schema::from_value(value).unwrap();
     let mut c = Client::open(SqliteStore::open(&path).unwrap(), schema.clone()).unwrap();
+    subscribe(&mut c, "book");
     c.apply_page(page("book", 0, 1, Some("A"))).unwrap();
     c.transaction(|tx| {
         tx.enqueue(Mutation::new(
@@ -239,6 +248,7 @@ fn schema_requirements_create_durable_tasks_and_gate_only_dependent_mutation() {
 fn byte_budget_skips_large_candidate_but_always_allows_one() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = open(&dir.path().join("db"));
+    subscribe(&mut c, "book");
     c.apply_page(page("book", 0, 1, Some("A"))).unwrap();
     c.transaction(|tx| {
         tx.enqueue(mutation("small"))?;
@@ -345,6 +355,7 @@ fn accepted_companion_cascade_does_not_resurrect_descendants() {
 fn late_task_completion_does_not_resurrect_unused_readiness() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = open(&dir.path().join("db"));
+    subscribe(&mut c, "book");
     c.apply_page(page("book", 0, 1, Some("A"))).unwrap();
     let ordinal = c
         .transaction(|tx| {
@@ -363,6 +374,7 @@ fn late_task_completion_does_not_resurrect_unused_readiness() {
 fn record_status_reports_phases_and_duplicate_ack_is_idempotent() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = open(&dir.path().join("db"));
+    subscribe(&mut c, "book");
     c.apply_page(page("book", 0, 1, Some("A"))).unwrap();
     c.transaction(|tx| tx.enqueue(mutation("B"))).unwrap();
     assert_eq!(

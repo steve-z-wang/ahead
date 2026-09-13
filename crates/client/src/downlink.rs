@@ -56,12 +56,27 @@ impl<S: ClientStore> Engine<'_, S> {
             return Ok(());
         }
         if is_delete {
-            self.set_authority(&key, None)?;
-            self.claim_remove(channel, &key)?;
-            if self.claims(&key)?.is_empty() {
-                self.drop_record(&key)?;
-            } else {
-                self.set_record_stamp(&key, change.stamp.unwrap_or(local))?;
+            match change.stamp {
+                // An unstamped delete carries no order, and the server emits one both
+                // for a true delete and for a record that merely left this channel.
+                // It may therefore release only the delivering channel's claim; the
+                // record goes when the last claim does. No stamp is written.
+                None => {
+                    self.claim_remove(channel, &key)?;
+                    if self.claims(&key)?.is_empty() {
+                        self.set_authority(&key, None)?;
+                        self.drop_record(&key)?;
+                    }
+                }
+                Some(stamp) => {
+                    self.set_authority(&key, None)?;
+                    self.claim_remove(channel, &key)?;
+                    if self.claims(&key)?.is_empty() {
+                        self.drop_record(&key)?;
+                    } else {
+                        self.set_record_stamp(&key, stamp)?;
+                    }
+                }
             }
         } else {
             self.set_authority(&key, incoming)?;
@@ -76,7 +91,16 @@ impl<S: ClientStore> Client<S> {
     /// Per-change commits; a failing change is skipped and the cursor still advances (reference behavior).
     pub fn apply_page(&mut self, page: PullPage) -> Result<ApplyReport> {
         page.validate()?;
-        let current = self.cursor(&page.channel)?;
+        // A subscription row exists iff the client is subscribed. Applying a page for
+        // any other channel would insert one through `set_cursor` and re-claim every
+        // record it carries, so a page for an unsubscribed channel - a pull still in
+        // flight when the unsubscribe committed - is dropped without writing anything.
+        let Some(current) = self.view(|e| e.cursor(&page.channel))? else {
+            return Ok(ApplyReport {
+                stale: true,
+                ..Default::default()
+            });
+        };
         if page.to_cursor <= current {
             return Ok(ApplyReport {
                 stale: true,

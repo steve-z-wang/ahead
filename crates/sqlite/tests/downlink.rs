@@ -14,14 +14,16 @@ fn stamped(channel: &str, from: u64, to: u64, stamp: u64, text: Option<&str>) ->
 fn channel_claims_and_cross_channel_delete() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = open(&dir.path().join("db"));
-    c.apply_page(page("a", 0, 1, Some("A"))).unwrap();
-    c.apply_page(page("b", 0, 1, Some("B"))).unwrap();
+    subscribe(&mut c, "a");
+    subscribe(&mut c, "b");
+    c.apply_page(stamped("a", 0, 1, 1, Some("A"))).unwrap();
+    c.apply_page(stamped("b", 0, 1, 2, Some("B"))).unwrap();
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
     assert_eq!(table_count(&mut c, "otter_claim"), 2);
-    c.apply_page(page("a", 1, 2, None)).unwrap();
+    c.apply_page(stamped("a", 1, 2, 3, None)).unwrap();
     assert!(
         c.read(&key()).unwrap().is_none(),
-        "delete applies across channels"
+        "a stamped delete applies across channels"
     );
     assert_eq!(
         table_count(&mut c, "otter_claim"),
@@ -29,7 +31,7 @@ fn channel_claims_and_cross_channel_delete() {
         "b's claim is the pending tombstone confirmation"
     );
     assert_eq!(table_count(&mut c, "otter_record"), 1);
-    c.apply_page(page("b", 1, 2, None)).unwrap();
+    c.apply_page(stamped("b", 1, 2, 4, None)).unwrap();
     assert_eq!(table_count(&mut c, "otter_claim"), 0);
     assert_eq!(
         table_count(&mut c, "otter_record"),
@@ -44,6 +46,8 @@ fn channel_claims_and_cross_channel_delete() {
 fn older_stamp_cannot_regress_newer_authority_but_keeps_claim_bookkeeping() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = open(&dir.path().join("db"));
+    subscribe(&mut c, "a");
+    subscribe(&mut c, "b");
     c.apply_page(stamped("b", 0, 1, 11, Some("NEW"))).unwrap();
     let report = c.apply_page(stamped("a", 0, 1, 10, Some("OLD"))).unwrap();
     assert_eq!(
@@ -71,6 +75,8 @@ fn older_stamp_cannot_regress_newer_authority_but_keeps_claim_bookkeeping() {
 fn equal_stamp_is_idempotent_or_a_diagnostic() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = open(&dir.path().join("db"));
+    subscribe(&mut c, "a");
+    subscribe(&mut c, "b");
     c.apply_page(stamped("a", 0, 1, 5, Some("X"))).unwrap();
     let same = c.apply_page(stamped("b", 0, 1, 5, Some("X"))).unwrap();
     assert_eq!(same.conflicts, 0);
@@ -86,6 +92,7 @@ fn equal_stamp_is_idempotent_or_a_diagnostic() {
 fn newer_authority_lands_beneath_pending_edits_and_replays_them() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = open(&dir.path().join("db"));
+    subscribe(&mut c, "book");
     c.apply_page(page("book", 0, 1, Some("A"))).unwrap();
     c.transaction(|tx| {
         tx.enqueue(mutation("B"))?;
@@ -105,6 +112,7 @@ fn newer_authority_lands_beneath_pending_edits_and_replays_them() {
 fn original_bad_change_skip_policy_is_retained() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = open(&dir.path().join("db"));
+    subscribe(&mut c, "book");
     c.apply_page(page("book", 0, 1, Some("A"))).unwrap();
     let mut bad = page("book", 1, 2, Some("B"));
     bad.changes[0].state = json!({"text":22});
@@ -128,6 +136,7 @@ fn delete_cascades_to_descendants_and_their_claims() {
         family_schema(),
     )
     .unwrap();
+    subscribe(&mut c, "lib");
     let book = |cursor, state| PullPage {
         channel: "lib".into(),
         from_cursor: cursor - 1,
@@ -159,4 +168,79 @@ fn delete_cascades_to_descendants_and_their_claims() {
     assert!(c.query("Comment", &json!({})).unwrap().is_empty());
     assert_eq!(table_count(&mut c, "otter_claim"), 0);
     assert_eq!(table_count(&mut c, "otter_record"), 0);
+}
+
+#[test]
+fn unstamped_delete_releases_one_claim_and_removes_on_last() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    subscribe(&mut c, "a");
+    subscribe(&mut c, "b");
+    c.apply_page(page("a", 0, 1, Some("A"))).unwrap();
+    c.apply_page(page("b", 0, 1, Some("B"))).unwrap();
+    assert_eq!(table_count(&mut c, "otter_claim"), 2);
+    c.apply_page(page("a", 1, 2, None)).unwrap();
+    assert_eq!(
+        c.read(&key()).unwrap().unwrap()["text"],
+        "B",
+        "an unstamped delete carries no order and may only release a's claim"
+    );
+    assert_eq!(table_count(&mut c, "otter_claim"), 1);
+    assert_eq!(table_count(&mut c, "otter_record"), 1);
+    c.apply_page(page("b", 1, 2, None)).unwrap();
+    assert!(
+        c.read(&key()).unwrap().is_none(),
+        "the last claim released removes the record"
+    );
+    assert_eq!(table_count(&mut c, "otter_claim"), 0);
+    assert_eq!(table_count(&mut c, "otter_record"), 0);
+}
+
+#[test]
+fn unsubscribing_settles_its_checkpoint_and_later_pages_are_dropped() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    subscribe(&mut c, "a");
+    c.apply_page(page("a", 0, 1, Some("A"))).unwrap();
+    c.transaction(|tx| tx.enqueue(mutation("B"))).unwrap();
+    c.freeze().unwrap().unwrap();
+    c.acknowledge(
+        1,
+        PushReceipt {
+            required_channel: "a".into(),
+            required_cursor: 9,
+            required_checkpoints: vec![ChannelCheckpoint {
+                channel: "a".into(),
+                cursor: 9,
+            }],
+            rejections: vec![],
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        c.pending_count().unwrap(),
+        1,
+        "the push waits for cursor 9 on a"
+    );
+    c.transaction(|tx| tx.set_channel("a".into(), false))
+        .unwrap();
+    assert_eq!(
+        c.pending_count().unwrap(),
+        0,
+        "nothing will advance that cursor again, so the push settles"
+    );
+    assert_eq!(table_count(&mut c, "otter_push_checkpoint"), 0);
+    assert_eq!(table_count(&mut c, "otter_subscription"), 0);
+    let entries = table_count(&mut c, "Entry");
+    let report = c.apply_page(page("a", 0, 1, Some("X"))).unwrap();
+    assert!(
+        report.stale,
+        "a page for an unsubscribed channel is dropped whole"
+    );
+    assert_eq!(
+        table_count(&mut c, "otter_subscription"),
+        0,
+        "applying a page never subscribes"
+    );
+    assert_eq!(table_count(&mut c, "Entry"), entries);
 }
