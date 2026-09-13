@@ -68,7 +68,7 @@ The compiler emits `generated/backend.ts` next to the existing client output. It
 - `interface Handlers<Tx>`: one method per mutation, named in lower camel case from the mutation name (`AddTask` becomes `addTask`). Signature `(call: HandlerCall<Tx, AddTaskInput>) => Promise<void | { channel: string }>`.
 - `interface Loaders<Tx>`: one method per model, named in lower camel case from the model name. Signature `(call: LoaderCall<Tx, TaskIdentity>) => Promise<readonly (Task | null)[]>`. An optional `prepareForViewer` hook keeps its current shape under `loaderHooks` and stays out of the main documentation.
 - Input types per mutation (`AddTaskInput`), record types (`Task`), identity types (`TaskIdentity`) and patch types (`TaskPatch`), shared with the client output where identical.
-- One reference constructor per model, `Task(identity)`, returning a typed, model-tagged identity for `notify`.
+- One reference constructor per model, `Task(identity)`, returning a typed, model-tagged identity for `notify`. TypeScript allows the function and the record interface to share the name `Task`.
 - Re-exports of `MutationRejected`, `HandlerCall`, `LoaderCall` from `@ottersync/server`.
 
 Handlers and loaders are not grouped by model. A mutation may touch several models; a loader serves exactly one.
@@ -96,7 +96,7 @@ LoaderCall<Tx, Identity> = { ids: readonly Identity[]; tx: Tx; userId: string }
 
 `input` is not flattened into the call object because slot names could collide with framework fields. The previous `(ctx, input)` shape and the names `transaction`, `actorUserId`, `viewerUserId` and the loader's `channel` are removed without aliases; this is a source alpha. A loader's result may depend only on the record and the viewer, never on the channel that triggered the pull.
 
-`notify(target, ...channels)` accepts one target or an array of targets, followed by one or more channel names. A target is a slot argument (already tagged with its model), a generated model reference such as `Book({ id: comment.bookId })` for records outside the input, or a raw `{ model, identity }` object for fully dynamic cases. Calling `notify` several times in one handler is equivalent to one call with an array.
+`notify(target, ...channels)` accepts one target or an array of targets, followed by one or more channel names. A target is a slot argument (already tagged with its model), a generated model reference such as `Book({ id: comment.bookId })` for records outside the input, or a raw `{ model, identity }` object for fully dynamic cases. Calling `notify` several times in one handler is equivalent to one call with an array. It records an invalidation in the current transaction session exactly as the previous `ctx.publish(changes, channels)` did. The name says what it does: it tells subscribers of those channels that the record changed; the content comes from the loader. It returns void; awaiting it is allowed but not required because the session drains outstanding publications before commit.
 
 ```ts
 async addComment({ input: { comment }, tx, notify }) {
@@ -104,7 +104,7 @@ async addComment({ input: { comment }, tx, notify }) {
   await tx.book.update({ where: { id: comment.bookId }, data: { comments: { increment: 1 } } });
   notify([comment, Book({ id: comment.bookId })], "team:demo");
 }
-``` It records an invalidation in the current transaction session exactly as the previous `ctx.publish(changes, channels)` did. The name says what it does: it tells subscribers of those channels that the record changed; the content comes from the loader. It returns void; awaiting it is allowed but not required because the session drains outstanding publications before commit.
+```
 
 ## Channels
 
@@ -148,7 +148,7 @@ createBackend({
 - `createHttpHandler`, `attachLive` exports.
 - `packages/nest`, `integration/nest`, their steps in `scripts/test.sh` and CI, and the Nest rows in documentation. Otter Sync serves its own endpoints; Nest is one of the layers it replaces.
 
-## Kept unchanged
+## Kept, with renames noted
 
 - Rust runtime semantics, storage tables and settlement rules. The only Rust change is dropping the push fallback channel described under Receipt checkpoint.
 - `backend.notify(tx, target, ...channels)` (renamed from `backend.publish`) and `bindTransaction` for background jobs.
