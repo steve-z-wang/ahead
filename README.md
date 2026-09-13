@@ -74,6 +74,7 @@ import {
 const handlers: Handlers<Tx> = {
   async addTodo({ input, tx, notify }) {
     await tx.todo.create({ data: input.todo });
+    // Notify the subscribed clients to reload these records.
     notify({ channel: "todos", records: [input.todo] });
   },
   async completeTodo({ input, tx, notify }) {
@@ -101,12 +102,20 @@ const backend = createBackend({
 await backend.listen({ port: 4242 });
 ```
 
-## What you get
+## How it fits together
 
-- **Offline writes.** Mutations queue locally and are sent in order when a connection is available.
-- **Reads that never wait.** Every read is a local SQLite read, including changes the server has not confirmed yet.
-- **Your transaction, your rules.** A handler can reject a mutation. The client rolls the optimistic change back and keeps the server's state.
-- **No vendor service.** The backend is a function you host. Data lives in your database.
+```mermaid
+flowchart LR
+  App[Your app] -- read, watch --> Local[(Local SQLite)]
+  App -- transaction --> Local
+  Local -- push mutations --> Backend[Your backend]
+  Backend -- handler, in one transaction --> DB[(Your database)]
+  Backend -- notify channel --> Local
+  Local -- pull records --> Backend
+  Backend -- loader --> DB
+```
+
+A mutation lands in local SQLite first, then the connection pushes it to your backend. The handler runs in one database transaction and calls `notify` with the records that changed. Every client subscribed to that channel pulls them, the backend answers through the loader, and local SQLite updates so `watch` fires again. If the handler rejects the mutation, the local change rolls back.
 
 ## Try it
 
@@ -122,10 +131,10 @@ In another terminal:
 node examples/rust-round-trip/client.mts
 ```
 
-Type `edit some text`. The entry prints twice: first the local change, then the server's version. Stop the server, edit again, and start it back up to watch the queue settle. The [example README](examples/rust-round-trip/README.md) walks through the setup.
+Type `edit some text`. The entry prints twice: first the local change, then the server's version. Stop the server, edit again, and start it back up to watch the queue settle. See the [example README](examples/rust-round-trip/README.md).
 
 ## Status
 
-Ahead is a source alpha. There is no package release and no license grant yet. The client runs on native macOS through Node and Dart; browser and mobile builds are separate targets.
+Ahead is a source alpha with no package release and no license yet. It runs on macOS through Node and Dart.
 
-Everything else lives on the [documentation site](website/README.md): concepts, the wire protocol, testing, and the architecture decisions behind the Rust core.
+[Documentation](website/README.md)
