@@ -9,15 +9,22 @@ Ahead is a library, not a service. Mutations settle in your own database transac
 ### 1. Describe the local data and the mutations it sends to the backend
 
 ```
-model Todo {
-  id    String
-  title String
-  done  Boolean
+model User {
+  id   String
+  name String
   @@id(id)
 }
 
-mutation AddTodo      { todo Todo.create }
-mutation CompleteTodo { todo Todo.update<done> }
+model Todo {
+  id         String
+  title      String
+  done       Boolean
+  assigneeId String?
+  @@id(id)
+}
+
+mutation AddTodo    { todo Todo.create }
+mutation AssignTodo { todo Todo.update<assigneeId> }
 ```
 
 The compiler turns this file into a typed client for TypeScript and Dart, and into `Handlers` and `Loaders` types for the backend.
@@ -34,10 +41,10 @@ client.models.todo.watch({ where: { done: false } }, (todos) => render(todos));
 // Write, inside a transaction.
 await client.transaction(async (tx) => {
   await tx.mutate.addTodo({
-    todo: { id: "t1", title: "Buy milk", done: false },
+    todo: { id: "t1", title: "Buy milk", done: false, assigneeId: null },
   });
-  await tx.mutate.completeTodo({
-    todo: { identity: { id: "t1" }, values: { done: true } },
+  await tx.mutate.assignTodo({
+    todo: { identity: { id: "t1" }, values: { assigneeId: "bob" } },
   });
 });
 ```
@@ -66,6 +73,7 @@ The connection sends queued mutations when the network allows, retries on its ow
 import {
   createBackend,
   devAuth,
+  MutationRejected,
   type Handlers,
   type Loaders,
 } from "./generated/backend.ts";
@@ -78,18 +86,20 @@ const handlers: Handlers<Tx> = {
     // Notify the subscribed clients to reload these records.
     notify({ channel: "todos", records: [input.todo] });
   },
-  async completeTodo({ input, tx, notify }) {
-    await tx.todo.update({
-      where: input.todo.identity,
-      data: input.todo.patch,
-    });
+  async assignTodo({ input, tx, notify }) {
+    const { identity, patch } = input.todo;
+    const user = await tx.user.findUnique({ where: { id: patch.assigneeId! } });
+    if (!user) throw new MutationRejected("user.unknown");
 
+    await tx.todo.update({ where: identity, data: patch });
     notify({ channel: "todos", records: [input.todo] });
   },
 };
 
 // Implement the loaders from the generated interface, one per model.
 const loaders: Loaders<Tx> = {
+  user: ({ ids, tx }) =>
+    Promise.all(ids.map((identity) => tx.user.findUnique({ where: identity }))),
   todo: ({ ids, tx }) =>
     Promise.all(ids.map((identity) => tx.todo.findUnique({ where: identity }))),
 };
