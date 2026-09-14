@@ -69,6 +69,8 @@ nav:
       - Contributing:
           - Contribute to the docs: contributing/documentation.md
           - Testing: contributing/testing.md
+          - Guarantees and proofs: contributing/guarantees.md
+          - Testing strategy: contributing/testing-strategy.md
   - GitHub: https://github.com/steve-z-wang/ahead
 validation:
   links:
