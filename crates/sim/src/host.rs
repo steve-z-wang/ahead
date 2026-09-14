@@ -1,9 +1,9 @@
 //! The server's persistence, in memory. Mirrors packages/persistence-prisma/index.mts
-//! closely enough that otter_server cannot tell the difference: per-client receipts,
+//! closely enough that ahead_server cannot tell the difference: per-client receipts,
 //! per-channel heads, one invalidation row per (channel, record) carrying the latest
 //! cursor and stamp, and one stamp counter per record.
-use otter_core::{PushRequest, RecordKey};
-use otter_server::Host;
+use ahead_core::{PushRequest, RecordKey};
+use ahead_server::Host;
 use serde_json::{Map, Value, json};
 use std::{
     collections::BTreeMap,
@@ -251,7 +251,7 @@ impl MemHost {
                 s.handler_invocations.len(),
             )
         };
-        let result = block_on(otter_server::process_push(
+        let result = block_on(ahead_server::process_push(
             &crate::schema::config(),
             owner,
             bytes,
@@ -281,7 +281,7 @@ impl MemHost {
         self.0.lock().unwrap().savepoints.len()
     }
     pub fn pull(&self, owner: &str, bytes: &[u8]) -> Result<String, String> {
-        block_on(otter_server::process_pull(
+        block_on(ahead_server::process_pull(
             &crate::schema::config(),
             owner,
             bytes,
@@ -412,7 +412,7 @@ impl Host for MemHost {
     fn call(
         &self,
         r: Value,
-    ) -> Pin<Box<dyn Future<Output = otter_server::Result<Value>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = ahead_server::Result<Value>> + Send + '_>> {
         Box::pin(async move {
             let mut s = self.0.lock().unwrap();
             let op = r["op"].as_str().unwrap_or("");
@@ -577,13 +577,13 @@ impl Host for MemHost {
 mod tests {
     use super::*;
     use crate::schema::{self, entry_key};
-    use otter_core::{PullPage, PullRequest, PushReceipt};
+    use ahead_core::{PullPage, PullRequest, PushReceipt};
 
-    fn push_bytes(client_id: &str, sequence: u64, mutation: &otter_client::Mutation) -> Vec<u8> {
+    fn push_bytes(client_id: &str, sequence: u64, mutation: &ahead_client::Mutation) -> Vec<u8> {
         let m = serde_json::to_value(mutation).unwrap();
         let ops = &m["operations"];
         let body = json!({"clientId":client_id,"batchSequence":sequence,"mutations":[{"ordinal":1,"name":mutation.name,"version":1,"operations":ops}]});
-        otter_core::PushRequest::decode(otter_core::canonical_json(&body).unwrap().as_bytes())
+        ahead_core::PushRequest::decode(ahead_core::canonical_json(&body).unwrap().as_bytes())
             .unwrap()
             .encode()
             .unwrap()

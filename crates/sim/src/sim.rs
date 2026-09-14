@@ -6,9 +6,9 @@ use crate::{
     rng::Rng,
     schema,
 };
-use otter_client::{Client, Operation, OperationKind};
-use otter_core::{PullPage, PullRequest, PushReceipt, PushRequest, RecordKey};
-use otter_sqlite::SqliteStore;
+use ahead_client::{Client, Operation, OperationKind};
+use ahead_core::{PullPage, PullRequest, PushReceipt, PushRequest, RecordKey};
+use ahead_sqlite::SqliteStore;
 use serde_json::json;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -53,7 +53,7 @@ impl MutationSpec {
             | MutationSpec::DeleteComment { id } => schema::comment_key(id),
         }
     }
-    pub fn build(&self) -> otter_client::Mutation {
+    pub fn build(&self) -> ahead_client::Mutation {
         match self {
             MutationSpec::CreateEntry { id, text } => schema::create_entry(id, text),
             MutationSpec::Edit { id, text } => schema::edit(id, text),

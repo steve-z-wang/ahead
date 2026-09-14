@@ -1,6 +1,6 @@
 //! Guarantees P1–P6 on the simulation.
-use otter_core::PushReceipt;
-use otter_sim::{Action, MutationSpec, Sim, schema::entry_key};
+use ahead_core::PushReceipt;
+use ahead_sim::{Action, MutationSpec, Sim, schema::entry_key};
 
 fn setup(seed: u64) -> Sim {
     let mut sim = Sim::new(seed, 1);
@@ -71,7 +71,7 @@ fn p2_contiguous_sequence_and_server_refuses_gap_and_overlap() {
     let id = sim.client(0).client_id().to_string();
     let batch = |seq: u64| {
         let body = serde_json::json!({"clientId":id,"batchSequence":seq,"mutations":[{"ordinal":99,"name":"Edit","version":1,"operations":[{"model":"Entry","op":"update","identity":{"id":"e1"},"values":{"text":"z"}}]}]});
-        otter_core::PushRequest::decode(otter_core::canonical_json(&body).unwrap().as_bytes())
+        ahead_core::PushRequest::decode(ahead_core::canonical_json(&body).unwrap().as_bytes())
             .unwrap()
             .encode()
             .unwrap()
@@ -111,10 +111,10 @@ fn p3_lifecycle_dependent_waits_for_the_parent_receipt() {
     sim.apply(Action::Freeze { client: 0 }).unwrap();
     assert_eq!(sim.net.len(), 1);
     let bytes = match sim.net.pop().unwrap() {
-        otter_sim::net::Message::Push { bytes, .. } => bytes,
+        ahead_sim::net::Message::Push { bytes, .. } => bytes,
         _ => unreachable!(),
     };
-    let first = otter_core::PushRequest::decode(&bytes).unwrap();
+    let first = ahead_core::PushRequest::decode(&bytes).unwrap();
     assert_eq!(
         first.mutations.len(),
         1,
@@ -132,7 +132,7 @@ fn p3_lifecycle_dependent_waits_for_the_parent_receipt() {
         "freeze retries the parent's unacknowledged push rather than sending nothing"
     );
     let retried = match sim.net.pop().unwrap() {
-        otter_sim::net::Message::Push { bytes, .. } => bytes,
+        ahead_sim::net::Message::Push { bytes, .. } => bytes,
         _ => unreachable!(),
     };
     assert_eq!(
@@ -141,7 +141,7 @@ fn p3_lifecycle_dependent_waits_for_the_parent_receipt() {
         "the retry is byte-identical to the parent's push; the child never entered a batch"
     );
     // Re-send the parent and let it through.
-    sim.net.send(otter_sim::net::Message::Push {
+    sim.net.send(ahead_sim::net::Message::Push {
         client: 0,
         bytes: first.encode().unwrap(),
     });
@@ -204,7 +204,7 @@ fn p5_rejection_rolls_back_and_rejects_dependents() {
         "parent rolled back"
     );
     assert_eq!(
-        sim.read_text(0, &otter_sim::schema::comment_key("c1")),
+        sim.read_text(0, &ahead_sim::schema::comment_key("c1")),
         None,
         "dependent rolled back"
     );
@@ -225,10 +225,10 @@ fn p6_handler_failure_aborts_the_batch_and_the_client_retries() {
     sim.apply(Action::FailNext).unwrap();
     sim.apply(Action::Freeze { client: 0 }).unwrap();
     let bytes = match sim.net.pop().unwrap() {
-        otter_sim::net::Message::Push { bytes, .. } => bytes,
+        ahead_sim::net::Message::Push { bytes, .. } => bytes,
         _ => unreachable!(),
     };
-    sim.net.send(otter_sim::net::Message::Push {
+    sim.net.send(ahead_sim::net::Message::Push {
         client: 0,
         bytes: bytes.clone(),
     });

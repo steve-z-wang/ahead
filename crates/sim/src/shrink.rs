@@ -130,7 +130,7 @@ mod tests {
     /// all) and that still fails with the identical "record rows have a claim" key -
     /// a genuinely more minimal reproduction than task-10-report.md's, since a
     /// pending mutation's operation record apparently disappears from
-    /// `otter_mutation_operation` the moment a `Direct` write lands on it, whether or
+    /// `ahead_mutation_operation` the moment a `Direct` write lands on it, whether or
     /// not the original create is later accepted or rejected. `key` matching
     /// correctly keeps this reduction (it is the same invariant, not a different
     /// bug), it just cannot single out one specific *mechanism* by which that

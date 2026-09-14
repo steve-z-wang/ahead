@@ -1,6 +1,6 @@
 //! R2: random operation sequences with every invariant checked after every step.
 //! Default is quick; SIM_SEEDS and SIM_STEPS scale it up for a long run.
-use otter_sim::Sim;
+use ahead_sim::Sim;
 
 fn env(name: &str, default: usize) -> usize {
     std::env::var(name)
@@ -52,7 +52,7 @@ fn every_run_ends_converged_after_settle() {
         let mut sim = Sim::new(seed, 2);
         sim.generate_direct = false;
         for i in 0..2 {
-            sim.apply(otter_sim::Action::Subscribe {
+            sim.apply(ahead_sim::Action::Subscribe {
                 client: i,
                 channel: "a".into(),
             })
@@ -60,8 +60,8 @@ fn every_run_ends_converged_after_settle() {
         }
         for step in 0..80 {
             if let Err(error) = sim.step() {
-                let minimal = otter_sim::shrink::shrink(seed, 2, sim.trace.clone());
-                let failure = otter_sim::Failure {
+                let minimal = ahead_sim::shrink::shrink(seed, 2, sim.trace.clone());
+                let failure = ahead_sim::Failure {
                     seed,
                     step,
                     error,
@@ -72,7 +72,7 @@ fn every_run_ends_converged_after_settle() {
             }
         }
         for i in 0..2 {
-            sim.apply(otter_sim::Action::Restart { client: i }).unwrap();
+            sim.apply(ahead_sim::Action::Restart { client: i }).unwrap();
         }
         sim.settle();
         sim.check().unwrap_or_else(|e| panic!("seed {seed}: {e}"));

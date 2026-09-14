@@ -1,5 +1,5 @@
 //! Guarantees A1–A5 on the simulation.
-use otter_sim::{Action, MutationSpec, Sim, schema::entry_key};
+use ahead_sim::{Action, MutationSpec, Sim, schema::entry_key};
 
 fn setup(seed: u64) -> Sim {
     let mut sim = Sim::new(seed, 1);
@@ -63,7 +63,7 @@ fn a1_server_value_overrides_optimism_and_later_edits_replay() {
     );
     let base = sim
         .client(0)
-        .read_sql("SELECT text FROM otter_before_Entry", &[])
+        .read_sql("SELECT text FROM ahead_before_Entry", &[])
         .unwrap();
     assert_eq!(
         base[0]["text"], "MINE",
@@ -165,7 +165,7 @@ fn a4_handler_without_a_channel_aborts_the_batch() {
     sim.apply(Action::Deliver).unwrap();
     assert!(matches!(
         sim.net.pop(),
-        Some(otter_sim::net::Message::PushFailed { .. })
+        Some(ahead_sim::net::Message::PushFailed { .. })
     ));
     assert!(
         sim.host.state(&entry_key("e9")).is_none(),

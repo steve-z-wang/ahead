@@ -1,5 +1,5 @@
 //! Guarantees D1–D6 from docs/guarantees.md as named scenarios on the simulation.
-use otter_sim::{Action, MutationSpec, Sim, schema::entry_key};
+use ahead_sim::{Action, MutationSpec, Sim, schema::entry_key};
 
 fn subscribe(sim: &mut Sim, client: usize, channels: &[&str]) {
     for c in channels {
@@ -194,7 +194,7 @@ fn d5_delete_across_channels_keeps_a_tombstone_until_every_claim_confirms() {
     );
     let tomb = sim
         .client(0)
-        .read_sql("SELECT stamp FROM otter_record WHERE model='Entry'", &[])
+        .read_sql("SELECT stamp FROM ahead_record WHERE model='Entry'", &[])
         .unwrap();
     assert_eq!(tomb.len(), 1);
     pull(&mut sim, 0, "a"); // a's page carries only its latest row: the delete at stamp 5
@@ -208,7 +208,7 @@ fn d5_delete_across_channels_keeps_a_tombstone_until_every_claim_confirms() {
     );
     let tomb = sim
         .client(0)
-        .read_sql("SELECT stamp FROM otter_record WHERE model='Entry'", &[])
+        .read_sql("SELECT stamp FROM ahead_record WHERE model='Entry'", &[])
         .unwrap();
     assert!(
         tomb.is_empty(),

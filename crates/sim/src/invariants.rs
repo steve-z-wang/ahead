@@ -1,7 +1,7 @@
 //! What must be true after every step. Each check reads the clients and the host;
 //! none of them mutates anything except the high-water marks on Sim.
 use crate::Sim;
-use otter_core::PushReceipt;
+use ahead_core::PushReceipt;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
@@ -45,7 +45,7 @@ fn stamps_never_decrease(sim: &mut Sim) -> Result<(), String> {
             let rows = sim
                 .client(i)
                 .read_sql(
-                    "SELECT stamp FROM otter_record WHERE model = ? AND identity = ?",
+                    "SELECT stamp FROM ahead_record WHERE model = ? AND identity = ?",
                     &[json!(key.model), json!(key.encoded_identity().unwrap())],
                 )
                 .map_err(|e| e.to_string())?;
@@ -201,7 +201,7 @@ fn claims_belong_to_subscriptions(sim: &mut Sim) -> Result<(), String> {
             .collect();
         let rows = sim
             .client(i)
-            .read_sql("SELECT DISTINCT channel FROM otter_claim", &[])
+            .read_sql("SELECT DISTINCT channel FROM ahead_claim", &[])
             .map_err(|e| e.to_string())?;
         for r in rows {
             let c = r["channel"].as_str().unwrap_or("").to_string();
@@ -220,9 +220,9 @@ fn record_rows_have_a_claim(sim: &mut Sim) -> Result<(), String> {
         for model in ["Entry", "Comment"] {
             let sql = format!(
                 "SELECT r.id AS id FROM \"{model}\" r WHERE NOT EXISTS \
-                 (SELECT 1 FROM otter_claim c WHERE c.model = '{model}' \
+                 (SELECT 1 FROM ahead_claim c WHERE c.model = '{model}' \
                  AND c.identity = json_object('id', r.id)) \
-                 AND NOT EXISTS (SELECT 1 FROM otter_mutation_operation o \
+                 AND NOT EXISTS (SELECT 1 FROM ahead_mutation_operation o \
                  WHERE o.model = '{model}' AND o.identity = json_object('id', r.id))"
             );
             let rows = sim
