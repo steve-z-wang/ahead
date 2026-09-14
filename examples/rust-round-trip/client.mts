@@ -5,9 +5,9 @@ import { GeneratedClient, httpTransport } from "./generated/client.ts";
 
 // Open the local database and start syncing with the backend.
 const client = await GeneratedClient.open({
-  path: resolve(process.env.OTTER_DATABASE ?? "example-client.sqlite"),
+  path: resolve(process.env.AHEAD_DATABASE ?? "example-client.sqlite"),
   transport: httpTransport({
-    url: process.env.OTTER_URL ?? "http://127.0.0.1:4242",
+    url: process.env.AHEAD_URL ?? "http://127.0.0.1:4242",
     token: "demo-user",
   }),
   connection: { onError: (error) => console.error(`sync: ${String(error)}`) },
@@ -19,7 +19,7 @@ client.models.entry.watch({}, (rows) => console.log(rows[0] ?? null));
 
 const terminal = createInterface({ input: stdin, output: stdout });
 console.log(
-  "Commands: edit TEXT | status | quit. Edits apply locally at once and sync in the background.",
+  "Commands: edit TEXT | offline | online | status | quit. Edits apply locally at once and sync in the background.",
 );
 try {
   for (;;) {
@@ -32,6 +32,12 @@ try {
             entry: { identity: { id: "entry-1" }, values: { text: line.slice(5) } },
           }),
         );
+      } else if (line === "offline") {
+        await client.connection!.pause();
+        console.log("Sync paused. Local reads and writes remain available.");
+      } else if (line === "online") {
+        await client.connection!.resume();
+        console.log("Sync resumed.");
       } else if (line === "status") console.log(await client.status());
     } catch (error) {
       console.error(String(error));

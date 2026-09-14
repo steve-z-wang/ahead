@@ -7,13 +7,13 @@ Each entry lists:
 - **Primary**: the test that exercises the guarantee's own logic, or `unproven`.
 - **Supporting**: tests that prove a layer above or below does not break it.
 
-Paths are `file::test name`. This page is the map; `docs/testing.md` describes the layers and how to add a case.
+Paths are `file::test name`. This page is the map; [testing strategy](testing-strategy.md) describes the layers and how to add a case.
 
 ## Summary
 
 Eight groups. The first five are the sync engine and belong to the simulation; the last three are edges and belong to the layer they name.
 
-Status on 2026-09-13, against the tests on `main` after #15 and #21: **20 proven, 12 partial, 2 unproven**. The two unproven are D1 (two clients converging) and S3 (three clients, identical state); every test today drives one client. `partial` means a primary test exists but a named clause is not asserted; the note under the entry says which. Several proofs live only in the PostgreSQL suite (P2, P6, A4, C4) and have no in-process counterpart; the simulation crate is where they move.
+Proof inventory recorded on 2026-09-13: **20 proven, 12 partial, 2 unproven**. The two unproven are D1 (two clients converging) and S3 (three clients, identical state); every test today drives one client. `partial` means a primary test exists but a named clause is not asserted; the note under the entry says which. Several proofs live only in the PostgreSQL suite (P2, P6, A4, C4) and have no in-process counterpart; the simulation crate is where they move.
 
 **L. Local writes** — what a transaction promises before anything reaches the network.
 
@@ -341,7 +341,7 @@ Primary:
 - crates/sqlite/tests/downlink.rs::older_stamp_cannot_regress_newer_authority_but_keeps_claim_bookkeeping
 - crates/sqlite/tests/downlink.rs::equal_stamp_is_idempotent_or_a_diagnostic
 - crates/sqlite/tests/stamp_scenarios.rs::delayed_page_from_another_channel_cannot_regress_newer_content
-- crates/core/tests/contracts.rs::field_default_and_record_stamp_round_trip_and_otter_prefix_is_rejected (page without stamp refused)
+- crates/core/tests/contracts.rs::field_default_and_record_stamp_round_trip_and_ahead_prefix_is_rejected (page without stamp refused)
 - crates/server/tests/stamp.rs::pull_rejects_rows_without_a_positive_stamp
 
 Supporting:

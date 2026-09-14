@@ -1,6 +1,8 @@
-# Testing
+# Testing strategy
 
-`docs/guarantees.md` says what the framework promises and where each promise is proven. This page says how the test suite is organized to produce those proofs, and how to add one.
+This page describes the planned test organization. The simulation and conformance runners below are proposed work; see [running the current tests](testing.md) for commands available in this checkout. Simulation implementation is tracked in [PR #34](https://github.com/zanminwang/ahead/pull/34).
+
+[guarantees](guarantees.md) says what the framework promises and where each promise is proven. This page says how the test suite is organized to produce those proofs, and how to add one.
 
 ## Principle
 
@@ -48,18 +50,18 @@ fixtures/
   scenarios/          conformance scripts and expected state          read by S3 runner
 ```
 
-`cargo test --workspace` runs everything under `crates/`, including `sim`, with no external services, in under a minute. That is the local subset. `scripts/test.sh` adds `integration/` and needs Node, Dart, Python and PostgreSQL on the host; run it before a PR and in CI.
+`cargo test --workspace` is the local subset and requires no external services. Once the simulation crate lands, it will run in this subset too. The target runtime is under a minute. `scripts/test.sh` adds `integration/` and needs Node, Dart, Python and PostgreSQL on the host; run it before a PR and in CI.
 
 ## Simulation crate
 
-`crates/sim` is the arena for the sync engine. It exists because client and server are pure Rust state machines behind host callbacks, so N clients and one server can run in one process with no network and no database.
+`crates/sim` is the arena for the sync engine. The design uses client and server as pure Rust state machines behind host callbacks, so N clients and one server can run in one process with no network and no database.
 
 ### Parts
 
 | Part | What it is |
 | --- | --- |
 | Clients | `Client<SqliteStore>`, one temporary SQLite file each. Real files, so "crash" is dropping the client and reopening the same path, and DDL reconciliation is on the path too. |
-| Server | `otter_server` over an in-memory host that implements claim, receipt, head, scan, load, publish. The one in `integration/rust/tests/scenarios.rs` is the starting point. PostgreSQL semantics are proven separately in `integration/persistence`. |
+| Server | `ahead_server` over an in-memory host that implements claim, receipt, head, scan, load, publish. The one in `integration/rust/tests/scenarios.rs` is the starting point. PostgreSQL semantics are proven separately in `integration/persistence`. |
 | Network | Two queues, requests and responses. No clock. Delay is "not delivered this step"; reorder, duplicate and drop are queue operations chosen by the RNG. |
 | RNG | One seeded generator; every random choice comes from it, so a seed reproduces a run exactly. |
 | Trace | The list of actions taken. Printed on failure; used by the shrinker. |
@@ -113,14 +115,14 @@ Two models with one relation (an `Entry` with `Comment` children), two or three 
 
 1. Port the three `fixtures/scenarios` cases from `crates/sqlite/tests/stamp_scenarios.rs` as the first named scenarios. This fixes the harness API.
 2. Add the random invariant runner.
-3. Fill the remaining named scenarios for every `unproven` and `partial` entry in `docs/guarantees.md`.
+3. Fill the remaining named scenarios for every `unproven` and `partial` entry in [guarantees](guarantees.md).
 4. Delete `integration/rust/tests/scenarios.rs`; its 64 interleavings are a subset of what the runner covers.
 
 ## Adding a test
 
 Ask which guarantee it proves. If none, it is either a unit test for a pure function (put it next to that function) or a translation test for a binding (put it in `integration/bindings`, and keep it about translation).
 
-- **A new guarantee**: add the entry to `docs/guarantees.md` first, with `unproven`, then write the primary proof, then update the entry.
+- **A new guarantee**: add the entry to [guarantees](guarantees.md) first, with `unproven`, then write the primary proof, then update the entry.
 - **A new clause of an existing guarantee**: a named scenario in the matching `crates/sim/tests/*.rs`, named after the clause.
 - **A new invariant**: add it to the sim's invariant list; every existing seed now checks it.
 - **A conformance case**: a script under `fixtures/scenarios/<name>/` with expected final state; the runner picks it up in all three languages.
@@ -134,5 +136,5 @@ Every layer prints test names on failure: `cargo test` natively, `node --test` a
 
 ## What is not here
 
-- Performance measurements: `docs/performance.md` (#12). The `sim` harness is reused for workloads, but numbers are a diagnostic, not a gate.
+- Performance measurements: [performance work](https://github.com/zanminwang/ahead/issues/12). The `sim` harness is reused for workloads, but numbers are a diagnostic, not a gate.
 - Connection lifecycle (wake, backoff, close): unit tests in `crates/client`, plus one translation test per binding. Not a guarantee in the list because it is a scheduling policy, not a correctness property.

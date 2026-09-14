@@ -1,7 +1,7 @@
-use otter_client::ClientStore;
-use otter_client::ddl::{FRAMEWORK_DDL, FRAMEWORK_TABLES, reconcile};
-use otter_core::Schema;
-use otter_sqlite::SqliteStore;
+use ahead_client::ClientStore;
+use ahead_client::ddl::{FRAMEWORK_DDL, FRAMEWORK_TABLES, reconcile};
+use ahead_core::Schema;
+use ahead_sqlite::SqliteStore;
 use serde_json::{Value, json};
 
 fn schema(fields: Value) -> Schema {
@@ -26,7 +26,7 @@ fn columns(s: &mut SqliteStore, table: &str) -> Vec<(String, String, i64)> {
         })
         .collect()
 }
-fn open(dir: &tempfile::TempDir, schema: &Schema) -> otter_core::Result<SqliteStore> {
+fn open(dir: &tempfile::TempDir, schema: &Schema) -> ahead_core::Result<SqliteStore> {
     let mut s = SqliteStore::open(dir.path().join("db")).unwrap();
     s.execute_batch(FRAMEWORK_DDL).unwrap();
     s.begin().unwrap();
@@ -55,7 +55,7 @@ fn creates_model_before_and_framework_tables() {
         ]
     );
     assert_eq!(
-        columns(&mut s, "otter_before_Task"),
+        columns(&mut s, "ahead_before_Task"),
         columns(&mut s, "Task")
     );
     for table in FRAMEWORK_TABLES {
@@ -90,7 +90,7 @@ fn adds_missing_columns_to_both_tables_and_keeps_unknown_ones() {
     let mut s = open(&dir, &schema(Value::Array(fields))).unwrap();
     let names: Vec<String> = columns(&mut s, "Task").into_iter().map(|c| c.0).collect();
     assert_eq!(names, vec!["id", "title", "done", "legacy", "note", "rank"]);
-    let before: Vec<String> = columns(&mut s, "otter_before_Task")
+    let before: Vec<String> = columns(&mut s, "ahead_before_Task")
         .into_iter()
         .map(|c| c.0)
         .collect();

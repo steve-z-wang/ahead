@@ -1,7 +1,7 @@
 mod common;
+use ahead_client::*;
+use ahead_sqlite::SqliteStore;
 use common::*;
-use otter_client::*;
-use otter_sqlite::SqliteStore;
 use serde_json::json;
 
 #[test]
@@ -122,7 +122,7 @@ fn transport_pulls_only_subscribed_channels_and_unawaitable_checkpoints_settle()
         0,
         "a checkpoint on a channel nothing pulls cannot be awaited, so the push settles"
     );
-    assert_eq!(table_count(&mut c, "otter_push_checkpoint"), 0);
+    assert_eq!(table_count(&mut c, "ahead_push_checkpoint"), 0);
     let first = cycle.next(&mut c).unwrap().unwrap();
     assert_eq!(first.kind, "pull");
     let request = PullRequest::decode(first.body.as_bytes()).unwrap();

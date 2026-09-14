@@ -1,78 +1,45 @@
 ---
 hide:
+  - navigation
   - toc
 ---
 
-<div class="otter-intro" markdown="1">
-
 # Ahead
 
-<p class="otter-lead">Ahead is a schema-driven framework for building local-first apps with your own backend.</p>
+Ahead is a schema-driven framework for building local-first apps with your own backend.
 
-<p class="otter-platforms">Clients: TypeScript · Flutter<br>Backend: TypeScript</p>
+Define your records and mutations once. Ahead generates typed client calls and backend interfaces, keeps local state in SQLite, and synchronizes through your handlers and loaders.
 
-[See the API](project.md#build-with-ahead){ .md-button .md-button--primary }
-[Compare frameworks](project.md#how-ahead-compares-with-other-sync-frameworks){ .md-button }
+- **Schema-driven.** Describe your models and local mutations in one contract.
+- **Typed end to end.** Generate client APIs and backend read/write interfaces together.
+- **Works offline.** Read and write locally; pending changes persist until they can sync.
+- **Your backend.** Keep your business logic and database. No vendor cloud service required.
 
-</div>
+## Start here
 
-- **Schema-driven.** Define your models and local mutations in a schema. Ahead handles the local state changes.
-- **Type-safe end to end.** Get typed client calls and backend read/write interfaces from the same schema.
-- **Works offline.** Read and write local SQLite without a connection. Ahead persists changes and syncs in the background.
-- **Your backend.** Implement your own read and write logic and choose your database. No vendor cloud service required.
+[Run the getting-started tutorial](getting-started.md) to make a local edit, work offline and see your backend accept or reject a mutation.
 
-## Build with Ahead
-
-<div class="otter-guide-grid" markdown="1">
-
-<div markdown="1">
-
-### 1. Define your schema
-
-Describe your models and local write operations. Ahead generates the client APIs and typed backend interfaces.
-
-[Schema guide](crates/compiler/README.md)
-
-</div>
-<div markdown="1">
-
-### 2. Read and write locally
-
-Call the generated client to read and update local data. Watch queries to update your UI when the data changes.
-
-[TypeScript](packages/client-js/README.md) · [Flutter](packages/dart/README.md)
-
-</div>
-<div markdown="1">
-
-### 3. Implement your backend
-
-Implement handlers for writes and loaders for reads through the generated interfaces. Use your own business logic and database.
-
-[Backend guide](packages/server/README.md)
-
-</div>
-
-</div>
-
-## Local state, background sync
-
-Writes take effect locally, so your app can read the updated data without waiting for the network. Ahead saves pending writes and syncs them with your backend when connected. If the backend rejects a mutation, its local changes roll back.
-
-[View the architecture](project.md#local-state-background-sync) · [Read the concepts](concepts.md)
-
-## Current support
-
-| Layer | Supported today |
+| What you need | Read |
 | --- | --- |
-| Frontend / client | [TypeScript](packages/client-js/README.md) · [Flutter](packages/dart/README.md) |
-| Backend | [TypeScript](packages/server/README.md) |
-| Database adapter | [Prisma with PostgreSQL](packages/persistence-prisma/README.md) |
+| Define records and mutations | [Schema guide](schema/define.md) |
+| Use the client | [Client setup](frontend/setup.md) |
+| Implement handlers and loaders | [Backend guide](backend/setup.md) |
+| Understand local state and sync | [Concepts](concepts.md) |
+| Look up a method, type or option | [API reference](api-index.md) |
+| Handle offline work and failures | [Sync and recovery](frontend/sync.md) |
 
-The TypeScript client and backend currently run on Node.js. The clients use native runtimes; browser support is not yet implemented. See [platform validation](integration/platform/README.md) for tested environments.
+## Supported integrations
 
-Need another language, runtime, or database adapter? [Request support](https://github.com/steve-z-wang/ahead/issues/new). More integrations can be added.
+| Layer | Available integration |
+| --- | --- |
+| Client | TypeScript · Flutter |
+| Backend | TypeScript |
+| Backend database adapter | Prisma / PostgreSQL; custom [transactional adapters](backend/database.md) |
 
-## Project status
+The TypeScript client and backend currently run on Node.js. Clients use native Rust bindings; browser support is not implemented. See [platform validation](frontend/platforms.md) for tested environments and mobile setup.
 
-Ahead is an early alpha. Packages have not been published, and a license has not yet been added. Mobile runtime support is not yet verified; see [implementation status](docs/implementation-progress.md) for current coverage.
+Packages are currently used from source. Follow the tutorial's repository commands rather than installing an unpublished package. Need another language, runtime or database adapter? [Request support](https://github.com/zanminwang/ahead/issues/new).
+
+## Project
+
+[GitHub](https://github.com/zanminwang/ahead) · [Framework comparison](https://github.com/zanminwang/ahead/blob/main/README.md#how-ahead-compares-with-other-sync-frameworks) · [Issues](https://github.com/zanminwang/ahead/issues) · [Contribute to the documentation](contributing/documentation.md)

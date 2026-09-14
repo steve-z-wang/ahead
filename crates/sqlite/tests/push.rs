@@ -1,7 +1,7 @@
 mod common;
+use ahead_client::*;
+use ahead_sqlite::SqliteStore;
 use common::*;
-use otter_client::*;
-use otter_sqlite::SqliteStore;
 use serde_json::json;
 
 fn receipt(channel: &str, cursor: u64) -> PushReceipt {
@@ -39,11 +39,11 @@ fn offline_queue_and_frozen_bytes_survive_restart_and_ack_waits_for_pull() {
     );
     c.acknowledge(1, receipt("book", 2)).unwrap();
     assert_eq!(c.pending_count().unwrap(), 1);
-    assert_eq!(table_count(&mut c, "otter_push_checkpoint"), 1);
+    assert_eq!(table_count(&mut c, "ahead_push_checkpoint"), 1);
     c.apply_page(page("book", 1, 2, Some("NORMALIZED")))
         .unwrap();
     assert_eq!(c.pending_count().unwrap(), 0);
-    assert_eq!(table_count(&mut c, "otter_push_checkpoint"), 0);
+    assert_eq!(table_count(&mut c, "ahead_push_checkpoint"), 0);
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "NORMALIZED");
     assert_eq!(c.before_image_count().unwrap(), 0);
 }
@@ -99,7 +99,7 @@ fn rejection_removes_optimism_preserves_direct_truth_and_has_durable_inbox() {
         json!({"id":"e","text":"A","note":"local"})
     );
     assert_eq!(
-        table_count(&mut c, "otter_push_checkpoint"),
+        table_count(&mut c, "ahead_push_checkpoint"),
         0,
         "all rejected settles at once"
     );
@@ -367,7 +367,7 @@ fn late_task_completion_does_not_resurrect_unused_readiness() {
     c.drop_mutation(ordinal).unwrap();
     c.set_readiness("upload", Readiness::Ready).unwrap();
     assert!(c.pending_tasks().unwrap().is_empty());
-    assert_eq!(table_count(&mut c, "otter_mutation_prerequisite"), 0);
+    assert_eq!(table_count(&mut c, "ahead_mutation_prerequisite"), 0);
 }
 
 #[test]

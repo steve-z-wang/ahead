@@ -1,6 +1,6 @@
 //! Server protocol orchestration. Host calls run in the application's outer transaction.
 pub mod live;
-use otter_core::{
+use ahead_core::{
     ChannelCheckpoint, PullPage, PullRequest, PushReceipt, PushRequest, RecordChange, Rejection,
     Schema, read_counter,
 };
@@ -129,7 +129,7 @@ fn err(e: impl std::fmt::Display) -> String {
 fn version(body: &Value) -> Option<u64> {
     read_counter(body.get("version").unwrap_or(&json!(1)), true).ok()
 }
-fn invalid<T>(r: otter_core::Result<T>) -> Result<T> {
+fn invalid<T>(r: ahead_core::Result<T>) -> Result<T> {
     r.map_err(|_| "mutation.invalid".into())
 }
 pub fn decode_arguments(config: &Value, body: &Value) -> Result<Value> {

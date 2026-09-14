@@ -116,7 +116,7 @@ impl Schema {
         }
         for model in &self.models {
             if model.name.is_empty()
-                || model.name.starts_with("otter_")
+                || model.name.starts_with("ahead_")
                 || !names.insert(model.name.as_str())
                 || model.identity.is_empty()
             {

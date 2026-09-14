@@ -1,0 +1,243 @@
+# Generated client
+
+This page covers the TypeScript and Dart APIs emitted by the schema compiler. Follow [getting started](../getting-started.md) for a running backend, or [generate your interfaces](../schema/define.md) first.
+
+Choose TypeScript or Flutter above a code example to switch languages throughout the page. Flutter examples use Dart.
+
+Examples below assume an `Entry` model with `id`, `text` and nullable `note`, and an `Edit` mutation whose `entry` slot updates `text` and `note`. TypeScript imports come from `generated/client.ts`; Dart imports come from `generated/generated.dart`.
+
+## Open a client
+
+=== "TypeScript"
+
+    ```ts
+    import { GeneratedClient } from './generated/client.ts';
+
+    const client = await GeneratedClient.open({
+      path: 'local.sqlite',
+    });
+    ```
+
+=== "Flutter"
+
+    ```dart
+    import 'generated/generated.dart';
+
+    final client = await GeneratedClient.open(
+      path: 'local.sqlite',
+      libraryPath: '/absolute/path/to/libahead_dart.dylib',
+    );
+    ```
+
+Both examples open local storage. To start background sync, supply a transport as shown in [client setup](setup.md#connect-to-your-backend).
+
+| Option | Required | Behavior |
+| --- | --- | --- |
+| `path` | Yes | SQLite file to create or reopen. The application selects a writable directory. Use a separate file per signed-in user. |
+| `transport` | No | Starts background sync when supplied. Without it, reads and local writes still work. |
+| `connection` (TypeScript) | No | `onError` and `refreshAuth` callbacks for the background connection. |
+| `onError`, `refreshAuth` (Dart) | No | The same callbacks, passed directly to `open`. |
+| `libraryPath` (Dart) | Outside iOS | Absolute native library path; iOS can use symbols linked into the process. |
+| `migration` | No | Defaults and optional cursor rewind for an explicitly changed schema. See [runtime migration](runtime.md#opening-and-schema-changes). |
+
+Returns `Promise<GeneratedClient>` / `Future<GeneratedClient>`. Opening can fail on native library loading, an unwritable or incompatible database, or an invalid schema. Completion means local storage is open, not that initial server data has arrived.
+
+## Model APIs
+
+### Get a record
+
+=== "TypeScript"
+
+    ```ts
+    const entry = await client.models.entry.get({ id: 'entry-1' });
+    console.log(entry?.text);
+    ```
+
+=== "Flutter"
+
+    ```dart
+    final entry = await client.models.entry.get(
+      const EntryIdentity(id: 'entry-1'),
+    );
+    print(entry?.text);
+    ```
+
+`get(identity)` returns the complete typed record or `null` when it is absent from local storage. It does not call the backend loader. A newly opened cache can return `null` until channel synchronization supplies the record.
+
+### Query records
+
+=== "TypeScript"
+
+    ```ts
+    const entries = await client.models.entry.query({
+      where: { note: null },
+      orderBy: [{ field: 'text', direction: 'ascending' }],
+      limit: 20,
+    });
+    ```
+
+=== "Flutter"
+
+    ```dart
+    final entries = await client.models.entry.query(
+      where: const EntryFilter(note: Present(null)),
+      orderBy: const [EntryOrder(EntryOrderField.byText)],
+      limit: 20,
+    );
+    ```
+
+Returns a typed list. `where` is an equality filter; supplied fields must all match. An omitted filter selects all local records of that model. `orderBy` is a list of fields and ascending/descending directions; Dart expresses descending order with `descending: true`. `limit` caps the result. Do not rely on an unspecified row order. These generated filters are not a general SQL expression language.
+
+### Watch records
+
+=== "TypeScript"
+
+    ```ts
+    const stop = client.models.entry.watch(
+      { where: { note: null } },
+      entries => console.log(entries),
+      error => console.error(error),
+    );
+    // When the view is disposed:
+    stop();
+    ```
+
+=== "Flutter"
+
+    ```dart
+    final subscription = client.models.entry
+        .watch(where: const EntryFilter(note: Present(null)))
+        .listen(print, onError: (Object error) => print(error));
+    // When the view is disposed:
+    await subscription.cancel();
+    ```
+
+TypeScript returns an unsubscribe function; Dart returns `Stream<List<Entry>>`. A listener receives an initial query result and distinct results after committed local changes, including sync changes. Identical query results are suppressed. `watch` accepts equality filters, not `query`'s ordering or limit options. It reports current query results, not a log of every intermediate write.
+
+### Follow a relation
+
+The compiler emits relation methods only for relationships declared in the schema. A forward relation returns the related record or `null`; an inverse collection returns a list. Methods take the source model's identity, and read the local database.
+
+For a `Comment.book` relationship, `client.models.comment.book(commentIdentity)` follows the forward reference. The [relations fixture](https://github.com/zanminwang/ahead/blob/main/fixtures/compiler/relations.model) defines `Book.comments` and `Comment.book`; the [generated API checks](https://github.com/zanminwang/ahead/blob/main/integration/generated-api/verify.sh) exercise those accessors. A singular inverse needs a unique foreign key; an ambiguous inverse is rejected during compilation.
+
+## Transactions
+
+=== "TypeScript"
+
+    ```ts
+    const ordinal = await client.transaction(async tx => {
+      return tx.mutate.edit({
+        entry: { identity: { id: 'entry-1' }, values: { text: 'Draft' } },
+      });
+    });
+    ```
+
+=== "Flutter"
+
+    ```dart
+    final ordinal = await client.transaction((tx) async {
+      return tx.mutate.edit(
+        entry: const EditEntryUpdate(
+          identity: EntryIdentity(id: 'entry-1'),
+          text: Present('Draft'),
+        ),
+      );
+    });
+    ```
+
+`transaction<T>(callback)` returns the callback's result after local commit. Throwing or a failed operation rolls it back. Await each operation, including nested callbacks; unfinished work is rejected. Inside the callback, use `tx.models` for reads that must see earlier writes in the same transaction. Calling the outer `client` for a read from inside its transaction can wait behind that transaction.
+
+`GeneratedTransaction` exposes `models`, `mutate`, and the underlying `transaction` port. For raw SQL or nested savepoints, use the [runtime Transaction API](runtime.md#transactions-and-savepoints); these methods are not all declared on the TypeScript generated `WritePort`.
+
+## Mutations
+
+`tx.mutate.edit(args)` returns the mutation's local ordinal (`number` / `int`). This identifies queued work; it is not a backend result or confirmation. Its declared changes apply in local storage immediately, and the backend later runs the matching handler.
+
+| Schema slot | TypeScript argument | Backend input |
+| --- | --- | --- |
+| `Entry.create` | Complete `Entry` record | Complete record |
+| `Entry.update<text,note>` | `{ identity, values }` with permitted patch fields | `{ identity, patch }` |
+| `Entry.delete` | `EntryIdentity` | Identity |
+| Optional slot (`?`) | Optional slot value | Optional value |
+| List slot (`[]`) | Array of slot values | Array of decoded values |
+
+Dart generates typed slot classes such as `EditEntryUpdate`. Use `Present` for fields you intend to change. The compiler gives each named mutation a method with a lower-case first letter: `Edit` becomes `edit`. Several slots can participate in one mutation, and several mutations can be enqueued inside one local transaction. Each mutation still has its own backend handler and acceptance/rejection outcome.
+
+The backend handler's implementation can differ from the declared local operation. It may normalize input, enforce permissions, or write several business tables. [Notifications and loaders](../backend/api.md) tell the client the resulting server state.
+
+## Local-only writes
+
+=== "TypeScript"
+
+    ```ts
+    await client.transaction(async tx => {
+      await tx.models.entry.create({ id: 'draft', text: 'Only here', note: null });
+      await tx.models.entry.update({ id: 'draft' }, { note: 'Remember this' });
+      await tx.models.entry.delete({ id: 'draft' });
+    });
+    ```
+
+=== "Flutter"
+
+    ```dart
+    await client.transaction((tx) async {
+      const id = EntryIdentity(id: 'draft');
+      await tx.models.entry.create(
+        const Entry(id: 'draft', text: 'Only here', note: null),
+      );
+      await tx.models.entry.update(id, const EntryPatch(note: Present('Remember this')));
+      await tx.models.entry.delete(id);
+    });
+    ```
+
+`create(record)`, `update(identity, patch)` and `delete(identity)` return `Promise<void>` / `Future<void>`. They change local storage without enqueueing a backend mutation. Use `tx.mutate` for changes that must reach your backend. Invalid identities, field values, references or uniqueness constraints can reject a local write and roll back the transaction.
+
+## Channels
+
+=== "TypeScript"
+
+    ```ts
+    await client.channels.subscribe('book:demo');
+    await client.channels.unsubscribe('book:demo');
+    ```
+
+=== "Flutter"
+
+    ```dart
+    await client.channels.subscribe('book:demo');
+    await client.channels.unsubscribe('book:demo');
+    ```
+
+These operations persist the desired subscription and wake a running connection. Subscribing does not wait for all records to arrive. Use `watch` to observe the initial pull and later changes.
+
+A channel name must match what your backend notifies. A subscription is a request for data; loaders must still enforce read permissions. Unsubscribing stops desired synchronization; it does not erase the entire local cache. See [sync and recovery](sync.md) for checkpoint and account-change behavior.
+
+## Status and lifecycle
+
+- `client.status()` returns runtime diagnostics, including pending count and rejections. It does not send network requests.
+- `client.connection` is the optional connection created by `open`. It is `undefined` / `null` when no transport was supplied. See [connection controls](runtime.md#connection-controls).
+- `client.client` exposes the generic runtime for methods such as `recordStatus` or `runPrerequisites`.
+- `await client.close()` stops the connection and releases the local database handle. Close the client when its owning application scope ends; cancel individual watchers when their views end. Calls after close fail.
+
+## Generated data types
+
+| Type or helper | Meaning |
+| --- | --- |
+| `Entry` | Complete state, including its identity fields. A nullable field is still present in a complete record. |
+| `EntryIdentity` | Only the fields declared in `@@id`; composite identities contain every key field. |
+| `EntryPatch` | Only editable non-identity fields. Omission leaves a field unchanged; explicit `null` clears a nullable field. |
+| `EditArgs` (TypeScript) | Typed argument object for `Edit`; update slots use `values`. |
+| `EditEntryUpdate` (Dart) | Typed update slot, with identity and `Present`-wrapped changed fields. |
+| `EntryFilter` (Dart) | Typed equality filter. `Present(null)` explicitly filters for null. |
+| `EntryOrderField`, `EntryOrder` (Dart) | Typed ordering field and direction. |
+| `Present<T>` (Dart) | Distinguishes omission from an explicitly supplied value, including null. |
+
+UUID fields are strings; DateTime fields use language date/time values and encode to UTC strings. Avoid integers outside the JSON/JavaScript safe range. See the [schema compiler reference](../schema/reference.md) for the supported field types.
+
+## Extension points
+
+`ReadPort` declares `read`, `querySpec`, `related`, and `referencing`. `WritePort` adds `direct` and `mutate`. TypeScript `LivePort` adds `watch`; Dart live models use the runtime `Client`. These are forwarding contracts, not alternate storage engines supplied automatically by the generator.
+
+TypeScript exports model classes (`EntryModel`, `EntryLiveModel`, `EntryTxModel`), `Mutate`, `LiveModels`, `TxModels`, `liveModels(port)`, `txModels(port)` and `GeneratedTransaction`. Dart exposes corresponding facade classes. Construct these only when adapting an existing compatible port; normal applications obtain them through `GeneratedClient`.
+
+TypeScript's `encodeEntry`, `decodeEntry`, `encodeEntryIdentity`, `encodeEntryPatch` and `encodeEntryWhere`, and Dart's `toRecord`/`fromRecord`, perform wire conversions. They assume schema-compatible data; casts in generated decoders are not a substitute for validating arbitrary untrusted input. Standalone mutation builders (`Edit(args)` in TypeScript, `edit(...)` in Dart) build operation descriptors; they do not enqueue them until a runtime receives them.

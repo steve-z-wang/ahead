@@ -1,7 +1,7 @@
 # Ahead
 
-[![Verify](https://github.com/steve-z-wang/ahead/actions/workflows/verify.yml/badge.svg?branch=main)](https://github.com/steve-z-wang/ahead/actions/workflows/verify.yml)
-[![Documentation](https://github.com/steve-z-wang/ahead/actions/workflows/docs.yml/badge.svg?branch=main)](https://github.com/steve-z-wang/ahead/actions/workflows/docs.yml)
+[![Verify](https://github.com/zanminwang/ahead/actions/workflows/verify.yml/badge.svg?branch=main)](https://github.com/zanminwang/ahead/actions/workflows/verify.yml)
+[![Documentation](https://github.com/zanminwang/ahead/actions/workflows/docs.yml/badge.svg?branch=main)](https://github.com/zanminwang/ahead/actions/workflows/docs.yml)
 
 Ahead is a schema-driven framework for building local-first apps with your own backend.
 
@@ -10,27 +10,31 @@ Ahead is a schema-driven framework for building local-first apps with your own b
 - **Works offline.** Read and write local SQLite without a connection. Ahead persists changes and syncs in the background.
 - **Your backend.** Implement your own read and write logic and choose your database. No vendor cloud service required.
 
-## Current support
+## Why local-first?
 
-| Layer | Supported today |
-| --- | --- |
-| Frontend / client | [TypeScript](packages/client-js/README.md) · [Flutter](packages/dart/README.md) |
-| Backend | [TypeScript](packages/server/README.md) |
-| Database adapter | [Prisma with PostgreSQL](packages/persistence-prisma/README.md) |
+Local-first apps read and write data on the device, so everyday interactions don't wait for a network round trip. Users can keep working through a slow or missing connection, with changes saved locally and synchronized when the network is available.
 
-The TypeScript client and backend currently run on Node.js. The clients use native runtimes; browser support is not yet implemented. See [platform validation](integration/platform/README.md) for tested environments.
+## How it works
 
-Need another language, runtime, or database adapter? [Request support](https://github.com/steve-z-wang/ahead/issues/new). More integrations can be added.
+![Ahead architecture: local state and background sync](website/content/assets/architecture.svg)
 
-## Local state, background sync
-
-![Ahead architecture: local state and background sync](docs/architecture.svg)
-
-Generated clients currently sync over HTTP. The WebSocket streaming shown in the diagram is [planned for these clients](https://github.com/steve-z-wang/ahead/issues/35).
+Generated clients currently sync over HTTP. The WebSocket streaming shown in the diagram is [planned for these clients](https://github.com/zanminwang/ahead/issues/35).
 
 On your server, **handlers** process writes and **loaders** read records to send to clients. A **channel** groups record changes for clients to subscribe to; `notify` marks which records changed.
 
 Writes update local SQLite immediately, so reads see changes before sync completes. Changes to local data update query subscriptions (`watch`). If the backend rejects a mutation, its local changes roll back.
+
+## Current support
+
+| Layer | Supported today |
+| --- | --- |
+| Frontend / client | [TypeScript](website/content/frontend/setup.md) · [Flutter](website/content/frontend/setup.md) |
+| Backend | [TypeScript](website/content/backend/setup.md) |
+| Database adapter | [Prisma with PostgreSQL](website/content/backend/prisma.md) |
+
+The TypeScript client and backend currently run on Node.js. The clients use native runtimes; browser support is not yet implemented. See [platform validation](website/content/frontend/platforms.md) for tested environments.
+
+Need another language, runtime, or database adapter? [Request support](https://github.com/zanminwang/ahead/issues/new). More integrations can be added.
 
 ## Build with Ahead
 
@@ -49,7 +53,7 @@ model Todo {
 mutation AddTodo { todo Todo.create }
 ```
 
-The compiler generates the client used below and the backend's `Handlers` and `Loaders` interfaces. See the [schema compiler guide](crates/compiler/README.md) for generation commands.
+The compiler generates the client used below and the backend's `Handlers` and `Loaders` interfaces. See the [schema compiler guide](website/content/schema/reference.md) for generation commands.
 
 ### 2. Read and write locally
 
@@ -94,7 +98,7 @@ Ahead sends queued writes when the network allows, retries failed sync requests,
 
 ### 3. Implement handlers and loaders for your backend
 
-This example uses Prisma with PostgreSQL and the [included database adapter](packages/persistence-prisma/README.md).
+This example uses Prisma with PostgreSQL and the [included database adapter](website/content/backend/prisma.md).
 
 ```ts
 // Handle a write using your database transaction.
@@ -168,4 +172,4 @@ Instant Cloud is closed to new signups and will shut down on August 31, 2027. Yo
 
 Ahead is an early alpha. Packages have not been published, and a license has not yet been added.
 
-[Schema guide](crates/compiler/README.md) · [Client guide](packages/client-js/README.md) · [Backend guide](packages/server/README.md)
+[Schema guide](website/content/schema/reference.md) · [Client guide](website/content/frontend/setup.md) · [Backend guide](website/content/backend/setup.md)

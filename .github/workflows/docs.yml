@@ -28,10 +28,8 @@ jobs:
           cache-dependency-path: website/requirements.txt
       - name: Install documentation dependencies
         run: python -m pip install -r website/requirements.txt
-      - name: Test link preparation
-        run: python -m unittest website/test_prepare.py
-      - name: Stage repository documentation
-        run: python website/prepare.py
+      - name: Test documentation code extraction
+        run: python -m unittest website/test_examples.py
       - name: Build documentation
         run: python -m mkdocs build --strict -f website/mkdocs.yml
       - name: Check generated links and anchors

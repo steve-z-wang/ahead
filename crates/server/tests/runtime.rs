@@ -4,7 +4,7 @@ fn config() -> Value {
 }
 #[test]
 fn ordered_slot_decodes_known_fields_and_ignores_new_fields() {
-    let args=otter_server::decode_arguments(&config(),&json!({"name":"edit","operations":[{"model":"Task","op":"update","identity":{"id":"a","future":1},"values":{"title":"hi","future":true}}]})).unwrap();
+    let args=ahead_server::decode_arguments(&config(),&json!({"name":"edit","operations":[{"model":"Task","op":"update","identity":{"id":"a","future":1},"values":{"title":"hi","future":true}}]})).unwrap();
     assert_eq!(
         args,
         json!({"task":{"identity":{"id":"a"},"patch":{"title":"hi"}}})
@@ -12,12 +12,12 @@ fn ordered_slot_decodes_known_fields_and_ignores_new_fields() {
 }
 #[test]
 fn known_disallowed_patch_is_explicit_refusal() {
-    let err=otter_server::decode_arguments(&config(),&json!({"name":"edit","operations":[{"model":"Task","op":"update","identity":{"id":"a"},"values":{"note":"x"}}]})).unwrap_err();
+    let err=ahead_server::decode_arguments(&config(),&json!({"name":"edit","operations":[{"model":"Task","op":"update","identity":{"id":"a"},"values":{"note":"x"}}]})).unwrap_err();
     assert_eq!(err, "edit.not_allowed");
 }
 #[test]
 fn undeclared_operation_is_invalid() {
-    assert_eq!(otter_server::decode_arguments(&config(),&json!({"name":"edit","operations":[{"model":"Task","op":"delete","identity":{"id":"a"}}]})).unwrap_err(),"mutation.invalid");
+    assert_eq!(ahead_server::decode_arguments(&config(),&json!({"name":"edit","operations":[{"model":"Task","op":"delete","identity":{"id":"a"}}]})).unwrap_err(),"mutation.invalid");
 }
 #[test]
 fn create_binding_mismatch_refuses_the_whole_act() {
@@ -25,7 +25,7 @@ fn create_binding_mismatch_refuses_the_whole_act() {
     c["mutations"] = json!([{"name":"createPair","version":1,"slots":[{"name":"parent","model":"Task","operation":"delete","cardinality":"single"},{"name":"child","model":"Task","operation":"create","cardinality":"single","bindings":[{"relation":"parent","fields":["note"],"slot":"parent"}]}]}]);
     let body = json!({"name":"createPair","operations":[{"model":"Task","op":"delete","identity":{"id":"a"}},{"model":"Task","op":"create","identity":{"id":"b"},"values":{"title":"child","note":"other"}}]});
     assert_eq!(
-        otter_server::decode_arguments(&c, &body).unwrap_err(),
+        ahead_server::decode_arguments(&c, &body).unwrap_err(),
         "create_pair.invalid"
     );
 }
@@ -39,7 +39,7 @@ fn historical_known_field_outside_capability_is_refused() {
         .retain(|f| f["name"] != "note");
     c["mutations"][0]["input"] = input;
     c["mutations"][0]["knownFields"] = json!({"Task":["id","title","note"]});
-    let result = otter_server::decode_arguments(
+    let result = ahead_server::decode_arguments(
         &c,
         &json!({"name":"edit","operations":[{"model":"Task","op":"update","identity":{"id":"a"},"values":{"title":"valid","note":"disallowed"}}]}),
     );
@@ -48,13 +48,13 @@ fn historical_known_field_outside_capability_is_refused() {
 
 #[test]
 fn live_subscribe_requires_one_subscribe_frame_and_normalizes_scopes() {
-    let decoded = otter_server::live::decode_subscribe(
+    let decoded = ahead_server::live::decode_subscribe(
         br#"{"type":"subscribe","scopes":["shared","alice","shared"]}"#,
     )
     .unwrap();
     assert_eq!(decoded, vec!["alice", "shared"]);
-    assert!(otter_server::live::decode_subscribe(br#"{"type":"other","scopes":["a"]}"#).is_err());
-    assert!(otter_server::live::decode_subscribe(br#"{"type":"subscribe","scopes":[]}"#).is_err());
+    assert!(ahead_server::live::decode_subscribe(br#"{"type":"other","scopes":["a"]}"#).is_err());
+    assert!(ahead_server::live::decode_subscribe(br#"{"type":"subscribe","scopes":[]}"#).is_err());
 }
 
 #[test]
@@ -65,12 +65,12 @@ fn live_page_progression_uses_wire_cursor_and_fifty_row_boundary() {
             "syncId":sync_id,"model":"Task","identity":{"id":sync_id},"stamp":sync_id,"state":null
         })).collect::<Vec<_>>()
     });
-    let progress = otter_server::live::page_progress(&full.to_string(), "shared", 7).unwrap();
+    let progress = ahead_server::live::page_progress(&full.to_string(), "shared", 7).unwrap();
     assert_eq!(progress.to_cursor, 57);
     assert!(progress.continues);
 
     let tail = json!({"scope":"shared","fromCursor":57,"toCursor":60,"changes":[]});
-    let progress = otter_server::live::page_progress(&tail.to_string(), "shared", 57).unwrap();
+    let progress = ahead_server::live::page_progress(&tail.to_string(), "shared", 57).unwrap();
     assert_eq!(progress.to_cursor, 60);
     assert!(!progress.continues);
 }
@@ -79,9 +79,9 @@ fn startup_rejects_invalid_patch_capabilities() {
     for fields in [json!(["id"]), json!(["missing"]), json!(["title", "title"])] {
         let mut c = config();
         c["mutations"][0]["slots"][0]["allowedPatchFields"] = fields;
-        assert!(otter_server::Config::decode(c).is_err());
+        assert!(ahead_server::Config::decode(c).is_err());
     }
     let mut c = config();
     c["mutations"][0]["slots"][0]["operation"] = json!("delete");
-    assert!(otter_server::Config::decode(c).is_err());
+    assert!(ahead_server::Config::decode(c).is_err());
 }

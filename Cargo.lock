@@ -3,6 +3,89 @@
 version = 4
 
 [[package]]
+name = "ahead-binding"
+version = "0.1.0"
+dependencies = [
+ "ahead-client",
+ "ahead-core",
+ "ahead-sqlite",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "ahead-client"
+version = "0.1.0"
+dependencies = [
+ "ahead-core",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "ahead-compiler"
+version = "0.1.0"
+dependencies = [
+ "ahead-core",
+ "serde_json",
+]
+
+[[package]]
+name = "ahead-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_jcs",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
+name = "ahead-dart"
+version = "0.1.0"
+dependencies = [
+ "ahead-binding",
+ "serde_json",
+]
+
+[[package]]
+name = "ahead-integration"
+version = "0.1.0"
+dependencies = [
+ "ahead-client",
+ "ahead-core",
+ "ahead-server",
+ "ahead-sqlite",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "ahead-server"
+version = "0.1.0"
+dependencies = [
+ "ahead-core",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "ahead-sqlite"
+version = "0.1.0"
+dependencies = [
+ "ahead-client",
+ "ahead-core",
+ "rusqlite",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -295,89 +378,6 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
-
-[[package]]
-name = "otter-binding"
-version = "0.1.0"
-dependencies = [
- "otter-client",
- "otter-core",
- "otter-sqlite",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "otter-client"
-version = "0.1.0"
-dependencies = [
- "otter-core",
- "serde",
- "serde_json",
- "uuid",
-]
-
-[[package]]
-name = "otter-compiler"
-version = "0.1.0"
-dependencies = [
- "otter-core",
- "serde_json",
-]
-
-[[package]]
-name = "otter-core"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_jcs",
- "serde_json",
- "sha2",
- "thiserror",
- "uuid",
-]
-
-[[package]]
-name = "otter-dart"
-version = "0.1.0"
-dependencies = [
- "otter-binding",
- "serde_json",
-]
-
-[[package]]
-name = "otter-integration"
-version = "0.1.0"
-dependencies = [
- "otter-client",
- "otter-core",
- "otter-server",
- "otter-sqlite",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "otter-server"
-version = "0.1.0"
-dependencies = [
- "otter-core",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "otter-sqlite"
-version = "0.1.0"
-dependencies = [
- "otter-client",
- "otter-core",
- "rusqlite",
- "serde_json",
- "tempfile",
-]
 
 [[package]]
 name = "pin-project-lite"
