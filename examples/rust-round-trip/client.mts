@@ -1,12 +1,12 @@
 import { createInterface } from "node:readline/promises";
 import { resolve } from "node:path";
 import { stdin, stdout } from "node:process";
-import { GeneratedClient, httpTransport } from "./generated/client.ts";
+import { GeneratedClient, websocketTransport } from "./generated/client.ts";
 
 // Open the local database and start syncing with the backend.
 const client = await GeneratedClient.open({
   path: resolve(process.env.AHEAD_DATABASE ?? "example-client.sqlite"),
-  transport: httpTransport({
+  live: websocketTransport({
     url: process.env.AHEAD_URL ?? "http://127.0.0.1:4242",
     token: "demo-user",
   }),

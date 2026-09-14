@@ -7,6 +7,7 @@ pub struct TransportAction {
 }
 #[derive(Default)]
 pub struct SyncCycle {
+    push_only: bool,
     completed: BTreeSet<String>,
     active: Option<TransportAction>,
 }
@@ -14,6 +15,12 @@ impl SyncCycle {
     pub fn restart(&mut self) {
         self.completed.clear();
         self.active = None;
+        self.push_only = false;
+    }
+    /// Use HTTP only for queued writes; authoritative pages arrive through the live stream.
+    pub fn restart_push_only(&mut self) {
+        self.restart();
+        self.push_only = true;
     }
     pub fn next<S: ClientStore>(
         &mut self,
@@ -29,6 +36,9 @@ impl SyncCycle {
             };
             self.active = Some(action.clone());
             return Ok(Some(action));
+        }
+        if self.push_only {
+            return Ok(None);
         }
         // Subscribed channels only: a pull on any other channel would be discarded by
         // `apply_page`, and a checkpoint the client cannot await settles on arrival.

@@ -11,6 +11,8 @@ export type {
 } from "./connection.mts";
 import { Transaction, strictJson, type QuerySpec } from "./transaction.mts";
 export { Transaction, type QuerySpec } from "./transaction.mts";
+export { websocketTransport, type LiveTransport } from "./live.mts";
+import type { LiveTransport } from "./live.mts";
 export { httpTransport } from "./transport.mts";
 import { createRequire } from "node:module";
 import { EventEmitter } from "node:events";
@@ -19,6 +21,7 @@ const native = createRequire(import.meta.url)(
 ) as { clientCall(request: string): Promise<string> };
 export type RecordValue = Record<string, unknown>;
 export class Client {
+  #liveGeneration = 0;
   #syncing: Promise<void> | undefined;
   #tasks: Promise<void> | undefined;
   #connection: Connection | undefined;
@@ -118,25 +121,35 @@ export class Client {
     return this.transaction((tx) => tx.mutate(mutation));
   }
   subscribe(channel: string) {
+    this.#liveGeneration++;
     return this.#exclusive(() =>
       this.#send({ op: "channel", channel, subscribed: true }).then((value) => {
+        this.#events.emit("channels");
         this.#events.emit("work");
         return value;
       }),
     );
   }
   unsubscribe(channel: string) {
+    this.#liveGeneration++;
     return this.#exclusive(() =>
       this.#send({ op: "channel", channel, subscribed: false }).then(
         (value) => {
+          this.#events.emit("channels");
           this.#events.emit("work");
           return value;
         },
       ),
     );
   }
+  connectLive(
+    live: LiveTransport,
+    options: ConnectionOptions = {},
+  ): Promise<Connection> {
+    return this.connect(live, options);
+  }
   async connect(
-    transport: Transport,
+    transport: Transport | LiveTransport,
     options: ConnectionOptions = {},
   ): Promise<Connection> {
     if (this.#closed || this.#closing) throw Error("client_closed");
@@ -148,29 +161,124 @@ export class Client {
       finished = resolve;
     });
     try {
+      const live = typeof transport === "function" ? undefined : transport;
+      let refreshing: Promise<void> | undefined;
+      const driverOptions = {
+        ...options,
+        ...(options.refreshAuth
+          ? {
+              refreshAuth: () =>
+                (refreshing ??= Promise.resolve()
+                  .then(() => options.refreshAuth!())
+                  .finally(() => {
+                    refreshing = undefined;
+                  })),
+            }
+          : {}),
+      };
+      const control = (event: string, lane?: string) =>
+        this.#exclusive(() =>
+          this.#send({
+            op: "connection",
+            event,
+            ...(lane ? { lane } : {}),
+            now: Date.now(),
+            entropy: Math.floor(Math.random() * 0x100000000),
+          }),
+        );
       const connection = await startConnection(
-        (event) =>
-          this.#exclusive(() =>
-            this.#send({
-              op: "connection",
-              event,
-              now: Date.now(),
-              entropy: Math.floor(Math.random() * 0x100000000),
-            }),
-          ),
-        (t) => this.sync(t),
-        transport,
-        options,
+        (event) => control(event),
+        (t) => this.#runSync(t, live !== undefined),
+        live ? live.push : (transport as Transport),
+        driverOptions,
       );
+      let session: AbortController | undefined;
+      let streamEpoch = 0;
+      const invalidate = () => {
+        streamEpoch++;
+        session?.abort();
+      };
+      const streaming = live
+        ? await startConnection(
+            (event) => control(event, "live"),
+            async (request) => {
+              await request("live", "");
+            },
+            async (_kind, _body, signal) => {
+              const epoch = ++streamEpoch;
+              const current = new AbortController();
+              session = current;
+              const cancel = () => current.abort();
+              signal?.addEventListener("abort", cancel, { once: true });
+              if (signal?.aborted) cancel();
+              try {
+                const snapshot = await this.#exclusive(async () => ({
+                  status: await this.#send({ op: "status" }),
+                  generation: this.#liveGeneration,
+                }));
+                if (
+                  current.signal.aborted ||
+                  epoch !== streamEpoch ||
+                  snapshot.status.channels.length === 0
+                )
+                  return "";
+                const cursors = Object.fromEntries(
+                  snapshot.status.channels.map((scope: string) => [
+                    scope,
+                    snapshot.status.cursors[scope] ?? 0,
+                  ]),
+                );
+                await live.stream(
+                  { scopes: snapshot.status.channels, cursors },
+                  (page) =>
+                    this.#exclusive(async () => {
+                      if (
+                        !current.signal.aborted &&
+                        epoch === streamEpoch &&
+                        snapshot.generation === this.#liveGeneration
+                      ) {
+                        await this.#send({ op: "pull", page });
+                        this.#events.emit("work");
+                      }
+                    }),
+                  current.signal,
+                );
+                return "";
+              } finally {
+                current.abort();
+                signal?.removeEventListener("abort", cancel);
+                if (session === current) session = undefined;
+              }
+            },
+            driverOptions,
+          )
+        : undefined;
+      const channels = () => {
+        invalidate();
+        void streaming?.wake().catch(options.onError ?? (() => {}));
+      };
+      this.#events.on("channels", channels);
       const wake = () => {
         void connection.wake().catch(options.onError ?? (() => {}));
       };
       this.#events.on("work", wake);
       const result = {
         ...connection,
+        pause: async () => {
+          invalidate();
+          await Promise.all([streaming?.pause(), connection.pause()]);
+        },
+        resume: async () => {
+          await Promise.all([streaming?.resume(), connection.resume()]);
+        },
+        wake: async () => {
+          await Promise.all([streaming?.wake(), connection.wake()]);
+        },
         close: async () => {
           this.#events.off("work", wake);
-          await connection.close();
+          this.#events.off("channels", channels);
+          invalidate();
+          await Promise.all([streaming?.close(), connection.close()]);
           if (this.#connection === result) this.#connection = undefined;
         },
       };
@@ -184,9 +292,12 @@ export class Client {
   sync(
     transport: (kind: string, body: string) => Promise<string>,
   ): Promise<void> {
+    return this.#runSync(transport, false);
+  }
+  #runSync(transport: Transport, pushOnly: boolean): Promise<void> {
     if (this.#syncing) return this.#syncing;
     const run = async () => {
-      await this.#exclusive(() => this.#send({ op: "startSync" }));
+      await this.#exclusive(() => this.#send({ op: "startSync", pushOnly }));
       for (;;) {
         const action = await this.#exclusive(() => this.#send({ op: "next" }));
         if (action === null) return;

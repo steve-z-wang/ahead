@@ -99,3 +99,38 @@ fn backend_emitter_suffixes_older_mutation_versions() {
     assert!(ts.contains(" edit(call: HandlerCall<Tx, EditInput>)"));
     assert!(ts.contains(" editV1(call: HandlerCall<Tx, EditV1Input>)"));
 }
+
+#[test]
+fn generated_clients_expose_live_sync_and_reject_ambiguous_connection_options_before_opening() {
+    let ts = ahead_compiler::client_typescript("@example/custom-runtime");
+    let exports = ts
+        .lines()
+        .find(|line| line.starts_with("export {"))
+        .unwrap();
+    assert!(exports.contains("websocketTransport"));
+    assert!(exports.contains("type LiveTransport"));
+    assert!(exports.contains("@example/custom-runtime"));
+    assert!(ts.contains("live?: LiveTransport"));
+    assert!(ts.contains("client.connectLive(options.live"));
+    assert!(
+        ts.find("transport and live are mutually exclusive")
+            .unwrap()
+            < ts.find("await Client.open").unwrap()
+    );
+
+    let schema = compile("model Entry { id String title String @@id(id) } mutation Edit { entry Entry.update<title> }").unwrap();
+    let dart = ahead_compiler::dart(&schema);
+    let exports = dart
+        .lines()
+        .find(|line| line.starts_with("export "))
+        .unwrap();
+    assert!(exports.contains("websocketTransport"));
+    assert!(exports.contains("LiveTransport"));
+    assert!(dart.contains("LiveTransport? live"));
+    assert!(dart.contains("client.connectLive(live"));
+    assert!(
+        dart.find("transport and live are mutually exclusive")
+            .unwrap()
+            < dart.find("await Client.open").unwrap()
+    );
+}

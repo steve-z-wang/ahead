@@ -6,3 +6,5 @@ cd "$root"
 cargo build --workspace --locked
 node bindings/node/build.mjs
 (cd packages/server && npm ci)
+
+(cd packages/client-js && npm ci)

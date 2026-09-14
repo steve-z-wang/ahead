@@ -12,6 +12,7 @@ struct Entry {
     client: Client<SqliteStore>,
     cycle: SyncCycle,
     connection: ConnectionDriver,
+    live_connection: ConnectionDriver,
 }
 impl RuntimeHost {
     pub fn call(&mut self, request: Value) -> Result<Value> {
@@ -36,6 +37,7 @@ impl RuntimeHost {
                     client,
                     cycle: SyncCycle::default(),
                     connection: ConnectionDriver::default(),
+                    live_connection: ConnectionDriver::default(),
                 },
             );
             return Ok(
@@ -177,19 +179,25 @@ impl RuntimeHost {
                 }
                 match op {
                     "connection" => {
+                        let connection = match request.get("lane") {
+                            None => &mut e.connection,
+                            Some(Value::String(lane)) if lane == "push" => &mut e.connection,
+                            Some(Value::String(lane)) if lane == "live" => &mut e.live_connection,
+                            _ => return Err(invalid("unknown connection lane")),
+                        };
                         let now = request
                             .get("now")
                             .map(|v| read_counter(v, false))
                             .transpose()?
                             .unwrap_or(0);
                         match text(&request, "event")? {
-                            "start" => e.connection.start(now),
-                            "stop" => e.connection.stop(),
-                            "pause" => e.connection.pause(),
-                            "resume" => e.connection.resume(now),
-                            "wake" => e.connection.wake(),
-                            "success" => e.connection.complete(true, now, 0),
-                            "failure" => e.connection.complete(
+                            "start" => connection.start(now),
+                            "stop" => connection.stop(),
+                            "pause" => connection.pause(),
+                            "resume" => connection.resume(now),
+                            "wake" => connection.wake(),
+                            "success" => connection.complete(true, now, 0),
+                            "failure" => connection.complete(
                                 false,
                                 now,
                                 request
@@ -202,13 +210,17 @@ impl RuntimeHost {
                             _ => return Err(invalid("unknown connection event")),
                         }
                         if request["event"] == "next" {
-                            serde_json::to_value(e.connection.next(now))?
+                            serde_json::to_value(connection.next(now))?
                         } else {
                             Value::Null
                         }
                     }
                     "startSync" => {
-                        e.cycle.restart();
+                        match request.get("pushOnly") {
+                            None | Some(Value::Bool(false)) => e.cycle.restart(),
+                            Some(Value::Bool(true)) => e.cycle.restart_push_only(),
+                            _ => return Err(invalid("pushOnly must be bool")),
+                        }
                         Value::Null
                     }
                     "next" => serde_json::to_value(e.cycle.next(&mut e.client)?)?,

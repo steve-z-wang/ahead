@@ -160,6 +160,47 @@ Dart's savepoint also takes a zero-argument async callback and operates through 
 
 ## Transports
 
+Use `connectLive(live, options)` for built-in WebSocket synchronization, or `sync(transport)` / `connect(transport, options)` for a custom request/response transport. Only one background connection may be active per client. Network I/O happens outside the local transaction queue.
+
+### WebSocket
+
+`websocketTransport` creates a `LiveTransport` configured with the backend base URL and credentials. The generated client's `open({ live: ... })` option starts it automatically. Use the raw client when attaching a connection after opening local storage:
+
+=== "TypeScript"
+
+    ```ts
+    const connection = await raw.connectLive(
+      websocketTransport({ url: backendUrl, token: () => accessToken }),
+      {
+        onError: error => console.error(error),
+        refreshAuth: async () => { accessToken = await renewAccessToken(); },
+      },
+    );
+    ```
+
+=== "Flutter"
+
+    ```dart
+    final connection = await raw.connectLive(
+      websocketTransport(url: backendUrl, token: () => accessToken),
+      onError: (error) => print(error),
+      refreshAuth: () async { accessToken = await renewAccessToken(); },
+    );
+    ```
+
+| Option | TypeScript | Dart |
+| --- | --- | --- |
+| `url` | Backend base URL string | Backend base URL string |
+| `token` | String or function returning a string/promise | Function returning a string/future |
+
+Provide an HTTP or HTTPS backend URL; the factory selects the corresponding WebSocket endpoint at `/sync/live` and uses `/sync/mutations` for HTTP pushes. Credentials travel in the authorization header. Token functions are evaluated for new requests and connections so refreshed credentials can be used.
+
+On connection, the client reads its persisted channel cursors and asks the server to stream from those positions. The stream first catches up and then delivers subsequent changes; no separate HTTP pull phase is required. Pages are serialized into the Rust engine and SQLite. With no channels subscribed, the connection can still push mutations without opening a live socket.
+
+A subscription change replaces the live session using current saved progress. The client checks that queued pages still belong to the current session before applying them. Pause and close invalidate the session and release its resources; resume opens a new session from saved progress. Network failures invoke `onError` and retry with backoff; authentication failures can invoke `refreshAuth`. A genuine protocol or cursor error is reported rather than treated as successful synchronization.
+
+### HTTP and custom transports
+
 `sync(transport)` performs one synchronization run until Rust has no further action for that run. `connect(transport, options)` starts background scheduling and returns a connection; only one connection may be active on a client. Network I/O happens outside the local transaction queue, so a delayed response does not hold a local write open.
 
 | Interface | Signature / options |
@@ -170,7 +211,7 @@ Dart's savepoint also takes a zero-argument async callback and operates through 
 | TypeScript `ConnectionOptions` | `onError?: (error: unknown) => void`, `refreshAuth?: () => Promise<void>` |
 | Dart `connect` options | Named `onError:` and `refreshAuth:` callbacks |
 
-The transport sends the supplied JSON body unchanged and returns response JSON text. `push` maps to `POST /sync/mutations`; `pull` maps to `POST /sync/pull`. A non-success response must throw. TypeScript's `httpTransport` sets `error.status` on HTTP failures and forwards the abort signal. A token function is evaluated per request, so it can read refreshed credentials. The [client setup guide](setup.md#connect-to-your-backend) gives the equivalent implementation.
+The transport sends the supplied JSON body unchanged and returns response JSON text. `push` maps to `POST /sync/mutations`; `pull` maps to `POST /sync/pull`. A non-success response must throw. TypeScript's `httpTransport` sets `error.status` on HTTP failures and forwards the abort signal. A token function is evaluated per request, so it can read refreshed credentials. The [HTTP setup example](setup.md#http-mode) gives the equivalent Dart implementation.
 
 === "TypeScript"
 
@@ -187,7 +228,7 @@ The transport sends the supplied JSON body unchanged and returns response JSON t
 === "Flutter"
 
     ```dart
-    // Use the transport from Client setup, reading your current token per request.
+    // Use the HTTP transport from Client setup, reading your current token per request.
     final connection = await raw.connect(
       transport,
       onError: (error) => print(error),
@@ -197,7 +238,7 @@ The transport sends the supplied JSON body unchanged and returns response JSON t
 
 Here `backendUrl`, `accessToken` and `renewAccessToken` belong to your application. A TypeScript transport signals expired authentication with an error whose `status` is `401`; Dart throws `AuthenticationExpired()`. The connection can then invoke `refreshAuth`. Other errors go through the background connection's error/retry handling; manual `sync` rejects to its caller. Do not swallow failures or return an error page as a successful protocol response.
 
-Current generated clients use HTTP sync. The backend also serves WebSocket, but a built-in generated-client WebSocket transport is [tracked separately](https://github.com/zanminwang/ahead/issues/35). `connect` does not mean a WebSocket is open.
+A `transport` function uses request/response sync. Select `live` at generated-client open or call `connectLive` for a persistent WebSocket connection.
 
 ## Connection controls
 

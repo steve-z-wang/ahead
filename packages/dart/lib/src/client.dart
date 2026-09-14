@@ -1,4 +1,5 @@
 import 'connection.dart';
+import 'live.dart';
 import 'port.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -58,6 +59,8 @@ class Client implements ReadPort {
   final int _handle;
   final String clientId;
   Future<void> _tail = Future<void>.value();
+  int _liveGeneration = 0;
+  final _channels = StreamController<void>.broadcast(sync: true);
   Future<void>? _syncing;
   Future<void>? _tasks;
   bool _closed = false;
@@ -223,17 +226,46 @@ class Client implements ReadPort {
   );
   Future<int> mutate(Map<String, dynamic> mutation) =>
       transaction((tx) => tx.mutate(mutation));
-  Future<void> subscribe(String channel) => _exclusive(() async {
-    await _send({'op': 'channel', 'channel': channel, 'subscribed': true});
-    _work.add(null);
-  });
-  Future<void> unsubscribe(String channel) => _exclusive(() async {
-    await _send({'op': 'channel', 'channel': channel, 'subscribed': false});
-    _work.add(null);
-  });
+  Future<void> subscribe(String channel) {
+    _liveGeneration++;
+    return _exclusive(() async {
+      await _send({'op': 'channel', 'channel': channel, 'subscribed': true});
+      _channels.add(null);
+      _work.add(null);
+    });
+  }
+
+  Future<void> unsubscribe(String channel) {
+    _liveGeneration++;
+    return _exclusive(() async {
+      await _send({'op': 'channel', 'channel': channel, 'subscribed': false});
+      _channels.add(null);
+      _work.add(null);
+    });
+  }
+
+  Future<RuntimeConnection> connectLive(
+    LiveTransport live, {
+    void Function(Object)? onError,
+    Future<void> Function()? refreshAuth,
+  }) {
+    final session = live.createSession();
+    return _connect(
+      session.push,
+      live: session,
+      onError: onError,
+      refreshAuth: refreshAuth,
+    );
+  }
 
   Future<RuntimeConnection> connect(
     Transport transport, {
+    void Function(Object)? onError,
+    Future<void> Function()? refreshAuth,
+  }) => _connect(transport, onError: onError, refreshAuth: refreshAuth);
+  Future<RuntimeConnection> _connect(
+    Transport transport, {
+    LiveTransport? live,
     void Function(Object)? onError,
     Future<void> Function()? refreshAuth,
   }) async {
@@ -244,6 +276,11 @@ class Client implements ReadPort {
     final started = Completer<void>();
     _started = started;
     try {
+      Future<void>? refreshing;
+      Future<void> refresh() =>
+          refreshing ??= Future<void>.sync(refreshAuth!).whenComplete(() {
+            refreshing = null;
+          });
       final connection = await RuntimeConnection.start(
         control: (event, now, entropy) => _exclusive(
           () => _send({
@@ -253,11 +290,84 @@ class Client implements ReadPort {
             'entropy': entropy,
           }),
         ),
-        sync: sync,
+        sync: (transport) => _startSync(transport, live != null),
         transport: transport,
         onError: onError,
-        refreshAuth: refreshAuth,
+        refreshAuth: refreshAuth == null ? null : refresh,
       );
+      StreamSubscription<void>? channelSubscription;
+      if (live != null) {
+        Completer<void>? session;
+        int streamEpoch = 0;
+        void invalidate() {
+          streamEpoch++;
+          if (session?.isCompleted == false) session!.complete();
+        }
+
+        final streaming = await RuntimeConnection.start(
+          control: (event, now, entropy) => _exclusive(
+            () => _send({
+              'op': 'connection',
+              'lane': 'live',
+              'event': event,
+              'now': now,
+              'entropy': entropy,
+            }),
+          ),
+          sync: (request) async {
+            await request('live', '');
+          },
+          transport: (kind, body) async {
+            final epoch = ++streamEpoch;
+            final current = Completer<void>();
+            session = current;
+            try {
+              final snapshot = await _exclusive(
+                () async => (await _send({'op': 'status'}), _liveGeneration),
+              );
+              final status = snapshot.$1 as Map;
+              if (current.isCompleted ||
+                  epoch != streamEpoch ||
+                  (status['channels'] as List).isEmpty)
+                return '';
+              final cursors = {
+                for (final scope in status['channels'] as List)
+                  scope as String: (status['cursors'] as Map)[scope] ?? 0,
+              };
+              await live.stream(
+                cursors,
+                (page) => _exclusive(() async {
+                  if (!current.isCompleted &&
+                      epoch == streamEpoch &&
+                      snapshot.$2 == _liveGeneration) {
+                    await _send({'op': 'pull', 'page': page});
+                    _work.add(null);
+                  }
+                }),
+                current.future,
+              );
+              return '';
+            } finally {
+              if (!current.isCompleted) current.complete();
+              if (identical(session, current)) session = null;
+            }
+          },
+          onError: onError,
+          refreshAuth: refreshAuth == null ? null : refresh,
+        );
+        channelSubscription = _channels.stream.listen((_) {
+          invalidate();
+          unawaited(
+            streaming.wake().catchError((Object error) {
+              onError?.call(error);
+            }),
+          );
+        });
+        connection.attachLive(streaming, () {
+          invalidate();
+          live.cancelPush();
+        });
+      }
       final subscription = _work.stream.listen((_) {
         unawaited(
           connection.wake().catchError((Object error) {
@@ -269,6 +379,7 @@ class Client implements ReadPort {
       unawaited(
         connection.closed.then((_) async {
           await subscription.cancel();
+          await channelSubscription?.cancel();
           if (identical(_connection, connection)) _connection = null;
         }),
       );
@@ -282,13 +393,16 @@ class Client implements ReadPort {
   /// Rust selects actions and settlement; transport only performs the request.
   Future<void> sync(
     Future<String> Function(String kind, String body) transport,
-  ) => _syncing ??= _runSync(transport).whenComplete(() {
-    _syncing = null;
-  });
+  ) => _startSync(transport, false);
+  Future<void> _startSync(Transport transport, bool pushOnly) =>
+      _syncing ??= _runSync(transport, pushOnly).whenComplete(() {
+        _syncing = null;
+      });
   Future<void> _runSync(
     Future<String> Function(String kind, String body) transport,
+    bool pushOnly,
   ) async {
-    await _exclusive(() => _send({'op': 'startSync'}));
+    await _exclusive(() => _send({'op': 'startSync', 'pushOnly': pushOnly}));
     while (true) {
       final action = await _exclusive(() => _send({'op': 'next'}));
       if (action == null) return;
@@ -416,6 +530,7 @@ class Client implements ReadPort {
         _isolate.kill();
         await _changes.close();
         await _work.close();
+        await _channels.close();
       }
     });
   }

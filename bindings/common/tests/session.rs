@@ -56,3 +56,88 @@ fn rust_selects_transport_actions_and_reuses_frozen_request_on_retry() {
         "pull"
     );
 }
+
+#[test]
+fn live_push_cycle_keeps_receipts_but_leaves_reads_to_the_stream() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut host = RuntimeHost::default();
+    let schema: Value =
+        serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
+    let id = host
+        .call(json!({"op":"open","path":dir.path().join("db"),"schema":schema}))
+        .unwrap()["value"]["handle"]
+        .clone();
+    host.call(json!({"op":"channel","handle":id,"channel":"book","subscribed":true}))
+        .unwrap();
+    host.call(json!({"op":"startSync","handle":id,"pushOnly":true}))
+        .unwrap();
+    assert!(host.call(json!({"op":"next","handle":id})).unwrap()["value"].is_null());
+    host.call(json!({"op":"enqueue","handle":id,"mutation":{"name":"Create","operations":[{"model":"Entry","op":"create","identity":{"id":"e"},"values":{"text":"B","note":null}}]}})).unwrap();
+    host.call(json!({"op":"startSync","handle":id,"pushOnly":true}))
+        .unwrap();
+    let action = host.call(json!({"op":"next","handle":id})).unwrap()["value"].clone();
+    assert_eq!(action["kind"], "push");
+    host.call(json!({"op":"startSync","handle":id,"pushOnly":true}))
+        .unwrap();
+    assert_eq!(
+        host.call(json!({"op":"next","handle":id})).unwrap()["value"],
+        action
+    );
+    host.call(json!({"op":"complete","handle":id,"response":{"requiredScope":"book","requiredSyncId":1,"rejections":[]}})).unwrap();
+    assert!(host.call(json!({"op":"next","handle":id})).unwrap()["value"].is_null());
+    assert_eq!(
+        host.call(json!({"op":"status","handle":id})).unwrap()["value"]["pending"],
+        1
+    );
+    host.call(json!({"op":"pull","handle":id,"page":{"scope":"book","fromCursor":0,"toCursor":1,"changes":[{"syncId":1,"model":"Entry","identity":{"id":"e"},"stamp":1,"state":{"text":"normalized","note":null}}]}})).unwrap();
+    assert_eq!(
+        host.call(json!({"op":"status","handle":id})).unwrap()["value"]["pending"],
+        0
+    );
+    host.call(json!({"op":"startSync","handle":id})).unwrap();
+    assert_eq!(
+        host.call(json!({"op":"next","handle":id})).unwrap()["value"]["kind"],
+        "pull"
+    );
+}
+
+#[test]
+fn live_and_push_drivers_have_independent_lifecycle_and_retry_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut host = RuntimeHost::default();
+    let schema: Value =
+        serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
+    let id = host
+        .call(json!({"op":"open","path":dir.path().join("db"),"schema":schema}))
+        .unwrap()["value"]["handle"]
+        .clone();
+    for lane in [json!(null), json!(false), json!(123), json!("unknown")] {
+        assert!(
+            host.call(json!({"op":"connection","handle":id,"lane":lane,"event":"start","now":0}))
+                .is_err()
+        );
+    }
+    for lane in ["push", "live"] {
+        host.call(json!({"op":"connection","handle":id,"lane":lane,"event":"start","now":0}))
+            .unwrap();
+        assert_eq!(
+            host.call(json!({"op":"connection","handle":id,"lane":lane,"event":"next","now":0}))
+                .unwrap()["value"]["type"],
+            "sync"
+        );
+    }
+    host.call(json!({"op":"connection","handle":id,"lane":"live","event":"failure","now":0}))
+        .unwrap();
+    host.call(json!({"op":"connection","handle":id,"event":"success","now":0}))
+        .unwrap();
+    assert_eq!(
+        host.call(json!({"op":"connection","handle":id,"lane":"live","event":"next","now":0}))
+            .unwrap()["value"]["type"],
+        "wait"
+    );
+    assert_eq!(
+        host.call(json!({"op":"connection","handle":id,"event":"next","now":0}))
+            .unwrap()["value"]["type"],
+        "idle"
+    );
+}

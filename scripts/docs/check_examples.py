@@ -37,7 +37,7 @@ def check():
     with tempfile.TemporaryDirectory(prefix='.docs-check-', dir=ROOT / 'packages/dart') as temp:
         directory = Path(temp)
         ts = directory / 'examples.mts'
-        ts.write_text('''import { GeneratedClient, httpTransport, Edit, schema } from '../../../examples/rust-round-trip/generated/client.ts';
+        ts.write_text('''import { GeneratedClient, httpTransport, websocketTransport, Edit, schema } from '../../../examples/rust-round-trip/generated/client.ts';
 import { Client } from '../../client-js/index.mts';
 declare const client: GeneratedClient;
 declare const raw: Client;
@@ -69,6 +69,7 @@ void render(List<Entry> entries) {}
 const rejectionOrdinal = 1;
 late Transport transport;
 late String accessToken;
+late String backendUrl;
 Future<String> renewAccessToken() async => '';
 Future<void> uploadFile(dynamic key) async {}
 ''' + '\n'.join(f'// {source}\nFuture<void> example{i}() async {{\n{code}\n}}'

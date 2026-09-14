@@ -1,0 +1,478 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'package:ahead/ahead.dart';
+import 'package:test/test.dart';
+
+void main() {
+  test(
+    'WebSocket sends persisted cursors and cancellation ends a stalled token',
+    () async {
+      final cancel = Completer<void>();
+      final live = websocketTransport(
+        url: 'http://127.0.0.1:1',
+        token: () => Completer<String>().future,
+      );
+      final running = live.stream({'scope': 0}, (_) async {}, cancel.future);
+      cancel.complete();
+      await running.timeout(const Duration(seconds: 2));
+    },
+  );
+  test(
+    'WebSocket receives pages and sends authenticated saved cursor handshake',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final handshake = Completer<Map>();
+      final finished = Completer<void>();
+      server.listen((request) async {
+        expect(request.headers.value('authorization'), 'Bearer secret');
+        final socket = await WebSocketTransformer.upgrade(request);
+        socket.listen((message) {
+          handshake.complete(jsonDecode(message as String) as Map);
+          socket.add(
+            jsonEncode({
+              'type': 'subscribed',
+              'scopes': ['scope'],
+              'rejections': [],
+            }),
+          );
+          socket.add(
+            jsonEncode({
+              'scope': 'scope',
+              'fromCursor': 7,
+              'toCursor': 8,
+              'changes': [],
+            }),
+          );
+        }, onDone: () => finished.complete());
+      });
+      final cancel = Completer<void>();
+      final received = Completer<Map>();
+      final live = websocketTransport(
+        url: 'http://127.0.0.1:${server.port}',
+        token: () => 'secret',
+      );
+      final running = live.stream({'scope': 7}, (page) async {
+        received.complete(page);
+      }, cancel.future);
+      try {
+        expect(await handshake.future.timeout(const Duration(seconds: 2)), {
+          'type': 'subscribe',
+          'scopes': ['scope'],
+          'cursors': {'scope': 7},
+        });
+        expect(
+          (await received.future.timeout(
+            const Duration(seconds: 2),
+          ))['toCursor'],
+          8,
+        );
+        cancel.complete();
+        await running.timeout(const Duration(seconds: 2));
+        await finished.future.timeout(const Duration(seconds: 2));
+      } finally {
+        if (!cancel.isCompleted) cancel.complete();
+        await server.close(force: true);
+      }
+    },
+  );
+  test(
+    'cancel push before token resolution prevents any later HTTP request',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      var requests = 0;
+      server.listen((r) {
+        requests++;
+        r.response.close();
+      });
+      final token = Completer<String>();
+      final live = websocketTransport(
+        url: 'http://127.0.0.1:${server.port}',
+        token: () => token.future,
+      );
+      final pushing = live.push('push', '{}');
+      live.cancelPush();
+      token.complete('late');
+      await expectLater(pushing, throwsStateError);
+      expect(requests, 0);
+      await server.close(force: true);
+    },
+  );
+
+  test('close during an opening handshake cancels its socket', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final entered = Completer<void>();
+    server.listen((r) {
+      entered.complete();
+    });
+    final cancelled = Completer<void>();
+    final live = websocketTransport(
+      url: 'http://127.0.0.1:${server.port}',
+      token: () => 'secret',
+    );
+    final running = live.stream({'scope': 0}, (_) async {}, cancelled.future);
+    await entered.future.timeout(const Duration(seconds: 2));
+    cancelled.complete();
+    await running.timeout(const Duration(seconds: 2));
+    await server.close(force: true);
+  });
+
+  test(
+    'native live client retries failed authentication refresh and closes without leaks',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('ahead-dart-live-');
+      final schema =
+          jsonDecode(
+                await File('../../fixtures/schemas/entry.json').readAsString(),
+              )
+              as Map<String, dynamic>;
+      final client = await Client.open(
+        path: '${dir.path}/db',
+        schema: schema,
+        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+      );
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      var token = 'expired', refreshes = 0;
+      final accepted = Completer<void>();
+      final errors = <Object>[];
+      final sockets = <WebSocket>[];
+      server.listen((request) async {
+        if (request.headers.value('authorization') != 'Bearer valid') {
+          request.response.statusCode = 401;
+          await request.response.close();
+          return;
+        }
+        final socket = await WebSocketTransformer.upgrade(request);
+        sockets.add(socket);
+        socket.listen((message) {
+          final sub = jsonDecode(message as String) as Map;
+          socket.add(
+            jsonEncode({
+              'type': 'subscribed',
+              'scopes': sub['scopes'],
+              'rejections': [],
+            }),
+          );
+          if (!accepted.isCompleted) accepted.complete();
+        });
+      });
+      try {
+        await client.subscribe('scope');
+        final connection = await client.connectLive(
+          websocketTransport(
+            url: 'http://127.0.0.1:${server.port}',
+            token: () => token,
+          ),
+          onError: errors.add,
+          refreshAuth: () async {
+            if (++refreshes == 1) throw StateError('refresh failed');
+            token = 'valid';
+          },
+        );
+        await accepted.future.timeout(
+          const Duration(seconds: 5),
+          onTimeout: () =>
+              throw StateError('refreshes=$refreshes errors=$errors'),
+        );
+        expect(refreshes, 2);
+        expect(
+          errors.any((e) => e.toString().contains('refresh failed')),
+          isTrue,
+        );
+        await connection.pause();
+        await connection.resume();
+        await connection.close();
+      } finally {
+        await client.close();
+        for (final socket in sockets) {
+          await socket.close();
+        }
+        await server.close(force: true);
+        await dir.delete(recursive: true);
+      }
+    },
+  );
+  test(
+    'native subscription changes discard queued old pages but report genuine cursor gaps',
+    () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'ahead-dart-generation-',
+      );
+      final schema =
+          jsonDecode(
+                await File('../../fixtures/schemas/entry.json').readAsString(),
+              )
+              as Map<String, dynamic>;
+      final client = await Client.open(
+        path: '${dir.path}/db',
+        schema: schema,
+        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+      );
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final sockets = <WebSocket>[];
+      final handshakes = <Map>[];
+      final errors = <Object>[];
+      Future<void> until(FutureOr<bool> Function() check) async {
+        final deadline = DateTime.now().add(const Duration(seconds: 5));
+        while (DateTime.now().isBefore(deadline)) {
+          if (await check()) return;
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        throw StateError('condition timed out: $errors');
+      }
+
+      Map<String, dynamic> page(String text, int cursor) => {
+        'scope': 'scope',
+        'fromCursor': cursor,
+        'toCursor': cursor + 1,
+        'changes': [
+          {
+            'syncId': cursor + 1,
+            'model': 'Entry',
+            'identity': {'id': 'live'},
+            'stamp': cursor + 1,
+            'state': {'text': text, 'note': null},
+          },
+        ],
+      };
+      server.listen((r) async {
+        final socket = await WebSocketTransformer.upgrade(r);
+        sockets.add(socket);
+        socket.listen((message) {
+          final sub = jsonDecode(message as String) as Map;
+          handshakes.add(sub);
+          socket.add(
+            jsonEncode({
+              'type': 'subscribed',
+              'scopes': sub['scopes'],
+              'rejections': [],
+            }),
+          );
+        });
+      });
+      try {
+        await client.subscribe('scope');
+        final connection = await client.connectLive(
+          websocketTransport(
+            url: 'http://127.0.0.1:${server.port}',
+            token: () => 'secret',
+          ),
+          onError: errors.add,
+        );
+        await until(() => handshakes.length == 1);
+        sockets.first.add(jsonEncode(page('first', 0)));
+        await until(
+          () async =>
+              (await client.read('Entry', {'id': 'live'}))?['text'] == 'first',
+        );
+        final held = Completer<void>(), entered = Completer<void>();
+        final tx = client.transaction((_) async {
+          entered.complete();
+          await held.future;
+        });
+        await entered.future;
+        sockets.first.add(jsonEncode(page('obsolete', 1)));
+        final remove = client.unsubscribe('scope'),
+            restore = client.subscribe('scope');
+        held.complete();
+        await tx;
+        await remove;
+        await restore;
+        await until(() => handshakes.length >= 2);
+        expect(await client.read('Entry', {'id': 'live'}), isNull);
+        expect(handshakes.last['cursors'], {'scope': 0});
+        sockets.last.add(jsonEncode(page('fresh', 0)));
+        await until(
+          () async =>
+              (await client.read('Entry', {'id': 'live'}))?['text'] == 'fresh',
+        );
+        expect(errors, isEmpty);
+        sockets.last.add(jsonEncode(page('gap', 10)));
+        await until(() => errors.isNotEmpty);
+        expect(errors.first.toString(), contains('pull cursor gap'));
+        await connection.close();
+      } finally {
+        await client.close();
+        for (final socket in sockets) {
+          await socket.close();
+        }
+        await server.close(force: true);
+        await dir.delete(recursive: true);
+      }
+    },
+  );
+  test(
+    'shared live factory isolates cancellation and pushes with no subscribed channels',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('ahead-shared-live-');
+      final schema =
+          jsonDecode(
+                await File('../../fixtures/schemas/entry.json').readAsString(),
+              )
+              as Map<String, dynamic>;
+      final first = await Client.open(
+        path: '${dir.path}/first',
+        schema: schema,
+        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+      );
+      final second = await Client.open(
+        path: '${dir.path}/second',
+        schema: schema,
+        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+      );
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      var requests = 0;
+      final entered = Completer<void>(), token = Completer<String>();
+      final errors = <Object>[];
+      server.listen((request) async {
+        requests++;
+        expect(request.uri.path, '/sync/mutations');
+        expect(WebSocketTransformer.isUpgradeRequest(request), isFalse);
+        await request.drain<void>();
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          jsonEncode({
+            'requiredScope': 'scope',
+            'requiredSyncId': 1,
+            'requiredCheckpoints': [
+              {'scope': 'scope', 'syncId': 1},
+            ],
+            'rejections': [],
+          }),
+        );
+        await request.response.close();
+      });
+      final live = websocketTransport(
+        url: 'http://127.0.0.1:${server.port}',
+        token: () {
+          if (!entered.isCompleted) entered.complete();
+          return token.future;
+        },
+      );
+      try {
+        await second.transaction(
+          (tx) => tx.direct({
+            'model': 'Entry',
+            'op': 'create',
+            'identity': {'id': 'local'},
+            'values': {'text': 'base'},
+          }),
+        );
+        await second.mutate({
+          'name': 'Edit',
+          'operations': [
+            {
+              'model': 'Entry',
+              'op': 'update',
+              'identity': {'id': 'local'},
+              'values': {'text': 'edited'},
+            },
+          ],
+        });
+        final a = await first.connectLive(live);
+        await second.connectLive(live, onError: errors.add);
+        await entered.future.timeout(const Duration(seconds: 2));
+        await a.pause();
+        await a.close();
+        token.complete('secret');
+        final deadline = DateTime.now().add(const Duration(seconds: 3));
+        while (DateTime.now().isBefore(deadline) &&
+            (await second.status())['pending'] != 0 &&
+            errors.isEmpty) {
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        expect(
+          errors,
+          isEmpty,
+          reason: 'pausing another client must not cancel this push',
+        );
+        expect((await second.status())['pending'], 0);
+        expect(requests, 1);
+      } finally {
+        if (!token.isCompleted) token.complete('cleanup');
+        await first.close();
+        await second.close();
+        await server.close(force: true);
+        await dir.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
+    'pause blocks a selected parent request before awaiting child pause',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      var requests = 0;
+      server.listen((r) async {
+        requests++;
+        r.response.write('{}');
+        await r.response.close();
+      });
+      final token = Completer<String>(),
+          syncEntered = Completer<void>(),
+          pushFinished = Completer<void>();
+      var tokenCalls = 0;
+      final live = websocketTransport(
+        url: 'http://127.0.0.1:${server.port}',
+        token: () {
+          tokenCalls++;
+          return token.future;
+        },
+      );
+      final next = Completer<void>(), childPause = Completer<void>();
+      var first = true;
+      final parent = await RuntimeConnection.start(
+        control: (event, now, entropy) async {
+          if (event == 'next') {
+            if (first) {
+              first = false;
+              await next.future;
+              return {'type': 'sync'};
+            }
+            return {'type': 'idle'};
+          }
+          return null;
+        },
+        sync: (request) async {
+          syncEntered.complete();
+          await request('push', '{}');
+        },
+        transport: (kind, body) async {
+          try {
+            return await live.push(kind, body);
+          } finally {
+            pushFinished.complete();
+          }
+        },
+      );
+      final child = await RuntimeConnection.start(
+        control: (event, now, entropy) async {
+          if (event == 'pause') await childPause.future;
+          return event == 'next' ? {'type': 'idle'} : null;
+        },
+        sync: (_) async {},
+        transport: (_, __) async => '',
+      );
+      parent.attachLive(child, () {
+        live.cancelPush();
+        if (!next.isCompleted) next.complete();
+      });
+      try {
+        final pausing = parent.pause();
+        await syncEntered.future.timeout(const Duration(seconds: 2));
+        childPause.complete();
+        await pausing.timeout(const Duration(seconds: 2));
+        token.complete('late');
+        if (tokenCalls > 0)
+          await pushFinished.future.timeout(const Duration(seconds: 2));
+        expect(tokenCalls, 0);
+        expect(requests, 0);
+      } finally {
+        if (!childPause.isCompleted) childPause.complete();
+        if (!token.isCompleted) token.complete('cleanup');
+        await parent.close();
+        await server.close(force: true);
+      }
+    },
+  );
+}

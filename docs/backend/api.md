@@ -161,7 +161,7 @@ Unexpected exceptions abort the batch transaction. Do not translate every except
 | `POST /sync/pull` | Materialize changed records through loaders |
 | `/sync/live` (WebSocket) | Serve the backend live protocol |
 
-The generated clients currently use the two HTTP routes; built-in client WebSocket integration is [pending](https://github.com/zanminwang/ahead/issues/35). Listener errors reject. `await server.close()` releases the listener and its live connections; your application must separately close its database pool. The supported listener owns its server; mounting into an application-owned HTTP server is not currently exposed.
+Generated clients configured with `live` push mutations through HTTP and receive record changes over WebSocket; `transport` keeps the HTTP request/response path. Listener errors reject. `await server.close()` releases the listener and its live connections; your application must separately close its database pool. The supported listener owns its server; mounting into an application-owned HTTP server is not currently exposed.
 
 ## Background writes
 

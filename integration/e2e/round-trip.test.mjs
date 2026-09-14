@@ -88,3 +88,46 @@ test('documented CLI keeps offline edits local and syncs them on online', { time
   await rm(directory, { recursive: true, force: true });
  }
 });
+
+test('built-in live catch-up pages, dependent pushes, watches, offline reconnect, and Dart live client', {timeout:45000}, async()=>{
+ const {websocketTransport,httpTransport}=await import('../../packages/client-js/index.mts');
+ const app=await createExample();const directory=await mkdtemp(join(tmpdir(),'ahead-live-e2e-'));let reader,writer;
+ const errors=[];
+ const wait=async(predicate,label)=>{const deadline=Date.now()+10000;while(Date.now()<deadline){if(await predicate())return;await new Promise(r=>setTimeout(r,5));}throw Error(`${label}: ${errors.map(String)}`);};
+ try{
+  await app.initialize();const server=await app.listen(0);
+  await app.db.$transaction(async tx=>{
+   for(let i=0;i<55;i++)await tx.entry.upsert({where:{id:`paged-${i}`},create:{id:`paged-${i}`,text:`record ${i}`},update:{text:`record ${i}`}});
+   await app.backend.notify(tx,{channel:'book:demo',records:Array.from({length:55},(_,i)=>({model:'Entry',identity:{id:`paged-${i}`}}))});
+  });
+  reader=await Client.open({path:join(directory,'reader.sqlite'),schema:app.schema});
+  writer=await Client.open({path:join(directory,'writer.sqlite'),schema:app.schema});
+  await reader.subscribe('book:demo');await writer.subscribe('book:demo');
+  await writer.sync(httpTransport({url:server.url,token:'demo-user'}));
+  const observed=[];const unwatch=reader.watch('Entry',{},rows=>observed.push(rows));
+  let overlapped=false;
+  const actual=websocketTransport({url:server.url,token:'demo-user'});
+  const live={...actual,stream:(sub,apply,signal)=>actual.stream(sub,async page=>{
+   await apply(page);
+   if(!overlapped){overlapped=true;await writer.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:'during catchup'}}]});await writer.sync(httpTransport({url:server.url,token:'demo-user'}));}
+  },signal)};
+  const connection=await reader.connectLive(live,{onError:e=>errors.push(e)});
+  await wait(async()=>(await reader.query('Entry')).length>=56 && (await reader.read('Entry',{id:'entry-1'}))?.text==='during catchup','multi-page catchup');
+  assert.ok(observed.some(rows=>rows.length>=56));
+  // Queue two edits to the same record. The second waits for the first checkpoint;
+  // streamed settlement must wake push without another application event.
+  await reader.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:' first dependent '}}]});
+  await reader.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:' second dependent '}}]});
+  await wait(async()=>(await reader.status()).pending===0,'dependent mutation settlement');
+  assert.equal((await reader.read('Entry',{id:'entry-1'})).text,'second dependent');
+  await connection.pause();
+  await reader.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:' offline reconciled '}}]});
+  await writer.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'paged-54'},values:{text:'missed remote'}}]});await writer.sync(httpTransport({url:server.url,token:'demo-user'}));
+  await connection.resume();await wait(async()=>(await reader.status()).pending===0 && (await reader.read('Entry',{id:'paged-54'}))?.text==='missed remote','offline reconnect');
+  assert.equal((await reader.read('Entry',{id:'entry-1'})).text,'offline reconciled');
+  assert.equal(errors.length,0);
+  unwatch();await connection.close();
+  const root=fileURLToPath(new URL('../..',import.meta.url));
+  await new Promise((resolve,reject)=>{const child=spawn('dart',[`--packages=${join(root,'packages/dart/.dart_tool/package_config.json')}`,join(root,'integration/e2e/dart_live_client.dart'),server.url,directory],{cwd:join(root,'packages/dart'),env:{...process.env,AHEAD_LIBRARY:join(root,`target/debug/libahead_dart.${process.platform==='darwin'?'dylib':'so'}`)},stdio:'inherit'});child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(Error(`Dart live exited ${code}`)));});
+ }finally{await reader?.close();await writer?.close();await app.close();await rm(directory,{recursive:true,force:true});}
+});

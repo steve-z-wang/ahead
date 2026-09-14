@@ -30,7 +30,7 @@ Use this index to find the interface you call or implement. The examples use the
 | Interface | Use it to | Reference |
 | --- | --- | --- |
 | `Client`, `Transaction`, `QuerySpec`, `RecordValue` | Access the generic runtime beneath generated APIs | [Client runtime](frontend/runtime.md) |
-| `Transport`, `httpTransport`, `ConnectionOptions` | Supply network I/O and refresh credentials | [Transports](frontend/runtime.md#transports) |
+| `Transport`, `httpTransport`, `LiveTransport`, `websocketTransport`, `ConnectionOptions` | Supply network I/O and refresh credentials | [Transports](frontend/runtime.md#transports) |
 | `RuntimeConnection`, `AuthenticationExpired` | Control Dart sync and signal expired credentials | [Connections](frontend/runtime.md#connection-controls) |
 | `recordStatus`, `dismissRejection`, `drop` | Inspect a record's pending work and handle rejected or unsent mutations | [Recovery APIs](frontend/runtime.md#pending-work-and-recovery) |
 | `pendingTasks`, `runPrerequisites`, `setReadiness` | Complete prerequisite I/O before a mutation can be sent | [Prerequisites](frontend/runtime.md#prerequisites) |
