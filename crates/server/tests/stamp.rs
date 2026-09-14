@@ -122,26 +122,17 @@ fn publish_requires_cursor_and_stamp_from_the_host() {
 }
 
 #[test]
-fn live_negotiation_resumes_from_client_cursors_and_validates_them() {
+fn live_negotiation_establishes_current_heads_and_rejects_cursor_modes() {
     let host = Fixed::new(json!([]), Value::Null);
-    for cursor in [0, 3, 5] {
-        let request = json!({"type":"subscribe","scopes":["a"],"cursors":{"a":cursor}});
-        let result = run(ahead_server::live::negotiate(
-            "u",
-            request.to_string().as_bytes(),
-            &host,
-        ))
-        .unwrap();
-        assert_eq!(result.subscriptions[0].from_cursor, cursor);
-    }
-    let legacy = run(ahead_server::live::negotiate(
+    let result = run(ahead_server::live::negotiate(
         "u",
         br#"{"type":"subscribe","scopes":["a"]}"#,
         &host,
     ))
     .unwrap();
-    assert_eq!(legacy.subscriptions[0].from_cursor, 5);
+    assert_eq!(result.subscriptions[0].from_cursor, 5);
     for cursors in [
+        json!({"a":0}),
         json!({}),
         json!({"a":6}),
         json!({"a":-1}),

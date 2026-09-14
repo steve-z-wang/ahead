@@ -1,7 +1,14 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:test/test.dart';
 import 'generated.dart';
 void main(){
+ test('failed generated open closes its native worker isolate',()async{
+  final temp=await Directory.systemTemp.createTemp('generated-failed-open-');
+  final child=await Process.start(Platform.resolvedExecutable,['failed_open.dart','${temp.path}/state.sqlite']);
+  try{final code=await child.exitCode.timeout(const Duration(seconds:3));expect(code,0,reason:await child.stderr.transform(utf8.decoder).join());}
+  finally{child.kill();await temp.delete(recursive:true);}
+ });
  const id='123e4567-e89b-42d3-a456-426614174000';
  final row=Entry(id:id,title:'hello',note:null,at:DateTime.utc(2026),tags:['x'],status:Status.active);
  test('source conversion, patch absence and explicit null',(){

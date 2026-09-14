@@ -61,19 +61,19 @@ These examples open local storage without a connection. A fresh database returns
 
 ## Connect to your backend
 
-Start the [tutorial backend](../getting-started.md), then open a client with live sync:
+Start the [tutorial backend](../getting-started.md), then connect the client:
 
 === "TypeScript"
 
     ```ts
-    import { GeneratedClient, websocketTransport } from './generated/client.ts';
+    import { GeneratedClient } from './generated/client.ts';
 
     const client = await GeneratedClient.open({
       path: 'local.sqlite',
-      live: websocketTransport({
+      server: {
         url: 'http://127.0.0.1:4242',
         token: 'demo-user',
-      }),
+      },
       connection: { onError: console.error },
     });
     await client.channels.subscribe('book:demo');
@@ -87,7 +87,7 @@ Start the [tutorial backend](../getting-started.md), then open a client with liv
     final client = await GeneratedClient.open(
       path: 'local.sqlite',
       libraryPath: '/absolute/path/to/ahead/target/debug/libahead_dart.dylib',
-      live: websocketTransport(
+      server: SyncServer(
         url: 'http://127.0.0.1:4242',
         token: () => 'demo-user',
       ),
@@ -96,70 +96,13 @@ Start the [tutorial backend](../getting-started.md), then open a client with liv
     await client.channels.subscribe('book:demo');
     ```
 
-The factory uses the same endpoint and credentials for HTTP mutation pushes and WebSocket record updates. On connection or reconnection, the client sends its saved channel cursors, receives missing records, then continues receiving changes. Each page passes through the Rust engine into local SQLite and updates `watch` subscriptions.
+Configure the server once. Ahead submits mutations over HTTP, catches up from saved channel cursors over HTTP, and receives ongoing record changes over WebSocket. Every received page passes through the Rust engine into local SQLite and updates `watch` subscriptions.
 
 Subscribing wakes the connection; it does not wait for initial records. A client with no subscribed channels can still push mutations. Subscription changes update live synchronization automatically. Replace the demo URL and token with your application's endpoint and credentials. On a physical device, localhost refers to that device; use a reachable development-server address.
 
-Use either `live` or `transport` when opening a client. Supplying both is an error. Without either, the client works locally without starting network synchronization.
+Omit `server` to open local storage without starting a connection.
 
-For expiring credentials, supply a token function and `refreshAuth`. See [transport options](runtime.md#transports).
-
-### HTTP mode
-
-Use `transport` to keep request/response sync, or to provide your own network adapter:
-
-=== "TypeScript"
-
-    ```ts
-    import { GeneratedClient, httpTransport } from './generated/client.ts';
-
-    const client = await GeneratedClient.open({
-      path: 'local.sqlite',
-      transport: httpTransport({
-        url: 'http://127.0.0.1:4242',
-        token: 'demo-user',
-      }),
-      connection: { onError: console.error },
-    });
-    await client.channels.subscribe('book:demo');
-    ```
-
-=== "Flutter"
-
-    ```dart
-    import 'dart:convert';
-    import 'dart:io';
-    import 'package:ahead/ahead.dart';
-    import 'generated/generated.dart';
-
-    final http = HttpClient();
-    Future<String> transport(String kind, String body) async {
-      final route = kind == 'push' ? 'mutations' : 'pull';
-      final request = await http.postUrl(
-        Uri.parse('http://127.0.0.1:4242/sync/$route'),
-      );
-      request.headers.set('authorization', 'Bearer demo-user');
-      request.headers.contentType = ContentType.json;
-      request.write(body);
-      final response = await request.close();
-      final text = await utf8.decoder.bind(response).join();
-      if (response.statusCode == 401) throw AuthenticationExpired();
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw HttpException('Sync failed: HTTP ${response.statusCode}');
-      }
-      return text;
-    }
-
-    final client = await GeneratedClient.open(
-      path: 'local.sqlite',
-      libraryPath: '/absolute/path/to/ahead/target/debug/libahead_dart.dylib',
-      transport: transport,
-      onError: (error) => print(error),
-    );
-    await client.channels.subscribe('book:demo');
-    ```
-
-The transport forwards the supplied JSON unchanged. TypeScript includes `httpTransport`; Flutter can use the Dart function above. It performs HTTP push and pull without opening a WebSocket. Close the application-owned Dart `HttpClient` after closing Ahead.
+For expiring credentials, supply a token function and `refreshAuth`. See [server connection options](runtime.md#server-connection).
 
 ## Watch and write
 
@@ -224,6 +167,6 @@ In Flutter, use the watch stream with `StreamBuilder<List<Entry>>`; retain it fo
     await client.close();
     ```
 
-These controls work with either `live` or `transport`. Pausing closes the live socket; resuming reconnects from saved progress. Database/client lifetime belongs to the application; watch subscriptions belong to their views.
+Pausing cancels network activity; resuming reconnects and catches up from saved progress. Database/client lifetime belongs to the application; watch subscriptions belong to their views.
 
 See [Client API](client-api.md) for typed calls, [offline work and sync](sync.md) for connection/recovery behavior, and [advanced client APIs](runtime.md) for SQL, savepoints and prerequisites.

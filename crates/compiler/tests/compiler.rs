@@ -101,36 +101,21 @@ fn backend_emitter_suffixes_older_mutation_versions() {
 }
 
 #[test]
-fn generated_clients_expose_live_sync_and_reject_ambiguous_connection_options_before_opening() {
+fn generated_clients_expose_one_server_connection() {
     let ts = ahead_compiler::client_typescript("@example/custom-runtime");
-    let exports = ts
-        .lines()
-        .find(|line| line.starts_with("export {"))
-        .unwrap();
-    assert!(exports.contains("websocketTransport"));
-    assert!(exports.contains("type LiveTransport"));
-    assert!(exports.contains("@example/custom-runtime"));
-    assert!(ts.contains("live?: LiveTransport"));
-    assert!(ts.contains("client.connectLive(options.live"));
+    assert!(ts.contains("type ServerOptions"));
+    assert!(ts.contains("server?: ServerOptions"));
+    assert!(ts.contains("client.connect(options.server"));
+    assert!(!ts.contains("LiveTransport"));
+    assert!(!ts.contains("transport?:"));
     assert!(
-        ts.find("transport and live are mutually exclusive")
-            .unwrap()
-            < ts.find("await Client.open").unwrap()
+        ts.find("connection options were removed").unwrap() < ts.find("await Client.open").unwrap()
     );
-
     let schema = compile("model Entry { id String title String @@id(id) } mutation Edit { entry Entry.update<title> }").unwrap();
     let dart = ahead_compiler::dart(&schema);
-    let exports = dart
-        .lines()
-        .find(|line| line.starts_with("export "))
-        .unwrap();
-    assert!(exports.contains("websocketTransport"));
-    assert!(exports.contains("LiveTransport"));
-    assert!(dart.contains("LiveTransport? live"));
-    assert!(dart.contains("client.connectLive(live"));
-    assert!(
-        dart.find("transport and live are mutually exclusive")
-            .unwrap()
-            < dart.find("await Client.open").unwrap()
-    );
+    assert!(dart.contains("show RuntimeConnection, SyncServer"));
+    assert!(dart.contains("SyncServer? server"));
+    assert!(dart.contains("client.connect(server"));
+    assert!(!dart.contains("LiveTransport"));
+    assert!(!dart.contains("Transport? transport"));
 }

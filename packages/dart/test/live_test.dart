@@ -2,24 +2,24 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:ahead/ahead.dart';
+import 'package:ahead/src/live.dart' show ServerSession;
 import 'package:test/test.dart';
 
 void main() {
-  test(
-    'WebSocket sends persisted cursors and cancellation ends a stalled token',
-    () async {
-      final cancel = Completer<void>();
-      final live = websocketTransport(
+  test('cancellation ends a stalled WebSocket token', () async {
+    final cancel = Completer<void>();
+    final live = ServerSession(
+      SyncServer(
         url: 'http://127.0.0.1:1',
         token: () => Completer<String>().future,
-      );
-      final running = live.stream({'scope': 0}, (_) async {}, cancel.future);
-      cancel.complete();
-      await running.timeout(const Duration(seconds: 2));
-    },
-  );
+      ),
+    );
+    final running = live.stream(['scope'], (_) async {}, cancel.future);
+    cancel.complete();
+    await running.timeout(const Duration(seconds: 2));
+  });
   test(
-    'WebSocket receives pages and sends authenticated saved cursor handshake',
+    'WebSocket establishes listeners without cursor catch-up mode',
     () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final handshake = Completer<Map>();
@@ -48,18 +48,19 @@ void main() {
       });
       final cancel = Completer<void>();
       final received = Completer<Map>();
-      final live = websocketTransport(
-        url: 'http://127.0.0.1:${server.port}',
-        token: () => 'secret',
+      final live = ServerSession(
+        SyncServer(
+          url: 'http://127.0.0.1:${server.port}',
+          token: () => 'secret',
+        ),
       );
-      final running = live.stream({'scope': 7}, (page) async {
+      final running = live.stream(['scope'], (page) async {
         received.complete(page);
       }, cancel.future);
       try {
         expect(await handshake.future.timeout(const Duration(seconds: 2)), {
           'type': 'subscribe',
           'scopes': ['scope'],
-          'cursors': {'scope': 7},
         });
         expect(
           (await received.future.timeout(
@@ -86,15 +87,53 @@ void main() {
         r.response.close();
       });
       final token = Completer<String>();
-      final live = websocketTransport(
-        url: 'http://127.0.0.1:${server.port}',
-        token: () => token.future,
+      final live = ServerSession(
+        SyncServer(
+          url: 'http://127.0.0.1:${server.port}',
+          token: () => token.future,
+        ),
       );
       final pushing = live.push('push', '{}');
       live.cancelPush();
       token.complete('late');
       await expectLater(pushing, throwsStateError);
       expect(requests, 0);
+      await server.close(force: true);
+    },
+  );
+
+  test(
+    'HTTP catch-up cancellation ends stalled token and in-flight response',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      var requests = 0;
+      final entered = Completer<void>();
+      server.listen((request) {
+        requests++;
+        entered.complete();
+      });
+      final token = Completer<String>();
+      final session = ServerSession(
+        SyncServer(
+          url: 'http://127.0.0.1:${server.port}',
+          token: () => token.future,
+        ),
+      );
+      final firstCancel = Completer<void>();
+      final first = session.pull('{}', firstCancel.future);
+      final stopped = expectLater(first, throwsStateError);
+      firstCancel.complete();
+      await stopped.timeout(const Duration(seconds: 2));
+      token.complete('late');
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(requests, 0);
+      final secondCancel = Completer<void>();
+      final second = session.pull('{}', secondCancel.future);
+      final aborted = expectLater(second, throwsStateError);
+      await entered.future.timeout(const Duration(seconds: 2));
+      secondCancel.complete();
+      await aborted.timeout(const Duration(seconds: 2));
+      expect(requests, 1);
       await server.close(force: true);
     },
   );
@@ -106,16 +145,80 @@ void main() {
       entered.complete();
     });
     final cancelled = Completer<void>();
-    final live = websocketTransport(
-      url: 'http://127.0.0.1:${server.port}',
-      token: () => 'secret',
+    final live = ServerSession(
+      SyncServer(url: 'http://127.0.0.1:${server.port}', token: () => 'secret'),
     );
-    final running = live.stream({'scope': 0}, (_) async {}, cancelled.future);
+    final running = live.stream(['scope'], (_) async {}, cancelled.future);
     await entered.future.timeout(const Duration(seconds: 2));
     cancelled.complete();
     await running.timeout(const Duration(seconds: 2));
     await server.close(force: true);
   });
+
+  test(
+    'unsubscribe invalidates a pending token before a held transaction drains',
+    () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'ahead-dart-token-generation-',
+      );
+      final schema =
+          jsonDecode(
+                await File('../../fixtures/schemas/entry.json').readAsString(),
+              )
+              as Map<String, dynamic>;
+      final client = await Client.open(
+        path: '${dir.path}/db',
+        schema: schema,
+        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+      );
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      var requests = 0;
+      server.listen((request) async {
+        requests++;
+        await request.response.close();
+      });
+      final token = Completer<String>(), tokenEntered = Completer<void>();
+      final txEntered = Completer<void>(), held = Completer<void>();
+      final errors = <Object>[];
+      try {
+        await client.subscribe('scope');
+        await client.connect(
+          SyncServer(
+            url: 'http://127.0.0.1:${server.port}',
+            token: () {
+              tokenEntered.complete();
+              return token.future;
+            },
+          ),
+          onError: errors.add,
+        );
+        await tokenEntered.future.timeout(const Duration(seconds: 2));
+        final transaction = client.transaction((_) async {
+          txEntered.complete();
+          await held.future;
+        });
+        await txEntered.future;
+        final removing = client.unsubscribe('scope');
+        token.complete('obsolete');
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        expect(
+          requests,
+          0,
+          reason: 'network cancellation must not await the database queue',
+        );
+        held.complete();
+        await transaction;
+        await removing;
+        expect(errors, isEmpty);
+      } finally {
+        if (!held.isCompleted) held.complete();
+        if (!token.isCompleted) token.complete('cleanup');
+        await client.close();
+        await server.close(force: true);
+        await dir.delete(recursive: true);
+      }
+    },
+  );
 
   test(
     'native live client retries failed authentication refresh and closes without leaks',
@@ -142,6 +245,20 @@ void main() {
           await request.response.close();
           return;
         }
+        if (request.uri.path == '/sync/pull') {
+          final pull =
+              jsonDecode(await utf8.decoder.bind(request).join()) as Map;
+          request.response.write(
+            jsonEncode({
+              'scope': pull['scope'],
+              'fromCursor': pull['fromCursor'],
+              'toCursor': pull['fromCursor'],
+              'changes': [],
+            }),
+          );
+          await request.response.close();
+          return;
+        }
         final socket = await WebSocketTransformer.upgrade(request);
         sockets.add(socket);
         socket.listen((message) {
@@ -158,8 +275,8 @@ void main() {
       });
       try {
         await client.subscribe('scope');
-        final connection = await client.connectLive(
-          websocketTransport(
+        final connection = await client.connect(
+          SyncServer(
             url: 'http://127.0.0.1:${server.port}',
             token: () => token,
           ),
@@ -193,7 +310,7 @@ void main() {
     },
   );
   test(
-    'native subscription changes discard queued old pages but report genuine cursor gaps',
+    'native subscription changes discard old pages and HTTP recovers live gaps',
     () async {
       final dir = await Directory.systemTemp.createTemp(
         'ahead-dart-generation-',
@@ -235,7 +352,26 @@ void main() {
           },
         ],
       };
+      var pulls = 0;
+      Map<String, dynamic>? recovery;
       server.listen((r) async {
+        if (r.uri.path == '/sync/pull') {
+          pulls++;
+          final pull = jsonDecode(await utf8.decoder.bind(r).join()) as Map;
+          r.response.write(
+            jsonEncode(
+              recovery ??
+                  {
+                    'scope': pull['scope'],
+                    'fromCursor': pull['fromCursor'],
+                    'toCursor': pull['fromCursor'],
+                    'changes': [],
+                  },
+            ),
+          );
+          await r.response.close();
+          return;
+        }
         final socket = await WebSocketTransformer.upgrade(r);
         sockets.add(socket);
         socket.listen((message) {
@@ -252,8 +388,8 @@ void main() {
       });
       try {
         await client.subscribe('scope');
-        final connection = await client.connectLive(
-          websocketTransport(
+        final connection = await client.connect(
+          SyncServer(
             url: 'http://127.0.0.1:${server.port}',
             token: () => 'secret',
           ),
@@ -280,16 +416,32 @@ void main() {
         await restore;
         await until(() => handshakes.length >= 2);
         expect(await client.read('Entry', {'id': 'live'}), isNull);
-        expect(handshakes.last['cursors'], {'scope': 0});
+        expect(handshakes.last.containsKey('cursors'), isFalse);
         sockets.last.add(jsonEncode(page('fresh', 0)));
         await until(
           () async =>
               (await client.read('Entry', {'id': 'live'}))?['text'] == 'fresh',
         );
         expect(errors, isEmpty);
+        final beforeOverlap = pulls;
+        recovery = page('overlap recovered', 1);
+        sockets.last.add(jsonEncode({...page('overlap', 0), 'toCursor': 2}));
+        await until(
+          () async =>
+              (await client.read('Entry', {'id': 'live'}))?['text'] ==
+              'overlap recovered',
+        );
+        expect(pulls, greaterThan(beforeOverlap));
+        final before = pulls;
+        recovery = page('recovered', 2);
         sockets.last.add(jsonEncode(page('gap', 10)));
-        await until(() => errors.isNotEmpty);
-        expect(errors.first.toString(), contains('pull cursor gap'));
+        await until(
+          () async =>
+              (await client.read('Entry', {'id': 'live'}))?['text'] ==
+              'recovered',
+        );
+        expect(pulls, greaterThan(before));
+        expect(errors, isEmpty);
         await connection.close();
       } finally {
         await client.close();
@@ -301,6 +453,138 @@ void main() {
       }
     },
   );
+  test(
+    'HTTP catch-up pages after ack, queues overlap, and rejects obsolete HTTP completion',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('ahead-dart-http-');
+      final schema =
+          jsonDecode(
+                await File('../../fixtures/schemas/entry.json').readAsString(),
+              )
+              as Map<String, dynamic>;
+      final client = await Client.open(
+        path: '${dir.path}/db',
+        schema: schema,
+        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+      );
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final sockets = <WebSocket>[];
+      final errors = <Object>[];
+      final requests = <int>[];
+      var acknowledged = false;
+      var hold = Completer<void>();
+      var entered = Completer<void>();
+      var held = true;
+      var version = 'initial';
+      Map<String, dynamic> page(int from, int to, String text) => {
+        'scope': 'scope',
+        'fromCursor': from,
+        'toCursor': to,
+        'changes': [
+          for (var cursor = from + 1; cursor <= to; cursor++)
+            {
+              'syncId': cursor,
+              'model': 'Entry',
+              'identity': {'id': 'e$cursor'},
+              'stamp': cursor,
+              'state': {'text': text, 'note': null},
+            },
+        ],
+      };
+      Future<void> until(FutureOr<bool> Function() check) async {
+        final deadline = DateTime.now().add(const Duration(seconds: 5));
+        while (DateTime.now().isBefore(deadline)) {
+          if (await check()) return;
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        throw StateError('timeout: $errors requests=$requests');
+      }
+
+      server.listen((request) async {
+        if (request.uri.path == '/sync/pull') {
+          expect(acknowledged, isTrue, reason: 'listeners must precede HTTP');
+          final body =
+              jsonDecode(await utf8.decoder.bind(request).join()) as Map;
+          final from = body['fromCursor'] as int;
+          requests.add(from);
+          final result = page(from, from == 0 ? 50 : 55, version);
+          if (held) {
+            held = false;
+            entered.complete();
+            await hold.future;
+          }
+          try {
+            request.response.write(jsonEncode(result));
+            await request.response.close();
+          } catch (_) {}
+          return;
+        }
+        final socket = await WebSocketTransformer.upgrade(request);
+        sockets.add(socket);
+        socket.listen((message) {
+          final sub = jsonDecode(message as String) as Map;
+          expect(sub.containsKey('cursors'), isFalse);
+          acknowledged = true;
+          socket.add(
+            jsonEncode({
+              'type': 'subscribed',
+              'scopes': sub['scopes'],
+              'rejections': [],
+            }),
+          );
+        });
+      });
+      try {
+        await client.subscribe('scope');
+        final connection = await client.connect(
+          SyncServer(
+            url: 'http://127.0.0.1:${server.port}',
+            token: () => 'secret',
+          ),
+          onError: errors.add,
+        );
+        await entered.future.timeout(const Duration(seconds: 3));
+        expect(await client.query('Entry'), isEmpty);
+        // A commit observed live during catch-up is buffered, then recognized as covered.
+        sockets.last.add(jsonEncode(page(50, 55, 'initial')));
+        hold.complete();
+        await until(() async => (await client.query('Entry')).length == 55);
+        expect(requests, [0, 50]);
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        expect(requests, [0, 50], reason: 'steady state must not poll HTTP');
+        sockets.last.add(jsonEncode(page(55, 56, 'live')));
+        await until(() async => (await client.query('Entry')).length == 56);
+        expect(requests, [0, 50]);
+        // Reconnect catches up from the durable cursor. Hold that obsolete response
+        // while unsubscribe/resubscribe resets the scope and starts a fresh session.
+        await connection.pause();
+        held = true;
+        hold = Completer<void>();
+        entered = Completer<void>();
+        await connection.resume();
+        await entered.future.timeout(const Duration(seconds: 3));
+        expect(requests.last, 56);
+        await client.unsubscribe('scope');
+        version = 'fresh';
+        await client.subscribe('scope');
+        hold.complete();
+        await until(() async => (await client.query('Entry')).length == 55);
+        expect((await client.read('Entry', {'id': 'e1'}))?['text'], 'fresh');
+        expect(await client.read('Entry', {'id': 'e56'}), isNull);
+        expect(errors, isEmpty);
+        await connection.close();
+      } finally {
+        if (!hold.isCompleted) hold.complete();
+        await client.close();
+        for (final socket in sockets) {
+          await socket.close();
+        }
+        await server.close(force: true);
+        await dir.delete(recursive: true);
+      }
+    },
+  );
+
   test(
     'shared live factory isolates cancellation and pushes with no subscribed channels',
     () async {
@@ -342,7 +626,7 @@ void main() {
         );
         await request.response.close();
       });
-      final live = websocketTransport(
+      final live = SyncServer(
         url: 'http://127.0.0.1:${server.port}',
         token: () {
           if (!entered.isCompleted) entered.complete();
@@ -369,8 +653,8 @@ void main() {
             },
           ],
         });
-        final a = await first.connectLive(live);
-        await second.connectLive(live, onError: errors.add);
+        final a = await first.connect(live);
+        await second.connect(live, onError: errors.add);
         await entered.future.timeout(const Duration(seconds: 2));
         await a.pause();
         await a.close();
@@ -412,12 +696,14 @@ void main() {
           syncEntered = Completer<void>(),
           pushFinished = Completer<void>();
       var tokenCalls = 0;
-      final live = websocketTransport(
-        url: 'http://127.0.0.1:${server.port}',
-        token: () {
-          tokenCalls++;
-          return token.future;
-        },
+      final live = ServerSession(
+        SyncServer(
+          url: 'http://127.0.0.1:${server.port}',
+          token: () {
+            tokenCalls++;
+            return token.future;
+          },
+        ),
       );
       final next = Completer<void>(), childPause = Completer<void>();
       var first = true;

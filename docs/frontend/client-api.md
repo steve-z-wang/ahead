@@ -29,19 +29,18 @@ Examples below assume an `Entry` model with `id`, `text` and nullable `note`, an
     );
     ```
 
-Both examples open local storage. To start background sync, supply `live` or `transport` as shown in [client setup](setup.md#connect-to-your-backend).
+Both examples open local storage. To start background sync, supply `server` as shown in [client setup](setup.md#connect-to-your-backend).
 
 | Option | Required | Behavior |
 | --- | --- | --- |
 | `path` | Yes | SQLite file to create or reopen. The application selects a writable directory. Use a separate file per signed-in user. |
-| `live` | No | Built-in WebSocket catch-up and streaming, with HTTP mutation push. Configure with `websocketTransport`. |
-| `transport` | No | Request/response background sync through a transport function. Mutually exclusive with `live`. |
+| `server` | No | Backend URL and credentials: `ServerOptions` in TypeScript, `SyncServer` in Dart. Ahead manages HTTP mutation submission, HTTP catch-up and WebSocket updates. |
 | `connection` (TypeScript) | No | `onError` and `refreshAuth` callbacks for the background connection. |
 | `onError`, `refreshAuth` (Dart) | No | The same callbacks, passed directly to `open`. |
 | `libraryPath` (Dart) | Outside iOS | Absolute native library path; iOS can use symbols linked into the process. |
 | `migration` | No | Defaults and optional cursor rewind for an explicitly changed schema. See [runtime migration](runtime.md#opening-and-schema-changes). |
 
-Returns `Promise<GeneratedClient>` / `Future<GeneratedClient>`. Opening can fail on native library loading, an unwritable or incompatible database, or an invalid schema. Completion means local storage is open, not that initial server data has arrived. Supplying both `live` and `transport` is rejected. Omitting both keeps the client local-only.
+Returns `Promise<GeneratedClient>` / `Future<GeneratedClient>`. Opening can fail on native library loading, an unwritable or incompatible database, or an invalid schema. Completion means local storage is open, not that initial server data has arrived. Omitting `server` keeps the client local-only.
 
 ## Model APIs
 
@@ -216,7 +215,7 @@ A channel name must match what your backend notifies. A subscription is a reques
 ## Status and lifecycle
 
 - `client.status()` returns runtime diagnostics, including pending count and rejections. It does not send network requests.
-- `client.connection` is the optional connection created by `open`. It is `undefined` / `null` when neither `live` nor `transport` was supplied. See [connection controls](runtime.md#connection-controls).
+- `client.connection` is the optional connection created by `open`. It is `undefined` / `null` when `server` was omitted. See [connection controls](runtime.md#connection-controls).
 - `client.client` exposes the generic runtime for methods such as `recordStatus` or `runPrerequisites`.
 - `await client.close()` stops the connection and releases the local database handle. Close the client when its owning application scope ends; cancel individual watchers when their views end. Calls after close fail.
 

@@ -52,7 +52,7 @@ Use channel names that your backend notifies, and subscribe before writing when 
     await client.connection!.resume();
     ```
 
-This assumes `GeneratedClient.open` was given `live` or `transport` and the record has already arrived locally. Without either option the client is local-only until you connect its raw runtime. Dart uses the same `pause`/`resume` methods with its typed mutation arguments.
+This assumes `GeneratedClient.open` was given `server` and the record has already arrived locally. Without it the client is local-only until you connect its raw runtime. Dart uses the same `pause`/`resume` methods with its typed mutation arguments.
 
 A local transaction's completion confirms local commit. It does not mean the server has accepted the operation. Display pending and rejected state using [recordStatus](runtime.md#pending-work-and-recovery) when that distinction matters to the UI.
 
@@ -90,7 +90,7 @@ Provide `onError` to record background failures, and `refreshAuth` if your crede
 
 Use `wake()` after an application event that should prompt another scheduling check. Use `resume()` after explicitly pausing. A closed connection cannot resume; create a new one through `client.client.connect` or reopen the owning client.
 
-With `live: websocketTransport(...)`, connection and reconnection resume from persisted channel cursors over `/sync/live`. The same stream carries catch-up pages and subsequent record changes; mutation pushes use HTTP. The client discards responses from replaced sessions when subscriptions change or the connection pauses/closes. With a `transport` function, synchronization uses the existing request/response path instead.
+On connection or reconnection, Ahead establishes the WebSocket subscription, then catches up over HTTP from each channel's persisted cursor. It queues changes arriving during catch-up and continues with WebSocket updates once caught up. A gap triggers HTTP recovery from saved progress. Subscription changes replace the session; pages from replaced or canceled sessions cannot update local data.
 
 ## Authentication and account changes
 

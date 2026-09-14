@@ -67,7 +67,7 @@ A newer deletion withdraws the record across channels. Its tombstone is retained
 
 The backend's loader is the sync read path: after notification identifies changed records, it supplies their current authorized contents. This separation lets your local record schema differ from your backend database layout.
 
-With live sync enabled, WebSocket carries catch-up and ongoing record updates while HTTP carries mutation pushes. Both paths apply results through the Rust engine. HTTP request/response mode is also available.
+Ahead uses one connection: HTTP submits mutations and catches up missing records; WebSocket delivers ongoing changes. Initial connection, reconnection and gap recovery use saved channel cursors. Received records pass through the Rust engine into SQLite.
 
 ## Current limits
 

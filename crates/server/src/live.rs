@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Subscribe {
     #[serde(rename = "type")]
     kind: String,
@@ -53,30 +54,9 @@ pub fn decode_subscribe(bytes: &[u8]) -> Result<Vec<String>> {
 pub async fn negotiate(owner: &str, bytes: &[u8], host: &impl Host) -> Result<Negotiation> {
     principal(owner)?;
     let scopes = decode_subscribe(bytes)?;
-    let raw: Value = serde_json::from_slice(bytes).map_err(|_| "request.invalid")?;
-    let cursors = raw
-        .get("cursors")
-        .map(|value| {
-            let map = value.as_object().ok_or("request.invalid")?;
-            if map.len() != scopes.len() || map.keys().any(|scope| !scopes.contains(scope)) {
-                return Err("request.invalid");
-            }
-            map.iter()
-                .map(|(scope, value)| {
-                    read_counter(value, false)
-                        .map(|cursor| (scope.clone(), cursor))
-                        .map_err(|_| "request.invalid")
-                })
-                .collect::<std::result::Result<std::collections::BTreeMap<_, _>, _>>()
-        })
-        .transpose()?;
     let mut accepted = vec![];
     for scope in scopes {
-        let channel_head = head(host, &scope).await?;
-        let from_cursor = cursors.as_ref().map_or(channel_head, |map| map[&scope]);
-        if from_cursor > channel_head {
-            return Err("request.invalid: cursor ahead of channel".into());
-        }
+        let from_cursor = head(host, &scope).await?;
         accepted.push(Subscription { scope, from_cursor });
     }
     let response = serde_json::to_string(&json!({

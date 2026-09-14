@@ -80,16 +80,12 @@ test("closing an old client connection twice preserves ownership of the replacem
   });
   let second;
   try {
-    const first = await client.connect(async () => {
-      throw Error("no requests expected");
-    });
+    const first = await client.connect({url:"http://127.0.0.1:1",token:"secret"});
     await first.close();
-    second = await client.connect(async () => {
-      throw Error("no requests expected");
-    });
+    second = await client.connect({url:"http://127.0.0.1:1",token:"secret"});
     await first.close();
     await assert.rejects(
-      client.connect(async () => ""),
+      client.connect({url:"http://127.0.0.1:1",token:"secret"}),
       /already active/,
     );
   } finally {
@@ -118,9 +114,7 @@ test("client close waits for in-flight connection setup and remains idempotent",
   const errors = [];
   try {
     const starting = client.connect(
-      async () => {
-        throw Error("no requests expected");
-      },
+      {url:"http://127.0.0.1:1",token:"secret"},
       { onError: (error) => errors.push(error) },
     );
     await Promise.all([starting, client.close()]);
@@ -129,7 +123,7 @@ test("client close waits for in-flight connection setup and remains idempotent",
     await client.close();
     await (await starting).close();
     await assert.rejects(
-      client.connect(async () => ""),
+      client.connect({url:"http://127.0.0.1:1",token:"secret"}),
       /closed/,
     );
   } finally {

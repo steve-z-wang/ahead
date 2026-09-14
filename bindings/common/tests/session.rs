@@ -141,3 +141,60 @@ fn live_and_push_drivers_have_independent_lifecycle_and_retry_state() {
         "idle"
     );
 }
+
+#[test]
+fn downlink_uses_durable_cursors_and_recovers_overlap_without_overwriting_push_cycle() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut host = RuntimeHost::default();
+    let schema: Value =
+        serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
+    let id = host
+        .call(json!({"op":"open","path":dir.path().join("db"),"schema":schema}))
+        .unwrap()["value"]["handle"]
+        .clone();
+    host.call(json!({"op":"channel","handle":id,"channel":"book","subscribed":true}))
+        .unwrap();
+    let request = host
+        .call(json!({"op":"downlinkRequest","handle":id,"scope":"book"}))
+        .unwrap()["value"]
+        .clone();
+    assert_eq!(
+        serde_json::from_str::<Value>(request.as_str().unwrap()).unwrap()["fromCursor"],
+        0
+    );
+    let page = json!({"scope":"book","fromCursor":0,"toCursor":1,"changes":[{"syncId":1,"model":"Entry","identity":{"id":"e"},"stamp":1,"state":{"text":"A","note":null}}]});
+    assert_eq!(
+        host.call(json!({"op":"downlinkComplete","handle":id,"request":request,"page":page}))
+            .unwrap()["value"]["continues"],
+        false
+    );
+    assert_eq!(
+        host.call(json!({"op":"downlinkLive","handle":id,"page":page}))
+            .unwrap()["value"],
+        "covered"
+    );
+    for from in [0, 2] {
+        let overlap = json!({"scope":"book","fromCursor":from,"toCursor":3,"changes":[]});
+        assert_eq!(
+            host.call(json!({"op":"downlinkLive","handle":id,"page":overlap}))
+                .unwrap()["value"],
+            "recover"
+        );
+    }
+    host.call(json!({"op":"enqueue","handle":id,"mutation":{"name":"Edit","operations":[{"model":"Entry","op":"update","identity":{"id":"e"},"values":{"text":"B"}}]}})).unwrap();
+    host.call(json!({"op":"startSync","handle":id,"pushOnly":true}))
+        .unwrap();
+    let push = host.call(json!({"op":"next","handle":id})).unwrap()["value"].clone();
+    let request = host
+        .call(json!({"op":"downlinkRequest","handle":id,"scope":"book"}))
+        .unwrap()["value"]
+        .clone();
+    let page = json!({"scope":"book","fromCursor":1,"toCursor":1,"changes":[]});
+    host.call(json!({"op":"downlinkComplete","handle":id,"request":request,"page":page}))
+        .unwrap();
+    assert_eq!(
+        host.call(json!({"op":"next","handle":id})).unwrap()["value"],
+        push
+    );
+    assert_eq!(push["kind"], "push");
+}

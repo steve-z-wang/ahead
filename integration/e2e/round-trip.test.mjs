@@ -7,27 +7,28 @@ import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {createExample} from '../../examples/rust-round-trip/server.mts';
 import {Client} from '../../packages/client-js/index.mts';
+import {syncProtocol} from './protocol-fixture.mjs';
 
 test('Node SDK -> native Rust -> HTTP -> Rust backend -> Prisma -> SQLite, then Dart',async()=>{
  const app=await createExample();const directory=await mkdtemp(join(tmpdir(),'ahead-e2e-'));let client;let server;
  try{
   await app.initialize();server=await app.listen(0);const url=server.url;
   const transport=async(kind,body)=>{const response=await fetch(`${url}/sync/${kind==='push'?'mutations':'pull'}`,{method:'POST',headers:{authorization:'Bearer demo-user','content-type':'application/json'},body});if(!response.ok)throw Error(`HTTP ${response.status}: ${await response.text()}`);return response.text();};
-  client=await Client.open({path:join(directory,'client.sqlite'),schema:app.schema});await client.subscribe('book:demo');await client.sync(transport);assert.equal((await client.read('Entry',{id:'entry-1'})).text,'Hello from the server');
+  client=await Client.open({path:join(directory,'client.sqlite'),schema:app.schema});await client.subscribe('book:demo');await syncProtocol(client,transport);assert.equal((await client.read('Entry',{id:'entry-1'})).text,'Hello from the server');
   await client.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:'  offline edit  '}}]});
   assert.equal((await client.read('Entry',{id:'entry-1'})).text,'  offline edit  ');const frozen=await client.freeze();await client.close();
   client=await Client.open({path:join(directory,'client.sqlite'),schema:app.schema});assert.equal(await client.freeze(),frozen);
-  let dropped=false;await assert.rejects(()=>client.sync(async(kind,body)=>{const result=await transport(kind,body);if(kind==='push'&&!dropped){dropped=true;throw Error('lost ACK after COMMIT');}return result;}),/lost ACK/);
-  const calls=app.handlerCalls;assert.equal((await client.status()).pending,1);await client.sync(transport);assert.equal(app.handlerCalls,calls);assert.equal((await client.read('Entry',{id:'entry-1'})).text,'offline edit');assert.equal((await client.status()).pending,0);assert.equal((await client.status()).beforeImages,0);
-  await client.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:'reject'}}]});await client.sync(transport);assert.equal((await client.read('Entry',{id:'entry-1'})).text,'offline edit');assert.equal((await client.status()).rejections[0].code,'entry.denied');
+  let dropped=false;await assert.rejects(()=>syncProtocol(client,async(kind,body)=>{const result=await transport(kind,body);if(kind==='push'&&!dropped){dropped=true;throw Error('lost ACK after COMMIT');}return result;}),/lost ACK/);
+  const calls=app.handlerCalls;assert.equal((await client.status()).pending,1);await syncProtocol(client,transport);assert.equal(app.handlerCalls,calls);assert.equal((await client.read('Entry',{id:'entry-1'})).text,'offline edit');assert.equal((await client.status()).pending,0);assert.equal((await client.status()).beforeImages,0);
+  await client.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:'reject'}}]});await syncProtocol(client,transport);assert.equal((await client.read('Entry',{id:'entry-1'})).text,'offline edit');assert.equal((await client.status()).rejections[0].code,'entry.denied');
   const gate=Promise.withResolvers();const entered=Promise.withResolvers();let held=false;
   await client.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:'first'}}]});
-  const syncing=client.sync(async(kind,body)=>{const result=await transport(kind,body);if(kind==='push'&&!held){held=true;entered.resolve();await gate.promise;}return result;});
+  const syncing=syncProtocol(client,async(kind,body)=>{const result=await transport(kind,body);if(kind==='push'&&!held){held=true;entered.resolve();await gate.promise;}return result;});
   await entered.promise;
   try {await Promise.race([client.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:'offline edit'}}]}),new Promise((_,reject)=>setTimeout(()=>reject(Error('local writes blocked by network')),500))]);}
   finally {gate.resolve();await syncing;}
   assert.equal((await client.read('Entry',{id:'entry-1'})).text,'offline edit');
-  const background=await client.connect(transport);
+  const background=await client.connect({url,token:'demo-user'});
   const waitSettled=async()=>{for(let i=0;i<200;i++){if((await client.status()).pending===0)return;await new Promise(r=>setTimeout(r,10));}throw Error('background sync did not settle');};
   try{await client.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:'  background  '}}]});await waitSettled();assert.equal((await client.read('Entry',{id:'entry-1'})).text,'background');await background.pause();await client.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:'  resumed  '}}]});await new Promise(r=>setTimeout(r,30));assert.equal((await client.status()).pending,1);await background.resume();await waitSettled();assert.equal((await client.read('Entry',{id:'entry-1'})).text,'resumed');}finally{await background.close();}
   const root=fileURLToPath(new URL('../..',import.meta.url));
@@ -90,7 +91,7 @@ test('documented CLI keeps offline edits local and syncs them on online', { time
 });
 
 test('built-in live catch-up pages, dependent pushes, watches, offline reconnect, and Dart live client', {timeout:45000}, async()=>{
- const {websocketTransport,httpTransport}=await import('../../packages/client-js/index.mts');
+ const fetchOriginal=globalThis.fetch;const pullRequests=[];
  const app=await createExample();const directory=await mkdtemp(join(tmpdir(),'ahead-live-e2e-'));let reader,writer;
  const errors=[];
  const wait=async(predicate,label)=>{const deadline=Date.now()+10000;while(Date.now()<deadline){if(await predicate())return;await new Promise(r=>setTimeout(r,5));}throw Error(`${label}: ${errors.map(String)}`);};
@@ -103,31 +104,46 @@ test('built-in live catch-up pages, dependent pushes, watches, offline reconnect
   reader=await Client.open({path:join(directory,'reader.sqlite'),schema:app.schema});
   writer=await Client.open({path:join(directory,'writer.sqlite'),schema:app.schema});
   await reader.subscribe('book:demo');await writer.subscribe('book:demo');
-  await writer.sync(httpTransport({url:server.url,token:'demo-user'}));
+  const config={url:server.url,token:'demo-user'};
+  await writer.connect(config,{onError:e=>errors.push(e)});
+  await wait(async()=>(await writer.query('Entry')).length>=56,'writer catchup');
   const observed=[];const unwatch=reader.watch('Entry',{},rows=>observed.push(rows));
   let overlapped=false;
-  const actual=websocketTransport({url:server.url,token:'demo-user'});
-  const live={...actual,stream:(sub,apply,signal)=>actual.stream(sub,async page=>{
-   await apply(page);
-   if(!overlapped){overlapped=true;await writer.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:'during catchup'}}]});await writer.sync(httpTransport({url:server.url,token:'demo-user'}));}
-  },signal)};
-  const connection=await reader.connectLive(live,{onError:e=>errors.push(e)});
+  globalThis.fetch=async(url,init)=>{
+   const response=await fetchOriginal(url,init);
+   if(String(url).endsWith('/sync/pull') && JSON.parse(init.body).clientId===reader.clientId){
+    pullRequests.push(JSON.parse(init.body));
+    if(!overlapped){
+     overlapped=true;
+     await writer.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:'during catchup'}}]});
+     await wait(async()=>(await writer.status()).pending===0,'commit during held HTTP catchup');
+    }
+   }
+   return response;
+  };
+  const connection=await reader.connect(config,{onError:e=>errors.push(e)});
   await wait(async()=>(await reader.query('Entry')).length>=56 && (await reader.read('Entry',{id:'entry-1'}))?.text==='during catchup','multi-page catchup');
   assert.ok(observed.some(rows=>rows.length>=56));
+  assert.ok(pullRequests.length>=2,'more than 50 records catch up via HTTP pages');
+  assert.equal(pullRequests[0].fromCursor,0);
+  const caughtUpPulls=pullRequests.length;
   // Queue two edits to the same record. The second waits for the first checkpoint;
   // streamed settlement must wake push without another application event.
   await reader.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:' first dependent '}}]});
   await reader.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:' second dependent '}}]});
   await wait(async()=>(await reader.status()).pending===0,'dependent mutation settlement');
   assert.equal((await reader.read('Entry',{id:'entry-1'})).text,'second dependent');
+  assert.equal(pullRequests.length,caughtUpPulls,'ordinary live updates do not trigger HTTP polling');
+  const saved=(await reader.status()).cursors['book:demo'];
   await connection.pause();
   await reader.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:' offline reconciled '}}]});
-  await writer.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'paged-54'},values:{text:'missed remote'}}]});await writer.sync(httpTransport({url:server.url,token:'demo-user'}));
+  await writer.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'paged-54'},values:{text:'missed remote'}}]});await wait(async()=>(await writer.status()).pending===0,'remote offline edit');
   await connection.resume();await wait(async()=>(await reader.status()).pending===0 && (await reader.read('Entry',{id:'paged-54'}))?.text==='missed remote','offline reconnect');
   assert.equal((await reader.read('Entry',{id:'entry-1'})).text,'offline reconciled');
+  assert.equal(pullRequests[caughtUpPulls].fromCursor,saved,'reconnect HTTP starts at persisted cursor');
   assert.equal(errors.length,0);
   unwatch();await connection.close();
   const root=fileURLToPath(new URL('../..',import.meta.url));
   await new Promise((resolve,reject)=>{const child=spawn('dart',[`--packages=${join(root,'packages/dart/.dart_tool/package_config.json')}`,join(root,'integration/e2e/dart_live_client.dart'),server.url,directory],{cwd:join(root,'packages/dart'),env:{...process.env,AHEAD_LIBRARY:join(root,`target/debug/libahead_dart.${process.platform==='darwin'?'dylib':'so'}`)},stdio:'inherit'});child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(Error(`Dart live exited ${code}`)));});
- }finally{await reader?.close();await writer?.close();await app.close();await rm(directory,{recursive:true,force:true});}
+ }finally{globalThis.fetch=fetchOriginal;await reader?.close();await writer?.close();await app.close();await rm(directory,{recursive:true,force:true});}
 });

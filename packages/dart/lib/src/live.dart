@@ -3,8 +3,15 @@ import 'dart:convert';
 import 'dart:io';
 import 'connection.dart';
 
-/// WebSocket catch-up and streaming with authenticated HTTP mutation push.
-class LiveTransport {
+/// Immutable configuration reusable across independent client connections.
+class SyncServer {
+  final String url;
+  final FutureOr<String> Function() token;
+  const SyncServer({required this.url, required this.token});
+}
+
+/// Internal per-client network session.
+class ServerSession {
   int _pushEpoch = 0;
   final _requests = <HttpClient>{};
   void cancelPush() {
@@ -17,10 +24,9 @@ class LiveTransport {
 
   final Uri _base;
   final FutureOr<String> Function() _token;
-  LiveTransport._(this._base, this._token);
-
-  /// Creates independent request cancellation state while reusing configuration.
-  LiveTransport createSession() => LiveTransport._(_base, _token);
+  ServerSession(SyncServer server)
+    : _base = Uri.parse(server.url),
+      _token = server.token;
 
   Future<String> push(String kind, String body) async {
     final epoch = _pushEpoch;
@@ -45,6 +51,50 @@ class LiveTransport {
     }
   }
 
+  Future<String> pull(String body, Future<void> cancellation) async {
+    var cancelled = false;
+    HttpClient? http;
+    final stopped = Completer<String>();
+    unawaited(
+      cancellation.then((_) {
+        cancelled = true;
+        http?.close(force: true);
+        if (!stopped.isCompleted)
+          stopped.completeError(StateError('connection_paused_or_closed'));
+      }),
+    );
+    final fetching = Future<String>(() async {
+      final token = await _token();
+      if (cancelled) throw StateError('connection_paused_or_closed');
+      final client = HttpClient();
+      http = client;
+      try {
+        final request = await client.postUrl(_endpoint('pull', false));
+        if (cancelled) throw StateError('connection_paused_or_closed');
+        request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+        request.headers.contentType = ContentType.json;
+        request.write(body);
+        final response = await request.close();
+        final result = await utf8.decoder.bind(response).join();
+        if (response.statusCode == 401) throw const AuthenticationExpired();
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          throw HttpException('pull failed: ${response.statusCode} $result');
+        }
+        return result;
+      } finally {
+        client.close(force: true);
+      }
+    });
+    try {
+      return await Future.any([fetching, stopped.future]);
+    } finally {
+      http = null;
+      // Settle the losing future so a completed page is not retained until
+      // the connection eventually ends. The cancellation callback has no IO.
+      if (!stopped.isCompleted) stopped.complete('');
+    }
+  }
+
   Uri _endpoint(String path, bool websocket) => _base.replace(
     scheme: websocket
         ? (_base.scheme == 'https' || _base.scheme == 'wss' ? 'wss' : 'ws')
@@ -53,10 +103,11 @@ class LiveTransport {
   );
 
   Future<void> stream(
-    Map<String, dynamic> cursors,
+    List<String> channels,
     Future<void> Function(Map<String, dynamic>) apply,
-    Future<void> cancellation,
-  ) {
+    Future<void> cancellation, {
+    Future<void> Function()? catchUp,
+  }) {
     final done = Completer<void>();
     WebSocket? socket;
     StreamSubscription<dynamic>? subscription;
@@ -102,51 +153,83 @@ class LiveTransport {
           unawaited(opened.close());
           return;
         }
-        final scopes = cursors.keys.toList()..sort();
-        opened.add(
-          jsonEncode({
-            'type': 'subscribe',
-            'scopes': scopes,
-            'cursors': cursors,
-          }),
-        );
+        final scopes = channels.toList()..sort();
+        opened.add(jsonEncode({'type': 'subscribe', 'scopes': scopes}));
+        final pending = <Map<String, dynamic>>[];
+        int pendingBytes = 0;
+        bool draining = false;
+        bool overflowed = false;
+        Future<void> drain({bool initial = false}) async {
+          if (draining || ended || !subscribed) return;
+          draining = true;
+          try {
+            if (initial) await catchUp?.call();
+            while (!ended) {
+              if (overflowed) {
+                overflowed = false;
+                pending.clear();
+                pendingBytes = 0;
+                await catchUp?.call();
+                continue;
+              }
+              if (pending.isEmpty) break;
+              final page = pending.removeAt(0);
+              pendingBytes -= jsonEncode(page).length;
+              await apply(page);
+            }
+          } finally {
+            draining = false;
+          }
+        }
+
         subscription = opened.listen(
           (dynamic raw) {
-            subscription!.pause();
-            unawaited(
-              Future<void>(() async {
-                if (ended) return;
-                final text = raw is String
-                    ? raw
-                    : utf8.decode(raw as List<int>);
-                if (text.length > 8 * 1024 * 1024)
-                  throw const FormatException('live page too large');
-                final page = jsonDecode(text) as Map<String, dynamic>;
-                if (!subscribed) {
-                  final accepted = (page['scopes'] as List?)
-                      ?.cast<String>()
-                      .toList();
-                  accepted?.sort();
-                  if (page['type'] != 'subscribed' ||
-                      jsonEncode(accepted) != jsonEncode(scopes) ||
-                      (page['rejections'] as List?)?.isEmpty != true)
-                    throw const FormatException(
-                      'invalid live subscription acknowledgement',
-                    );
-                  subscribed = true;
-                } else {
-                  if (page.containsKey('type'))
-                    throw const FormatException('invalid live page');
-                  await apply(page);
+            if (ended) return;
+            try {
+              final text = raw is String ? raw : utf8.decode(raw as List<int>);
+              if (text.length > 8 * 1024 * 1024) {
+                throw const FormatException('live page too large');
+              }
+              final page = jsonDecode(text) as Map<String, dynamic>;
+              if (!subscribed) {
+                final accepted = (page['scopes'] as List?)
+                    ?.cast<String>()
+                    .toList();
+                accepted?.sort();
+                if (page['type'] != 'subscribed' ||
+                    jsonEncode(accepted) != jsonEncode(scopes) ||
+                    (page['rejections'] as List?)?.isEmpty != true) {
+                  throw const FormatException(
+                    'invalid live subscription acknowledgement',
+                  );
                 }
-              }).then(
-                (_) {
-                  if (!ended) subscription?.resume();
-                },
-                onError: (Object error, StackTrace stack) =>
-                    finish(error, stack),
-              ),
-            );
+                subscribed = true;
+                unawaited(
+                  drain(
+                    initial: true,
+                  ).catchError((Object e, StackTrace s) => finish(e, s)),
+                );
+              } else {
+                if (page.containsKey('type'))
+                  throw const FormatException('invalid live page');
+                if (pending.length >= 128 ||
+                    pendingBytes + text.length > 8 * 1024 * 1024) {
+                  // Keep the listener active and recover from durable cursors.
+                  // Never restart an in-flight HTTP page because traffic is busy.
+                  overflowed = true;
+                  pending.clear();
+                  pendingBytes = 0;
+                } else if (!overflowed) {
+                  pending.add(page);
+                  pendingBytes += jsonEncode(page).length;
+                }
+                unawaited(
+                  drain().catchError((Object e, StackTrace s) => finish(e, s)),
+                );
+              }
+            } catch (e, s) {
+              finish(e, s);
+            }
           },
           onError: (Object error, StackTrace stack) => finish(error, stack),
           onDone: () => finish(
@@ -160,8 +243,3 @@ class LiveTransport {
     return done.future;
   }
 }
-
-LiveTransport websocketTransport({
-  required String url,
-  required FutureOr<String> Function() token,
-}) => LiveTransport._(Uri.parse(url), token);

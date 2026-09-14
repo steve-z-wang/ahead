@@ -40,7 +40,7 @@ In another terminal, from the repository root:
 node examples/rust-round-trip/client.mts
 ```
 
-The client opens `example-client.sqlite`, starts WebSocket sync and subscribes to `book:demo`. It may first print null while its cache is empty, then the entry with text `Hello from the server`.
+The client opens `example-client.sqlite`, connects to the backend and subscribes to `book:demo`. It catches up over HTTP and receives subsequent changes over WebSocket. It may first print null while its cache is empty, then the entry with text `Hello from the server`.
 
 The CLI accepts `edit TEXT`, `offline`, `online`, `status` and `quit`. `AHEAD_DATABASE` selects a different local SQLite file, and `AHEAD_URL` selects a backend URL.
 

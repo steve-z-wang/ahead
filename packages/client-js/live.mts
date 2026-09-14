@@ -4,21 +4,24 @@ import type { Transport } from "./connection.mts";
 
 export type LiveSubscription = {
   scopes: string[];
-  cursors: Record<string, number>;
 };
-export type LiveTransport = {
+type ServerConnection = {
   readonly push: Transport;
   stream(
     subscription: LiveSubscription,
     apply: (page: object) => Promise<void>,
     signal: AbortSignal,
+    catchUp: () => Promise<void>,
   ): Promise<void>;
 };
-/** Node WebSocket catch-up/streaming, with HTTP mutation push using the same credentials. */
-export function websocketTransport(options: {
+export type ServerOptions = {
   url: string;
   token: string | (() => string | Promise<string>);
-}): LiveTransport {
+};
+/** Internal sockets and HTTP adapter for one server connection. */
+export function createServerConnection(
+  options: ServerOptions,
+): ServerConnection {
   const base = new URL(options.url.replace(/\/$/, "") + "/sync/live");
   base.protocol =
     base.protocol === "https:" || base.protocol === "wss:" ? "wss:" : "ws:";
@@ -30,13 +33,34 @@ export function websocketTransport(options: {
       ...options,
       url: http.toString().replace(/\/$/, ""),
     }),
-    stream(subscription, apply, signal) {
+    stream(subscription, apply, signal, catchUp) {
       return new Promise<void>((resolve, reject) => {
         let socket: WebSocket | undefined;
         let ended = false;
         let subscribed = false;
-        let queued = 0;
-        let tail = Promise.resolve();
+        const pages: object[] = [];
+        let processing = false;
+        let recovery = false;
+        const drain = async () => {
+          if (processing || ended) return;
+          processing = true;
+          socket?.pause();
+          try {
+            while (!ended && (recovery || pages.length)) {
+              if (recovery) {
+                recovery = false;
+                await catchUp();
+              } else {
+                await apply(pages.shift()!);
+              }
+            }
+          } catch (error) {
+            finish(error);
+          } finally {
+            processing = false;
+            if (!ended) socket?.resume();
+          }
+        };
         const finish = (error?: unknown) => {
           if (ended) return;
           ended = true;
@@ -83,34 +107,33 @@ export function websocketTransport(options: {
             });
             current.on("message", (data) => {
               if (ended) return;
-              if (++queued > 64)
-                return finish(Error("live receive queue exceeded"));
-              current.pause();
-              tail = tail
-                .then(async () => {
-                  if (ended) return;
-                  const page = JSON.parse(data.toString());
-                  if (!subscribed) {
-                    if (
-                      page.type !== "subscribed" ||
-                      !Array.isArray(page.scopes) ||
-                      JSON.stringify([...page.scopes].sort()) !==
-                        JSON.stringify([...subscription.scopes].sort()) ||
-                      page.rejections?.length !== 0
-                    )
-                      throw Error("invalid live subscription acknowledgement");
-                    subscribed = true;
-                  } else {
-                    if (page.type !== undefined)
-                      throw Error("invalid live page");
-                    await apply(page);
+              try {
+                const page = JSON.parse(data.toString());
+                if (!subscribed) {
+                  if (
+                    page.type !== "subscribed" ||
+                    !Array.isArray(page.scopes) ||
+                    JSON.stringify([...page.scopes].sort()) !==
+                      JSON.stringify([...subscription.scopes].sort()) ||
+                    page.rejections?.length !== 0
+                  )
+                    throw Error("invalid live subscription acknowledgement");
+                  subscribed = true;
+                  recovery = true;
+                } else {
+                  if (page.type !== undefined) throw Error("invalid live page");
+                  if (pages.length === 64) {
+                    // Keep the in-flight HTTP request alive. Its completion advances
+                    // the durable cursor even under sustained incoming traffic.
+                    pages.length = 0;
+                    recovery = true;
                   }
-                })
-                .catch(finish)
-                .finally(() => {
-                  queued--;
-                  if (!ended && queued === 0) current.resume();
-                });
+                  pages.push(page);
+                }
+                void drain();
+              } catch (error) {
+                finish(error);
+              }
             });
           })
           .catch(finish);

@@ -28,3 +28,16 @@ try {
  if(seen[0]!==2||seen[seen.length-1]!==1)throw Error(`watch ${seen}`);
  if(await client.client.freeze()===null)throw Error('native freeze');
 }finally{await client.close();await rm(directory,{recursive:true,force:true})}
+
+// A failed generated connection setup must close the real native handle before rethrowing.
+const {Client}=await import('../../packages/client-js/index.mts');
+const {strict:assert}=await import('node:assert');
+const originalOpen=Client.open;
+let opened:Awaited<ReturnType<typeof Client.open>>|undefined;
+const failedDirectory=await mkdtemp(join(tmpdir(),'generated-failed-open-'));
+Client.open=async options=>(opened=await originalOpen.call(Client,options));
+try{
+ await assert.rejects(GeneratedClient.open({path:join(failedDirectory,'state.sqlite'),server:{url:'http://[',token:'secret'}}),/Invalid URL/);
+ assert.ok(opened);
+ await assert.rejects(opened.status(),/client_closed/);
+}finally{Client.open=originalOpen;await opened?.close();await rm(failedDirectory,{recursive:true,force:true});}

@@ -4,16 +4,11 @@ import {
   type ConnectionOptions,
   type Transport,
 } from "./connection.mts";
-export type {
-  Connection,
-  ConnectionOptions,
-  Transport,
-} from "./connection.mts";
+export type { Connection, ConnectionOptions } from "./connection.mts";
 import { Transaction, strictJson, type QuerySpec } from "./transaction.mts";
 export { Transaction, type QuerySpec } from "./transaction.mts";
-export { websocketTransport, type LiveTransport } from "./live.mts";
-import type { LiveTransport } from "./live.mts";
-export { httpTransport } from "./transport.mts";
+export type { ServerOptions } from "./live.mts";
+import { createServerConnection, type ServerOptions } from "./live.mts";
 import { createRequire } from "node:module";
 import { EventEmitter } from "node:events";
 const native = createRequire(import.meta.url)(
@@ -22,6 +17,7 @@ const native = createRequire(import.meta.url)(
 export type RecordValue = Record<string, unknown>;
 export class Client {
   #liveGeneration = 0;
+  #invalidateDownlink: (() => void) | undefined;
   #syncing: Promise<void> | undefined;
   #tasks: Promise<void> | undefined;
   #connection: Connection | undefined;
@@ -122,6 +118,7 @@ export class Client {
   }
   subscribe(channel: string) {
     this.#liveGeneration++;
+    this.#invalidateDownlink?.();
     return this.#exclusive(() =>
       this.#send({ op: "channel", channel, subscribed: true }).then((value) => {
         this.#events.emit("channels");
@@ -132,6 +129,7 @@ export class Client {
   }
   unsubscribe(channel: string) {
     this.#liveGeneration++;
+    this.#invalidateDownlink?.();
     return this.#exclusive(() =>
       this.#send({ op: "channel", channel, subscribed: false }).then(
         (value) => {
@@ -142,14 +140,8 @@ export class Client {
       ),
     );
   }
-  connectLive(
-    live: LiveTransport,
-    options: ConnectionOptions = {},
-  ): Promise<Connection> {
-    return this.connect(live, options);
-  }
   async connect(
-    transport: Transport | LiveTransport,
+    server: ServerOptions,
     options: ConnectionOptions = {},
   ): Promise<Connection> {
     if (this.#closed || this.#closing) throw Error("client_closed");
@@ -161,7 +153,16 @@ export class Client {
       finished = resolve;
     });
     try {
-      const live = typeof transport === "function" ? undefined : transport;
+      if (
+        !server ||
+        typeof server !== "object" ||
+        typeof server.url !== "string" ||
+        !(
+          typeof server.token === "string" || typeof server.token === "function"
+        )
+      )
+        throw Error("connect requires server: {url, token}");
+      const live = createServerConnection(server);
       let refreshing: Promise<void> | undefined;
       const driverOptions = {
         ...options,
@@ -188,8 +189,8 @@ export class Client {
         );
       const connection = await startConnection(
         (event) => control(event),
-        (t) => this.#runSync(t, live !== undefined),
-        live ? live.push : (transport as Transport),
+        (t) => this.#runSync(t),
+        live.push,
         driverOptions,
       );
       let session: AbortController | undefined;
@@ -198,61 +199,86 @@ export class Client {
         streamEpoch++;
         session?.abort();
       };
-      const streaming = live
-        ? await startConnection(
-            (event) => control(event, "live"),
-            async (request) => {
-              await request("live", "");
-            },
-            async (_kind, _body, signal) => {
-              const epoch = ++streamEpoch;
-              const current = new AbortController();
-              session = current;
-              const cancel = () => current.abort();
-              signal?.addEventListener("abort", cancel, { once: true });
-              if (signal?.aborted) cancel();
-              try {
-                const snapshot = await this.#exclusive(async () => ({
-                  status: await this.#send({ op: "status" }),
-                  generation: this.#liveGeneration,
-                }));
-                if (
-                  current.signal.aborted ||
-                  epoch !== streamEpoch ||
-                  snapshot.status.channels.length === 0
-                )
-                  return "";
-                const cursors = Object.fromEntries(
-                  snapshot.status.channels.map((scope: string) => [
-                    scope,
-                    snapshot.status.cursors[scope] ?? 0,
-                  ]),
-                );
-                await live.stream(
-                  { scopes: snapshot.status.channels, cursors },
-                  (page) =>
-                    this.#exclusive(async () => {
-                      if (
-                        !current.signal.aborted &&
-                        epoch === streamEpoch &&
-                        snapshot.generation === this.#liveGeneration
-                      ) {
-                        await this.#send({ op: "pull", page });
-                        this.#events.emit("work");
-                      }
-                    }),
-                  current.signal,
-                );
-                return "";
-              } finally {
-                current.abort();
-                signal?.removeEventListener("abort", cancel);
-                if (session === current) session = undefined;
+      this.#invalidateDownlink = invalidate;
+      const streaming = await startConnection(
+        (event) => control(event, "live"),
+        async (request) => {
+          await request("live", "");
+        },
+        async (_kind, _body, signal) => {
+          const epoch = ++streamEpoch;
+          const current = new AbortController();
+          session = current;
+          const cancel = () => current.abort();
+          signal?.addEventListener("abort", cancel, { once: true });
+          if (signal?.aborted) cancel();
+          try {
+            const snapshot = await this.#exclusive(async () => {
+              const generation = this.#liveGeneration;
+              return { status: await this.#send({ op: "status" }), generation };
+            });
+            if (
+              current.signal.aborted ||
+              epoch !== streamEpoch ||
+              snapshot.generation !== this.#liveGeneration ||
+              snapshot.status.channels.length === 0
+            )
+              return "";
+            const valid = () =>
+              !current.signal.aborted &&
+              epoch === streamEpoch &&
+              snapshot.generation === this.#liveGeneration;
+            const catchUp = async () => {
+              for (const scope of snapshot.status.channels) {
+                for (;;) {
+                  const body = await this.#exclusive(() =>
+                    valid()
+                      ? this.#send({ op: "downlinkRequest", scope })
+                      : Promise.resolve(undefined),
+                  );
+                  if (body === undefined || !valid()) return;
+                  const response = await live.push(
+                    "pull",
+                    body,
+                    current.signal,
+                  );
+                  const result = await this.#exclusive(async () => {
+                    if (!valid()) return;
+                    const result = await this.#send({
+                      op: "downlinkComplete",
+                      request: body,
+                      page: JSON.parse(response),
+                    });
+                    this.#events.emit("work");
+                    return result;
+                  });
+                  if (!result?.continues) break;
+                }
               }
-            },
-            driverOptions,
-          )
-        : undefined;
+            };
+            await live.stream(
+              { scopes: snapshot.status.channels },
+              async (page) => {
+                const disposition = await this.#exclusive(async () => {
+                  if (!valid()) return;
+                  const result = await this.#send({ op: "downlinkLive", page });
+                  if (result === "applied") this.#events.emit("work");
+                  return result;
+                });
+                if (disposition === "recover") await catchUp();
+              },
+              current.signal,
+              catchUp,
+            );
+            return "";
+          } finally {
+            current.abort();
+            signal?.removeEventListener("abort", cancel);
+            if (session === current) session = undefined;
+          }
+        },
+        driverOptions,
+      );
       const channels = () => {
         invalidate();
         void streaming?.wake().catch(options.onError ?? (() => {}));
@@ -279,7 +305,10 @@ export class Client {
           this.#events.off("channels", channels);
           invalidate();
           await Promise.all([streaming?.close(), connection.close()]);
-          if (this.#connection === result) this.#connection = undefined;
+          if (this.#connection === result) {
+            this.#connection = undefined;
+            this.#invalidateDownlink = undefined;
+          }
         },
       };
       this.#connection = result;
@@ -289,15 +318,12 @@ export class Client {
       finished();
     }
   }
-  sync(
-    transport: (kind: string, body: string) => Promise<string>,
-  ): Promise<void> {
-    return this.#runSync(transport, false);
-  }
-  #runSync(transport: Transport, pushOnly: boolean): Promise<void> {
+  #runSync(transport: Transport): Promise<void> {
     if (this.#syncing) return this.#syncing;
     const run = async () => {
-      await this.#exclusive(() => this.#send({ op: "startSync", pushOnly }));
+      await this.#exclusive(() =>
+        this.#send({ op: "startSync", pushOnly: true }),
+      );
       for (;;) {
         const action = await this.#exclusive(() => this.#send({ op: "next" }));
         if (action === null) return;
