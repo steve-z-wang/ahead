@@ -2,7 +2,7 @@
 
 The three test layers share data, not implementations:
 
-1. Crate tests live beside their Rust modules. `integration/rust` connects the real Rust client and server state machines and checks deterministic ACK/Pull/restart traces against expected visible state.
+1. Crate tests live beside their Rust modules. `crates/sim` connects the real Rust client and server state machines in one process and checks every invariant after every step of random and named scenarios; see `crates/sim/README.md`.
 2. `bindings` tests language callbacks and native lifetimes; `persistence` tests caller-owned transactions with actual PostgreSQL/Prisma; `generated-api` compiles positive/negative TypeScript fixtures and executes generated Dart/TypeScript against native Rust.
 3. `e2e` starts an actual HTTP backend, PostgreSQL and local SQLite, then exercises both languages, normalization, rejection, lost responses and nonblocking local edits.
 

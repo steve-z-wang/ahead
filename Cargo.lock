@@ -53,7 +53,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "ahead-integration"
+name = "ahead-server"
+version = "0.1.0"
+dependencies = [
+ "ahead-core",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "ahead-sim"
 version = "0.1.0"
 dependencies = [
  "ahead-client",
@@ -62,16 +72,6 @@ dependencies = [
  "ahead-sqlite",
  "serde_json",
  "tempfile",
-]
-
-[[package]]
-name = "ahead-server"
-version = "0.1.0"
-dependencies = [
- "ahead-core",
- "serde",
- "serde_json",
- "thiserror",
 ]
 
 [[package]]

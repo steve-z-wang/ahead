@@ -1,0 +1,13 @@
+[package]
+name = "ahead-sim"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+ahead-core = { path = "../core" }
+ahead-client = { path = "../client" }
+ahead-server = { path = "../server" }
+ahead-sqlite = { path = "../sqlite" }
+serde_json.workspace = true
+tempfile.workspace = true

@@ -61,13 +61,15 @@ fixtures/
 | Part | What it is |
 | --- | --- |
 | Clients | `Client<SqliteStore>`, one temporary SQLite file each. Real files, so "crash" is dropping the client and reopening the same path, and DDL reconciliation is on the path too. |
-| Server | `ahead_server` over an in-memory host that implements claim, receipt, head, scan, load, publish. The one in `integration/rust/tests/scenarios.rs` is the starting point. PostgreSQL semantics are proven separately in `integration/persistence`. |
+| Server | `ahead_server` over an in-memory host that implements claim, receipt, head, scan, load, publish. PostgreSQL semantics are proven separately in `integration/persistence`. |
 | Network | Two queues, requests and responses. No clock. Delay is "not delivered this step"; reorder, duplicate and drop are queue operations chosen by the RNG. |
 | RNG | One seeded generator; every random choice comes from it, so a seed reproduces a run exactly. |
 | Trace | The list of actions taken. Printed on failure; used by the shrinker. |
 | Oracle | The reference answer. Records, per record, the authoritative content the server holds and its stamp; per client, the set of mutations not yet settled. It does not compute the merged view. |
 
 The oracle is deliberately small. It knows semantics (what the server accepted, what each client has been told) and nothing about how the engine stores or replays. A large oracle that mirrors engine code would only prove the engine agrees with a copy of itself.
+
+The oracle is not a separate module: `MemHost`'s own tables (authoritative content and stamps) and each client's recorded receipts (the pending side, via `pending_count`) play that role; the invariants read those directly.
 
 ### Actions
 
@@ -88,19 +90,19 @@ Each step the RNG picks one:
 
 ### Invariants
 
-Checked after every step:
+The seven checks in `crates/sim/src/invariants.rs::CHECKS`, run after every step:
 
-- Each client's authoritative base for every record equals the oracle's content at the stamp the client has accepted.
-- Each client's pending set equals the oracle's unsettled set for that client.
-- Per record, the local stamp never decreases. Per channel, the cursor never decreases.
-- Handler invocations on the server equal the number of distinct accepted mutations (P1).
-- A client with nothing pending and every subscribed channel at head holds the server's current content (convergence).
-- Claim rows belong to subscribed channels; a record row has at least one claim; a tombstone has no record row (the #8 invariants).
-- The receipt a client stored equals the receipt the server stored, byte for byte.
+- `stamps never decrease`: per record, a client's stored stamp never regresses.
+- `cursors never decrease`: per channel, a client's stored cursor never regresses.
+- `no mutation executes twice`: no `(clientId, batchSequence, ordinal)` triple reaches the server's handler more than once.
+- `no pending means converged`: a client with nothing pending and every subscribed channel at head holds the server's current content.
+- `claims belong to subscriptions`: every claim row's channel is one the client is subscribed to.
+- `record rows have a claim`: every record row has a claim or a pending mutation.
+- `receipts match server`: the receipt a client stored equals the receipt the server stored, byte for byte.
 
 ### Two kinds of test on one harness
 
-- `tests/invariants.rs` runs `for seed in 0..N { step; check }`. `N` defaults to a few hundred so `cargo test` stays fast; `SIM_SEEDS=100000 cargo test -p sim` runs the long form, for a nightly job. A failure prints the seed and the trace.
+- `tests/invariants.rs` runs `for seed in 0..N { step; check }`. `N` defaults to 60 seeds of 120 steps so `cargo test` stays fast; `SIM_SEEDS=5000 SIM_STEPS=300 cargo test -p ahead-sim --test invariants` runs the long form, for a nightly job. A failure prints the seed and the trace. `random_sequences_violate_no_invariant` runs with direct writes off; `random_sequences_with_direct_writes` is `#[ignore]`d until #33 is fixed.
 - The other files are named scenarios: a hand-written action list and a Given/When/Then assertion, one per guarantee clause. The test name is the guarantee.
 
 ### Shrinking
@@ -113,10 +115,10 @@ Two models with one relation (an `Entry` with `Comment` children), two or three 
 
 ### Order of work
 
-1. Port the three `fixtures/scenarios` cases from `crates/sqlite/tests/stamp_scenarios.rs` as the first named scenarios. This fixes the harness API.
-2. Add the random invariant runner.
-3. Fill the remaining named scenarios for every `unproven` and `partial` entry in [guarantees](guarantees.md).
-4. Delete `integration/rust/tests/scenarios.rs`; its 64 interleavings are a subset of what the runner covers.
+1. Done: the three `fixtures/scenarios` cases are `crates/sim/tests/distribution.rs`.
+2. Done: `crates/sim/tests/invariants.rs`.
+3. Remaining: named scenarios for the clauses [guarantees](guarantees.md) still marks `partial`: P4 after a schema change, D4 child membership, R3 crash at every commit, C3 queued bytes across a schema change, and the two clauses opened by #32 and #33.
+4. Done: the old in-process integration crate under `integration/` is deleted.
 
 ## Adding a test
 
