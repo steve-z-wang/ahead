@@ -10,6 +10,7 @@ export function httpTransport(options: {
       typeof options.token === "function"
         ? await options.token()
         : options.token;
+    if (signal?.aborted) throw Error("connection_closed");
     const response = await fetch(
       `${base}/sync/${kind === "push" ? "mutations" : "pull"}`,
       {

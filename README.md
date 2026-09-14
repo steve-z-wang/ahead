@@ -18,7 +18,7 @@ Local-first apps read and write data on the device, so everyday interactions don
 
 ![Ahead architecture: local state and background sync](docs/assets/architecture.svg)
 
-Generated clients currently sync over HTTP. The WebSocket streaming shown in the diagram is [planned for these clients](https://github.com/zanminwang/ahead/issues/35).
+Clients push mutations over HTTP. On connection, they catch up from saved progress over HTTP, then receive ongoing record updates over WebSocket. Ahead manages this as one connection.
 
 On your server, **handlers** process writes and **loaders** read records to send to clients. A **channel** groups record changes for clients to subscribe to; `notify` marks which records changed.
 
@@ -62,14 +62,14 @@ The compiler generates the client used below and the backend's `Handlers` and `L
 
 ```ts
 // Open the local database and connect.
-import { GeneratedClient, httpTransport } from "./generated/client.ts";
+import { GeneratedClient } from "./generated/client.ts";
 
 const client = await GeneratedClient.open({
   path: "local.sqlite",
-  transport: httpTransport({
+  server: {
     url: "http://127.0.0.1:4242",
     token: "demo-user",
-  }),
+  },
 });
 
 ```

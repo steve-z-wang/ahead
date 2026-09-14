@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Subscribe {
     #[serde(rename = "type")]
     kind: String,

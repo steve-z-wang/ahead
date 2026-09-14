@@ -31,7 +31,7 @@ void main() {
       var client = await Client.open(
         path: path,
         schema: schema,
-        
+
         libraryPath: Platform.environment['AHEAD_LIBRARY']!,
       );
       try {
@@ -140,7 +140,7 @@ void main() {
         client = await Client.open(
           path: path,
           schema: schema,
-          
+
           libraryPath: Platform.environment['AHEAD_LIBRARY']!,
         );
         expect(await client.freeze(), frozen);
@@ -165,13 +165,13 @@ void main() {
       final client = await Client.open(
         path: '${dir.path}/db',
         schema: schema,
-        
+
         libraryPath: Platform.environment['AHEAD_LIBRARY']!,
       );
       final errors = <Object>[];
       try {
         final starting = client.connect(
-          (_, __) async => throw StateError('no requests expected'),
+          SyncServer(url: 'http://127.0.0.1:1', token: () => 'secret'),
           onError: errors.add,
         );
         await Future.wait([starting, client.close()]);
@@ -180,7 +180,9 @@ void main() {
         await client.close();
         await (await starting).close();
         await expectLater(
-          client.connect((_, __) async => ''),
+          client.connect(
+            SyncServer(url: 'http://127.0.0.1:1', token: () => 'secret'),
+          ),
           throwsStateError,
         );
       } finally {

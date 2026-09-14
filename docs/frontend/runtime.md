@@ -158,25 +158,15 @@ TypeScript's `query` and `readSql` take optional positional second arguments. Da
 
 Dart's savepoint also takes a zero-argument async callback and operates through the same `tx`. Await every call and nested callback. Savepoints must be properly nested, not run concurrently. An escaped transaction, unfinished operation or overlapping savepoint fails. Inside the transaction use `tx` reads; an outer `raw` read can wait behind the current transaction. TypeScript's `Transaction.finish()` is runtime-owned bookkeeping; applications should not call it.
 
-## Transports
+## Server connection
 
-`sync(transport)` performs one synchronization run until Rust has no further action for that run. `connect(transport, options)` starts background scheduling and returns a connection; only one connection may be active on a client. Network I/O happens outside the local transaction queue, so a delayed response does not hold a local write open.
-
-| Interface | Signature / options |
-| --- | --- |
-| TypeScript `Transport` | `(kind: string, body: string, signal?: AbortSignal) => Promise<string>` |
-| Dart `Transport` | `Future<String> Function(String kind, String body)` |
-| `httpTransport` (TypeScript) | `{ url: string, token: string \| (() => string \| Promise<string>) }` |
-| TypeScript `ConnectionOptions` | `onError?: (error: unknown) => void`, `refreshAuth?: () => Promise<void>` |
-| Dart `connect` options | Named `onError:` and `refreshAuth:` callbacks |
-
-The transport sends the supplied JSON body unchanged and returns response JSON text. `push` maps to `POST /sync/mutations`; `pull` maps to `POST /sync/pull`. A non-success response must throw. TypeScript's `httpTransport` sets `error.status` on HTTP failures and forwards the abort signal. A token function is evaluated per request, so it can read refreshed credentials. The [client setup guide](setup.md#connect-to-your-backend) gives the equivalent implementation.
+Pass `server` when opening the generated client, or call `connect` on the raw client after opening local storage. TypeScript accepts `ServerOptions`; Dart uses `SyncServer`. Only one connection may be active per client. Network I/O happens outside the local transaction queue.
 
 === "TypeScript"
 
     ```ts
     const connection = await raw.connect(
-      httpTransport({ url: backendUrl, token: () => accessToken }),
+      { url: backendUrl, token: () => accessToken },
       {
         onError: error => console.error(error),
         refreshAuth: async () => { accessToken = await renewAccessToken(); },
@@ -187,17 +177,35 @@ The transport sends the supplied JSON body unchanged and returns response JSON t
 === "Flutter"
 
     ```dart
-    // Use the transport from Client setup, reading your current token per request.
     final connection = await raw.connect(
-      transport,
+      SyncServer(url: backendUrl, token: () => accessToken),
       onError: (error) => print(error),
       refreshAuth: () async { accessToken = await renewAccessToken(); },
     );
     ```
 
-Here `backendUrl`, `accessToken` and `renewAccessToken` belong to your application. A TypeScript transport signals expired authentication with an error whose `status` is `401`; Dart throws `AuthenticationExpired()`. The connection can then invoke `refreshAuth`. Other errors go through the background connection's error/retry handling; manual `sync` rejects to its caller. Do not swallow failures or return an error page as a successful protocol response.
+| Option | TypeScript | Dart |
+| --- | --- | --- |
+| `url` | HTTP or HTTPS backend base URL | HTTP or HTTPS backend base URL |
+| `token` | String or function returning a string/promise | Function returning a string/future |
+| `onError` | `(error: unknown) => void`, in connection options | Named callback on `connect` / `open` |
+| `refreshAuth` | `() => Promise<void>`, in connection options | Named async callback on `connect` / `open` |
 
-Current generated clients use HTTP sync. The backend also serves WebSocket, but a built-in generated-client WebSocket transport is [tracked separately](https://github.com/zanminwang/ahead/issues/35). `connect` does not mean a WebSocket is open.
+Here `backendUrl`, `accessToken` and `renewAccessToken` belong to your application. Credentials travel in authorization headers. Token functions run for new requests and connections, so they can read refreshed credentials. Authentication failures can invoke `refreshAuth`; background failures reach `onError` and retry with backoff.
+
+### Catch-up and live updates
+
+Ahead manages these phases automatically:
+
+1. Connect to `/sync/live` and subscribe to the current channel set. The server installs listeners before acknowledging the subscription.
+2. Fetch missing records through `POST /sync/pull`, starting from each channel's saved cursor. Queue WebSocket pages arriving while catch-up runs.
+3. Continue receiving WebSocket updates. HTTP and WebSocket pages enter the same serialized Rust processing path, using each channel's saved cursor.
+
+For either source, a page already covered by the cursor is discarded. A page spanning the current cursor applies only its unseen changes; for example, at cursor `100`, a page covering `90 → 120` applies changes after `100` and advances to `120`. Only a page starting beyond the current cursor has a gap and requires HTTP recovery. Pages update SQLite and watches through the same engine logic.
+
+Mutation submission runs independently through `POST /sync/mutations`. A connection with no subscribed channels can still submit mutations without opening a socket.
+
+Reconnection and subscription changes repeat catch-up from saved progress. The client checks that every HTTP response and queued WebSocket page belongs to the current session before applying it. Pause and close cancel requests and sockets; resume creates a new session. The runtime does not poll for remote changes.
 
 ## Connection controls
 
@@ -211,7 +219,7 @@ TypeScript calls the returned object `Connection`; Dart calls it `RuntimeConnect
 | `close()` | Permanently stop this connection; the client database stays open |
 | `closed` (Dart) | Future that completes when the connection closes |
 
-All controls return promise/future void. Pause/close abandon pending responses; TypeScript also passes cancellation to its transport. Persisted frozen requests remain available for retry. After close, create a new connection through the raw client to resume sync. `await raw.close()` closes its connection and native database resources and is idempotent; subsequent client operations fail.
+All controls return promise/future void. Pause/close cancel network activity and discard responses from the canceled session. Persisted frozen requests remain available for retry. After close, create a new connection through the raw client to resume sync. `await raw.close()` closes its connection and native database resources and is idempotent; subsequent client operations fail.
 
 ## Pending work and recovery
 
@@ -281,9 +289,9 @@ A schema can require host I/O, such as an upload, before a mutation can be sent.
 
 Callback failures are recorded as failed tasks rather than rethrown by the runner. Inspect `pendingTasks` or `recordStatus` to display them. To retry, set the failed key to `pending`, then run callbacks again. Mark ready only when the prerequisite actually completed.
 
-## Manual protocol
+## Protocol primitives
 
-These are advanced interfaces for a custom driver. Prefer `sync` or `connect`, which manage sequencing for you. Do not interleave a manual driver with a background connection.
+These low-level engine methods support protocol tests and tooling. Application synchronization is managed by `connect`; calling these methods alongside an active connection can interfere with its sequencing.
 
 | Method | Input and return |
 | --- | --- |

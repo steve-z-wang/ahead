@@ -7,6 +7,13 @@ typedef ConnectionControl =
 
 /// Rust owns scheduling; this class supplies timers and cancellable network waits.
 class RuntimeConnection {
+  RuntimeConnection? _live;
+  void Function()? _invalidateLive;
+  void attachLive(RuntimeConnection live, void Function() invalidate) {
+    _live = live;
+    _invalidateLive = invalidate;
+  }
+
   final ConnectionControl _control;
   final Future<void> Function(Transport) _sync;
   final Transport _transport;
@@ -133,6 +140,8 @@ class RuntimeConnection {
     if (_stopped) return;
     _paused = true;
     _cancelRequests();
+    _invalidateLive?.call();
+    await _live?.pause();
     await _command('pause');
     try {
       await _activeSync;
@@ -142,6 +151,7 @@ class RuntimeConnection {
 
   Future<void> resume() async {
     if (_stopped) return;
+    await _live?.resume();
     _paused = false;
     await _command('resume');
     _notify();
@@ -149,6 +159,7 @@ class RuntimeConnection {
 
   Future<void> wake() async {
     if (_stopped) return;
+    await _live?.wake();
     await _command('wake');
     _notify();
   }
@@ -158,6 +169,8 @@ class RuntimeConnection {
     _stopped = true;
     _cancelRequests();
     _notify();
+    _invalidateLive?.call();
+    await _live?.close();
     try {
       await _command('stop');
     } finally {

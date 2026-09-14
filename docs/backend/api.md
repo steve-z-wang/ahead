@@ -158,10 +158,10 @@ Unexpected exceptions abort the batch transaction. Do not translate every except
 | Route | Purpose |
 | --- | --- |
 | `POST /sync/mutations` | Receive mutation batches |
-| `POST /sync/pull` | Materialize changed records through loaders |
-| `/sync/live` (WebSocket) | Serve the backend live protocol |
+| `POST /sync/pull` | Materialize changed records through loaders for catch-up and gap recovery |
+| `/sync/live` (WebSocket) | Subscribe to channels and stream ongoing record changes |
 
-The generated clients currently use the two HTTP routes; built-in client WebSocket integration is [pending](https://github.com/zanminwang/ahead/issues/35). Listener errors reject. `await server.close()` releases the listener and its live connections; your application must separately close its database pool. The supported listener owns its server; mounting into an application-owned HTTP server is not currently exposed.
+Generated clients use all three routes automatically from one `server` configuration. The WebSocket subscription acknowledgement confirms that channel listeners are installed before HTTP catch-up starts, so changes during catch-up can be queued and reconciled. Listener errors reject. `await server.close()` releases the listener and its live connections; your application must separately close its database pool. The supported listener owns its server; mounting into an application-owned HTTP server is not currently exposed.
 
 ## Background writes
 

@@ -61,19 +61,19 @@ These examples open local storage without a connection. A fresh database returns
 
 ## Connect to your backend
 
-Start the [tutorial backend](../getting-started.md), then open a client with a transport:
+Start the [tutorial backend](../getting-started.md), then connect the client:
 
 === "TypeScript"
 
     ```ts
-    import { GeneratedClient, httpTransport } from './generated/client.ts';
+    import { GeneratedClient } from './generated/client.ts';
 
     const client = await GeneratedClient.open({
       path: 'local.sqlite',
-      transport: httpTransport({
+      server: {
         url: 'http://127.0.0.1:4242',
         token: 'demo-user',
-      }),
+      },
       connection: { onError: console.error },
     });
     await client.channels.subscribe('book:demo');
@@ -82,43 +82,27 @@ Start the [tutorial backend](../getting-started.md), then open a client with a t
 === "Flutter"
 
     ```dart
-    import 'dart:convert';
-    import 'dart:io';
-    import 'package:ahead/ahead.dart';
     import 'generated/generated.dart';
-
-    final http = HttpClient();
-    Future<String> transport(String kind, String body) async {
-      final route = kind == 'push' ? 'mutations' : 'pull';
-      final request = await http.postUrl(
-        Uri.parse('http://127.0.0.1:4242/sync/$route'),
-      );
-      request.headers.set('authorization', 'Bearer demo-user');
-      request.headers.contentType = ContentType.json;
-      request.write(body);
-      final response = await request.close();
-      final text = await utf8.decoder.bind(response).join();
-      if (response.statusCode == 401) throw AuthenticationExpired();
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw HttpException('Sync failed: HTTP ${response.statusCode}');
-      }
-      return text;
-    }
 
     final client = await GeneratedClient.open(
       path: 'local.sqlite',
       libraryPath: '/absolute/path/to/ahead/target/debug/libahead_dart.dylib',
-      transport: transport,
+      server: SyncServer(
+        url: 'http://127.0.0.1:4242',
+        token: () => 'demo-user',
+      ),
       onError: (error) => print(error),
     );
     await client.channels.subscribe('book:demo');
     ```
 
-The transport forwards the supplied JSON unchanged. Replace the demo URL and token with your application's endpoint and credentials. On a physical device, localhost refers to that device; use a reachable development-server address.
+Configure the server once. Ahead submits mutations over HTTP, catches up from saved channel cursors over HTTP, and receives ongoing record changes over WebSocket. Every received page passes through the Rust engine into local SQLite and updates `watch` subscriptions.
 
-TypeScript includes `httpTransport`; Flutter supplies the Dart transport function shown above. For expiring credentials, use `refreshAuth` and read the current token on each request. [Transport contracts](runtime.md#transports) explain error handling.
+Subscribing wakes the connection; it does not wait for initial records. A client with no subscribed channels can still push mutations. Subscription changes update live synchronization automatically. Replace the demo URL and token with your application's endpoint and credentials. On a physical device, localhost refers to that device; use a reachable development-server address.
 
-Subscribing wakes background sync but does not wait for initial data. The current clients use HTTP. Built-in client WebSocket integration is tracked in [issue #35](https://github.com/zanminwang/ahead/issues/35).
+Omit `server` to open local storage without starting a connection.
+
+For expiring credentials, supply a token function and `refreshAuth`. See [server connection options](runtime.md#server-connection).
 
 ## Watch and write
 
@@ -181,9 +165,8 @@ In Flutter, use the watch stream with `StreamBuilder<List<Entry>>`; retain it fo
     // When the owner of this client finishes:
     await subscription.cancel();
     await client.close();
-    http.close(force: true);
     ```
 
-These connection calls assume you supplied a transport at open. Database/client lifetime belongs to the application; subscriptions belong to their views. Close your own HTTP client after closing Ahead.
+Pausing cancels network activity; resuming reconnects and catches up from saved progress. Database/client lifetime belongs to the application; watch subscriptions belong to their views.
 
 See [Client API](client-api.md) for typed calls, [offline work and sync](sync.md) for connection/recovery behavior, and [advanced client APIs](runtime.md) for SQL, savepoints and prerequisites.

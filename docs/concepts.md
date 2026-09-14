@@ -67,11 +67,12 @@ A newer deletion withdraws the record across channels. Its tombstone is retained
 
 The backend's loader is the sync read path: after notification identifies changed records, it supplies their current authorized contents. This separation lets your local record schema differ from your backend database layout.
 
+Ahead uses one connection: HTTP submits mutations and catches up missing records; WebSocket delivers ongoing changes. Initial connection, reconnection and gap recovery use saved channel cursors. Received records pass through the Rust engine into SQLite.
+
 ## Current limits
 
 - A malformed pull change can be skipped while the cursor advances. A cursor is not an unconditional proof that every malformed change was applied successfully.
 - Live wakeups are process-local. Multi-process deployments need an application-provided committed notification mechanism.
-- Generated clients currently use HTTP sync; the backend has WebSocket support, with built-in client integration tracked in [issue #35](https://github.com/zanminwang/ahead/issues/35).
 - Production-scale cache performance requires measurement with your working set.
 
 See [sync and recovery](frontend/sync.md) for application behavior and [local storage](frontend/storage.md) for storage constraints.

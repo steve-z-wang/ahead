@@ -40,7 +40,7 @@ In another terminal, from the repository root:
 node examples/rust-round-trip/client.mts
 ```
 
-The client opens `example-client.sqlite`, starts background sync and subscribes to `book:demo`. It may first print null while its cache is empty, then the entry with text `Hello from the server`.
+The client opens `example-client.sqlite`, connects to the backend and subscribes to `book:demo`. It catches up over HTTP and receives subsequent changes over WebSocket. It may first print null while its cache is empty, then the entry with text `Hello from the server`.
 
 The CLI accepts `edit TEXT`, `offline`, `online`, `status` and `quit`. `AHEAD_DATABASE` selects a different local SQLite file, and `AHEAD_URL` selects a backend URL.
 
@@ -61,6 +61,16 @@ await client.transaction(tx => tx.mutate.edit({
 ```
 
 The transaction resolves after local commit. It does not wait for the handler to accept the mutation.
+
+### Watch another client
+
+Keep the first client open and start a second one from another terminal, using its own local database:
+
+```sh
+AHEAD_DATABASE=example-client-peer.sqlite node examples/rust-round-trip/client.mts
+```
+
+Edit the entry in either client. After the backend accepts it, the other client's watcher updates through WebSocket without a manual sync call. Each client reads its own SQLite file; the shared channel carries the server's record changes.
 
 ## 4. Work offline
 

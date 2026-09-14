@@ -99,3 +99,23 @@ fn backend_emitter_suffixes_older_mutation_versions() {
     assert!(ts.contains(" edit(call: HandlerCall<Tx, EditInput>)"));
     assert!(ts.contains(" editV1(call: HandlerCall<Tx, EditV1Input>)"));
 }
+
+#[test]
+fn generated_clients_expose_one_server_connection() {
+    let ts = ahead_compiler::client_typescript("@example/custom-runtime");
+    assert!(ts.contains("type ServerOptions"));
+    assert!(ts.contains("server?: ServerOptions"));
+    assert!(ts.contains("client.connect(options.server"));
+    assert!(!ts.contains("LiveTransport"));
+    assert!(!ts.contains("transport?:"));
+    assert!(
+        ts.find("connection options were removed").unwrap() < ts.find("await Client.open").unwrap()
+    );
+    let schema = compile("model Entry { id String title String @@id(id) } mutation Edit { entry Entry.update<title> }").unwrap();
+    let dart = ahead_compiler::dart(&schema);
+    assert!(dart.contains("show RuntimeConnection, SyncServer"));
+    assert!(dart.contains("SyncServer? server"));
+    assert!(dart.contains("client.connect(server"));
+    assert!(!dart.contains("LiveTransport"));
+    assert!(!dart.contains("Transport? transport"));
+}

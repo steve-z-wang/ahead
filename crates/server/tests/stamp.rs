@@ -120,3 +120,39 @@ fn publish_requires_cursor_and_stamp_from_the_host() {
         assert!(!err.is_empty(), "{bad} must be rejected");
     }
 }
+
+#[test]
+fn live_negotiation_establishes_current_heads_and_rejects_cursor_modes() {
+    let host = Fixed::new(json!([]), Value::Null);
+    let result = run(ahead_server::live::negotiate(
+        "u",
+        br#"{"type":"subscribe","scopes":["a"]}"#,
+        &host,
+    ))
+    .unwrap();
+    assert_eq!(result.subscriptions[0].from_cursor, 5);
+    for cursors in [
+        json!({"a":0}),
+        json!({}),
+        json!({"a":6}),
+        json!({"a":-1}),
+        json!({"a":1.5}),
+        json!({"a":"0"}),
+        json!({"a":null}),
+        json!({"a":9007199254740992u64}),
+        json!({"a":0,"b":0}),
+        json!(null),
+        json!([]),
+    ] {
+        let request = json!({"type":"subscribe","scopes":["a"],"cursors":cursors});
+        assert!(
+            run(ahead_server::live::negotiate(
+                "u",
+                request.to_string().as_bytes(),
+                &host
+            ))
+            .is_err(),
+            "accepted {request}"
+        );
+    }
+}

@@ -7,6 +7,7 @@ pub struct TransportAction {
 }
 #[derive(Default)]
 pub struct SyncCycle {
+    push_only: bool,
     completed: BTreeSet<String>,
     active: Option<TransportAction>,
 }
@@ -14,6 +15,12 @@ impl SyncCycle {
     pub fn restart(&mut self) {
         self.completed.clear();
         self.active = None;
+        self.push_only = false;
+    }
+    /// Use HTTP only for queued writes; authoritative pages arrive through the live stream.
+    pub fn restart_push_only(&mut self) {
+        self.restart();
+        self.push_only = true;
     }
     pub fn next<S: ClientStore>(
         &mut self,
@@ -29,6 +36,9 @@ impl SyncCycle {
             };
             self.active = Some(action.clone());
             return Ok(Some(action));
+        }
+        if self.push_only {
+            return Ok(None);
         }
         // Subscribed channels only: a pull on any other channel would be discarded by
         // `apply_page`, and a checkpoint the client cannot await settles on arrival.
@@ -72,4 +82,59 @@ impl SyncCycle {
         self.active = None;
         Ok(())
     }
+}
+
+impl<S: ClientStore> Client<S> {
+    /// The downlink never borrows the mutation cycle: HTTP writes can progress independently.
+    pub fn downlink_request(&mut self, channel: &str) -> Result<String> {
+        if !self.desired_channels()?.iter().any(|c| c == channel) {
+            return Err(invalid("channel is not subscribed"));
+        }
+        let request = PullRequest {
+            client_id: self.client_id().into(),
+            channel: channel.into(),
+            from_cursor: self.cursor(channel)?,
+        };
+        String::from_utf8(request.encode()?).map_err(|_| invalid("utf8"))
+    }
+
+    /// One incoming path for HTTP catch-up and WebSocket pages. Optional request
+    /// metadata only validates HTTP response identity; cursor policy is shared.
+    pub fn receive_downlink(
+        &mut self,
+        page: PullPage,
+        request: Option<PullRequest>,
+    ) -> Result<DownlinkProgress> {
+        page.validate()?;
+        if let Some(request) = request
+            && (page.channel != request.channel || page.from_cursor != request.from_cursor)
+        {
+            return Err(invalid("response does not match pull request"));
+        }
+        let continues = page.changes.len() == 50;
+        if continues && page.to_cursor <= page.from_cursor {
+            return Err(invalid("pull page did not advance"));
+        }
+        let cursor = self.cursor(&page.channel)?;
+        let disposition =
+            if !self.desired_channels()?.contains(&page.channel) || page.to_cursor <= cursor {
+                "covered"
+            } else if page.from_cursor > cursor {
+                "recover"
+            } else {
+                // apply_page filters changes already covered by the durable cursor.
+                self.apply_page(page)?;
+                "applied"
+            };
+        Ok(DownlinkProgress {
+            disposition,
+            continues,
+        })
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct DownlinkProgress {
+    pub disposition: &'static str,
+    pub continues: bool,
 }
