@@ -7,7 +7,7 @@ import {createBackend,MutationRejected,RECORD} from '../../../packages/server/in
 import {PrismaPersistence,prismaTransactions,prisma} from '../../../packages/persistence-prisma/index.mts';
 const require=createRequire(import.meta.url);
 const {PrismaClient}=require('../../bindings/node/generated/client');
-const native=require('../../../bindings/node/otter-node.node');
+const native=require('../../../bindings/node/ahead-node.node');
 const db=new PrismaClient();
 const schema={enums:[],models:[{name:'Task',identity:['id'],fields:[{name:'id',type:{kind:'scalar',name:'string'},nullable:false},{name:'title',type:{kind:'scalar',name:'string'},nullable:false}]}]};
 const config={schema,mutations:[{name:'edit',version:1,slots:[{name:'task',model:'Task',operation:'update',cardinality:'single',allowedPatchFields:['title']}]}]};
@@ -74,7 +74,7 @@ test('rejected mutation publishes nothing even though it called notify first',as
 test('unknown error rolls back entire batch including earlier effects and client claim',async()=>{
  const head=(await pull()).toCursor;
  await assert.rejects(()=>backend.push('alice',push('crash',1,[mutation(1,'before','e'),mutation(2,'crash','f')])),/business crash/);
- assert.equal(await count('business_task'),3);assert.equal((await pull()).toCursor,head);assert.equal((await db.$queryRawUnsafe("SELECT * FROM otter_client WHERE client_id='crash'")).length,0);
+ assert.equal(await count('business_task'),3);assert.equal((await pull()).toCursor,head);assert.equal((await db.$queryRawUnsafe("SELECT * FROM ahead_client WHERE client_id='crash'")).length,0);
 });
 test('unsupported versions abort before handlers, invalid bodies settle with empty checkpoints',async()=>{
  const before=called;await assert.rejects(()=>backend.push('alice',push('version',1,[mutation(1,'ignored','v'),{...mutation(2,'bad','w'),version:2}])),/mutation_version_unsupported/);assert.equal(called,before);
@@ -103,7 +103,7 @@ test('loader defects abort pull instead of silently advancing its cursor',async(
 test('registered translator rejects one mutation; malformed translator code aborts transaction',async()=>{
  const make=code=>createBackend({config,database:prisma(db),authenticate,translateRejection:()=>code,handlers:{async edit({tx}){await tx.$executeRawUnsafe("INSERT INTO business_task(id,title) VALUES('translated','temporary')");throw new Error('product refusal');}},loaders:{async task(){return []}}});
  const receipt=JSON.parse(await make('product.denied').push('alice',push('translated',1,[mutation(1,'x')])));assert.deepEqual(receipt.rejections,[{ordinal:1,code:'product.denied'}]);assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='translated'")).length,0);
- await assert.rejects(()=>make('Not a machine code').push('alice',push('bad-translator',1,[mutation(1,'x')])),/stable machine code/);assert.equal((await db.$queryRawUnsafe("SELECT * FROM otter_client WHERE client_id='bad-translator'")).length,0);
+ await assert.rejects(()=>make('Not a machine code').push('alice',push('bad-translator',1,[mutation(1,'x')])),/stable machine code/);assert.equal((await db.$queryRawUnsafe("SELECT * FROM ahead_client WHERE client_id='bad-translator'")).length,0);
 });
 
 test('HTTP adapter authenticates and serves the real native persistence path',async()=>{
@@ -122,7 +122,7 @@ test('undefined loader entries remain defects and never become tombstones',async
 test('publication failures poison push and roll back business writes',async()=>{
  const broken=createBackend({config,database:prisma(db),authenticate,handlers:{async edit({tx,notify}){await tx.$executeRawUnsafe("INSERT INTO business_task(id,title) VALUES('caught','bad')");notify({channel:'shared',records:[{model:'Unknown',identity:{id:'caught'}}]});}},loaders:{async task(){return []}}});
  await assert.rejects(()=>broken.push('alice',push('caught',1,[mutation(1,'x')])),/unregistered loader/);
- assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='caught'")).length,0);assert.equal((await db.$queryRawUnsafe("SELECT * FROM otter_client WHERE client_id='caught'")).length,0);
+ assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='caught'")).length,0);assert.equal((await db.$queryRawUnsafe("SELECT * FROM ahead_client WHERE client_id='caught'")).length,0);
 });
 test('nonfinite nullable loader values are defects rather than null clears',async()=>{
  const expanded=structuredClone(config);expanded.schema.models[0].fields.push({name:'score',type:{kind:'scalar',name:'float'},nullable:true});
@@ -297,8 +297,8 @@ test('publish allocates one stamp per notify and stores it on the invalidation r
  const stamps=await db.$transaction(async tx=>{const storage=new PrismaPersistence(tx);const ref={model:'Task',identity:{id:'stamped'},identityKey:'{"id":"stamped"}'};
   const a=await storage.call({op:'publish',channel:'stamp-a',...ref});const b=await storage.call({op:'publish',channel:'stamp-b',...ref});const a2=await storage.call({op:'publish',channel:'stamp-a',...ref});return [a,b,a2];});
  assert.deepEqual(stamps.map(s=>s.stamp),[1,2,3]);assert.deepEqual(stamps.map(s=>s.cursor),[1,1,2]);
- const record=await db.$queryRawUnsafe(`SELECT stamp FROM otter_record WHERE model='Task' AND identity_key='{"id":"stamped"}'`);assert.equal(Number(record[0].stamp),3);
- const rows=await db.$queryRawUnsafe(`SELECT channel, cursor, stamp FROM otter_invalidation WHERE identity_key='{"id":"stamped"}' ORDER BY channel`);
+ const record=await db.$queryRawUnsafe(`SELECT stamp FROM ahead_record WHERE model='Task' AND identity_key='{"id":"stamped"}'`);assert.equal(Number(record[0].stamp),3);
+ const rows=await db.$queryRawUnsafe(`SELECT channel, cursor, stamp FROM ahead_invalidation WHERE identity_key='{"id":"stamped"}' ORDER BY channel`);
  assert.deepEqual(rows.map(r=>[r.channel,Number(r.cursor),Number(r.stamp)]),[['stamp-a',2,3],['stamp-b',1,2]]);
 });
 test('scan returns the stamp of each row',async()=>{
@@ -308,6 +308,6 @@ test('scan returns the stamp of each row',async()=>{
 test('concurrent notifies of one record receive distinct stamps',async()=>{
  const notify=()=>db.$transaction(async tx=>{await backend.notify(tx,{channel:'race-stamp',records:[{model:'Task',identity:{id:'stamp-race'}}]});});
  await Promise.all([notify(),notify(),notify(),notify()]);
- const record=await db.$queryRawUnsafe(`SELECT stamp FROM otter_record WHERE model='Task' AND identity_key='{"id":"stamp-race"}'`);assert.equal(Number(record[0].stamp),4);
+ const record=await db.$queryRawUnsafe(`SELECT stamp FROM ahead_record WHERE model='Task' AND identity_key='{"id":"stamp-race"}'`);assert.equal(Number(record[0].stamp),4);
  const page=await pull('race-stamp',0);assert.equal(page.changes.length,1);assert.equal(page.changes[0].stamp,4);
 });

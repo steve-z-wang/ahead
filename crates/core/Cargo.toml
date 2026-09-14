@@ -1,5 +1,5 @@
 [package]
-name = "otter-core"
+name = "ahead-core"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

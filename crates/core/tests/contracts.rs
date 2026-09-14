@@ -1,4 +1,4 @@
-use otter_core::*;
+use ahead_core::*;
 use serde_json::{Value, json};
 
 fn schema() -> Schema {
@@ -196,7 +196,7 @@ fn shared_wire_fixtures_preserve_counter_and_checkpoint_boundaries() {
 }
 
 #[test]
-fn field_default_and_record_stamp_round_trip_and_otter_prefix_is_rejected() {
+fn field_default_and_record_stamp_round_trip_and_ahead_prefix_is_rejected() {
     let field: FieldDescriptor = serde_json::from_value(
         json!({"name":"rank","nullable":false,"type":{"kind":"scalar","name":"int"},"default":0}),
     )
@@ -223,7 +223,7 @@ fn field_default_and_record_stamp_round_trip_and_otter_prefix_is_rejected() {
     );
     assert!(unstamped.unwrap_err().to_string().contains("stamp"));
     let bad = Schema::from_value(
-        json!({"enums":[],"models":[{"name":"otter_x","identity":["id"],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}}]}]}),
+        json!({"enums":[],"models":[{"name":"ahead_x","identity":["id"],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}}]}]}),
     );
     assert!(bad.is_err());
 }

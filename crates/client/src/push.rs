@@ -3,7 +3,7 @@ use crate::engine::Engine;
 use crate::queue::Queued;
 use crate::store::ClientStore;
 use crate::{Mutation, Operation, OperationKind, mutate::apply_to_row};
-use otter_core::{
+use ahead_core::{
     ChannelCheckpoint, PushReceipt, PushRequest, RecordKey, Rejection, Result, canonical_json,
     invalid,
 };
@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 const MAX_MUTATIONS: usize = 20;
 
 fn keys_of<'a>(
-    schema: &otter_core::Schema,
+    schema: &ahead_core::Schema,
     ops: impl Iterator<Item = &'a Operation>,
 ) -> Result<BTreeSet<String>> {
     ops.map(|op| schema.record_key(&op.model, &op.identity)?.encoded())
@@ -26,7 +26,7 @@ fn all_ops(m: &Mutation) -> impl Iterator<Item = &Operation> {
 impl<S: ClientStore> Engine<'_, S> {
     fn client_id(&mut self) -> Result<String> {
         Ok(self
-            .scalar("SELECT client_id FROM otter_client", &[])?
+            .scalar("SELECT client_id FROM ahead_client", &[])?
             .and_then(|v| v.as_str().map(str::to_owned))
             .unwrap_or_default())
     }
@@ -76,7 +76,7 @@ impl<S: ClientStore> Engine<'_, S> {
         let mut selected: Vec<Queued> = vec![];
         let mut chosen = BTreeSet::new();
         let next_push = self
-            .scalar("SELECT next_push FROM otter_client", &[])?
+            .scalar("SELECT next_push FROM ahead_client", &[])?
             .map(|v| crate::engine::as_u64(&v))
             .transpose()?
             .unwrap_or(1);

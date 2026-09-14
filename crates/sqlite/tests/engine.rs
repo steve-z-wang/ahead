@@ -1,10 +1,10 @@
-use otter_client::ddl::{FRAMEWORK_DDL, reconcile};
-use otter_client::engine::Engine;
-use otter_client::queue::OpKind;
-use otter_client::rows::{decode_row, merge_identity};
-use otter_client::{ClientStore, Mutation, Operation, OperationKind};
-use otter_core::{ChannelCheckpoint, RecordKey, Schema};
-use otter_sqlite::SqliteStore;
+use ahead_client::ddl::{FRAMEWORK_DDL, reconcile};
+use ahead_client::engine::Engine;
+use ahead_client::queue::OpKind;
+use ahead_client::rows::{decode_row, merge_identity};
+use ahead_client::{ClientStore, Mutation, Operation, OperationKind};
+use ahead_core::{ChannelCheckpoint, RecordKey, Schema};
+use ahead_sqlite::SqliteStore;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
@@ -19,7 +19,7 @@ fn store() -> (tempfile::TempDir, SqliteStore) {
     let dir = tempfile::tempdir().unwrap();
     let mut s = SqliteStore::open(dir.path().join("db")).unwrap();
     s.execute_batch(FRAMEWORK_DDL).unwrap();
-    s.execute("INSERT INTO otter_client VALUES ('c', 1, 1, 1)", &[])
+    s.execute("INSERT INTO ahead_client VALUES ('c', 1, 1, 1)", &[])
         .unwrap();
     s.begin().unwrap();
     reconcile(&mut s, &schema()).unwrap();
@@ -51,11 +51,11 @@ fn model_rows_round_trip_booleans_lists_and_copy_aside() {
     e.copy_aside(model, &json!({"id":"t1"})).unwrap();
     e.copy_aside(model, &json!({"id":"missing"})).unwrap();
     assert_eq!(
-        e.row_get("otter_before_Task", model, &json!({"id":"t1"}))
+        e.row_get("ahead_before_Task", model, &json!({"id":"t1"}))
             .unwrap(),
         Some(row("t1", "B"))
     );
-    assert_eq!(e.count("otter_before_Task").unwrap(), 1);
+    assert_eq!(e.count("ahead_before_Task").unwrap(), 1);
     assert_eq!(
         e.identities_where("Task", model, &[("done".into(), json!(false))])
             .unwrap(),
@@ -70,7 +70,7 @@ fn model_rows_round_trip_booleans_lists_and_copy_aside() {
     assert_eq!(e.row_get("Task", model, &json!({"id":"t1"})).unwrap(), None);
     assert_eq!(
         changed,
-        BTreeSet::from(["Task".to_string(), "otter_before_Task".to_string()])
+        BTreeSet::from(["Task".to_string(), "ahead_before_Task".to_string()])
     );
     s.rollback().unwrap();
     assert_eq!(

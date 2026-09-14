@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 //! Helpers shared by every client-facing integration test in this crate.
-use otter_client::*;
-use otter_sqlite::SqliteStore;
+use ahead_client::*;
+use ahead_sqlite::SqliteStore;
 use serde_json::{Value, json};
 
 pub fn schema() -> Schema {

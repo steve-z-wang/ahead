@@ -2,7 +2,7 @@
 use crate::engine::Engine;
 use crate::store::ClientStore;
 use crate::{Mutation, OperationKind};
-use otter_core::{RecordKey, Result, Schema, canonical_json, invalid};
+use ahead_core::{RecordKey, Result, Schema, canonical_json, invalid};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 

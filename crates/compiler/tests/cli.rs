@@ -1,7 +1,7 @@
 use std::{fs, process::Command};
 #[test]
 fn cli_retains_history_and_does_not_overwrite_on_break() {
-    let root = std::env::temp_dir().join(format!("otter-compiler-cli-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("ahead-compiler-cli-{}", std::process::id()));
     let input = root.join("input");
     let out = root.join("out");
     fs::create_dir_all(&input).unwrap();
@@ -12,7 +12,7 @@ fn cli_retains_history_and_does_not_overwrite_on_break() {
     )
     .unwrap();
     let compile = || {
-        Command::new(env!("CARGO_BIN_EXE_otter-sync"))
+        Command::new(env!("CARGO_BIN_EXE_ahead"))
             .arg("compile")
             .arg(&input)
             .arg(&out)
@@ -46,7 +46,7 @@ fn cli_retains_history_and_does_not_overwrite_on_break() {
 }
 #[test]
 fn cli_writes_backend_ts_with_the_requested_runtime_import() {
-    let root = std::env::temp_dir().join(format!("otter-compiler-backend-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("ahead-compiler-backend-{}", std::process::id()));
     let input = root.join("input");
     let out = root.join("out");
     fs::create_dir_all(&input).unwrap();
@@ -55,7 +55,7 @@ fn cli_writes_backend_ts_with_the_requested_runtime_import() {
         "model A { id UUID title String @@id(id) } mutation Save { a A.create }",
     )
     .unwrap();
-    let status = Command::new(env!("CARGO_BIN_EXE_otter-sync"))
+    let status = Command::new(env!("CARGO_BIN_EXE_ahead"))
         .arg("compile")
         .arg(&input)
         .arg(&out)

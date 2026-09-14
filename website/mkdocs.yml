@@ -4,15 +4,13 @@ site_url: https://steve-z-wang.github.io/ahead/
 repo_url: https://github.com/steve-z-wang/ahead
 repo_name: steve-z-wang/ahead
 edit_uri: ''
-docs_dir: .generated
+docs_dir: content
 site_dir: site
 strict: true
 theme:
   name: material
   language: en
   font: false
-  logo: assets/logo.svg
-  favicon: assets/logo.svg
   features:
     - navigation.tabs
     - navigation.sections
@@ -20,6 +18,7 @@ theme:
     - search.suggest
     - search.highlight
     - content.code.copy
+    - content.tabs.link
   palette:
     - scheme: default
       primary: custom
@@ -46,28 +45,31 @@ markdown_extensions:
 extra_css:
   - stylesheets/extra.css
 nav:
-  - Start:
-      - Home: index.md
-      - Quick start: examples/rust-round-trip/README.md
-      - Concepts: concepts.md
-  - Clients:
-      - TypeScript: packages/client-js/README.md
-      - Dart: packages/dart/README.md
-  - Backend:
-      - TypeScript SDK: packages/server/README.md
-      - Prisma: packages/persistence-prisma/README.md
-  - Project:
-      - Overview: project.md
-      - Compiler: crates/compiler/README.md
-      - Testing: integration/README.md
-      - Capacity: integration/rust/README.md
-      - Platforms: integration/platform/README.md
-      - Recovery: docs/architecture/compatibility-and-recovery.md
-      - Implementation: docs/implementation-progress.md
-      - Architecture: docs/architecture/code-organization.md
-      - Naming: docs/architecture/concepts-and-naming.md
-      - Roadmap: docs/next-things.md
-      - Documentation: docs/documentation.md
+  - Home: index.md
+  - Docs:
+      - Getting started:
+          - Run your first app: getting-started.md
+          - How Ahead works: concepts.md
+          - Find an interface: api-index.md
+      - Schema:
+          - Define models and mutations: schema/define.md
+          - Schema and compiler reference: schema/reference.md
+      - Frontend:
+          - Set up the client: frontend/setup.md
+          - Client API: frontend/client-api.md
+          - Offline work and sync: frontend/sync.md
+          - Local storage: frontend/storage.md
+          - Advanced client APIs: frontend/runtime.md
+          - Supported platforms: frontend/platforms.md
+      - Backend:
+          - Set up your backend: backend/setup.md
+          - Backend API: backend/api.md
+          - Database adapters: backend/database.md
+          - Prisma / PostgreSQL: backend/prisma.md
+      - Contributing:
+          - Contribute to the docs: contributing/documentation.md
+          - Testing: contributing/testing.md
+  - GitHub: https://github.com/steve-z-wang/ahead
 validation:
   links:
     not_found: warn

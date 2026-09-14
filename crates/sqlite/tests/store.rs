@@ -1,5 +1,5 @@
-use otter_client::ClientStore;
-use otter_sqlite::SqliteStore;
+use ahead_client::ClientStore;
+use ahead_sqlite::SqliteStore;
 use serde_json::json;
 
 fn store() -> (tempfile::TempDir, SqliteStore) {

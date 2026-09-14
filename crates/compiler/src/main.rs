@@ -10,13 +10,13 @@ fn read_json(path: &Path) -> Result<Value, String> {
 fn run() -> Result<(), String> {
     let args: Vec<_> = env::args().collect();
     if args.len() < 4 || args[1] != "compile" {
-        return Err("usage: otter-sync compile INPUT_DIR OUTPUT_DIR [--mutation-history FILE] [--initialize-mutation-history] [--schema-fence FILE] [--backend-runtime SPEC] [--client-runtime SPEC]".into());
+        return Err("usage: ahead compile INPUT_DIR OUTPUT_DIR [--mutation-history FILE] [--initialize-mutation-history] [--schema-fence FILE] [--backend-runtime SPEC] [--client-runtime SPEC]".into());
     }
     let out = Path::new(&args[3]);
     let mut history_path = out.join("mutation-history.json");
     let mut fence_path = out.join("schema.json");
-    let mut backend_runtime = String::from("@ottersync/server");
-    let mut client_runtime = String::from("@ottersync/client");
+    let mut backend_runtime = String::from("@ahead/server");
+    let mut client_runtime = String::from("@ahead/client");
     let mut initialize = false;
     let mut explicit_history = false;
     let mut index = 4;
@@ -65,7 +65,7 @@ fn run() -> Result<(), String> {
         source.push('\n');
         origins.push((start, path));
     }
-    let mut config = otter_compiler::compile(&source).map_err(|e| {
+    let mut config = ahead_compiler::compile(&source).map_err(|e| {
         let line = e
             .split(':')
             .next()
@@ -93,14 +93,14 @@ fn run() -> Result<(), String> {
         return Err("initial mutation history must begin at version 1".into());
     }
     if fence_path.exists() {
-        otter_compiler::check_fence(&read_json(&fence_path)?, &config["schema"])?;
+        ahead_compiler::check_fence(&read_json(&fence_path)?, &config["schema"])?;
     }
     let previous = if history_path.exists() {
         Some(read_json(&history_path)?)
     } else {
         None
     };
-    let history = otter_compiler::reconcile_history(&config, previous.as_ref())?;
+    let history = ahead_compiler::reconcile_history(&config, previous.as_ref())?;
     let historical: Vec<_> = history["mutations"]
         .as_object()
         .unwrap()
@@ -123,17 +123,17 @@ fn run() -> Result<(), String> {
         ),
         (
             out.join("generated.ts"),
-            otter_compiler::typescript(&config),
+            ahead_compiler::typescript(&config),
         ),
         (
             out.join("backend.ts"),
-            otter_compiler::backend_typescript(&config, &backend_runtime),
+            ahead_compiler::backend_typescript(&config, &backend_runtime),
         ),
         (
             out.join("client.ts"),
-            otter_compiler::client_typescript(&client_runtime),
+            ahead_compiler::client_typescript(&client_runtime),
         ),
-        (out.join("generated.dart"), otter_compiler::dart(&config)),
+        (out.join("generated.dart"), ahead_compiler::dart(&config)),
         (
             history_path,
             serde_json::to_string_pretty(&history).unwrap(),

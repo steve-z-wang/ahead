@@ -8,7 +8,7 @@ A **Model** describes client data. A **Record** is one instance, identified by a
 
 These are client-facing shapes. A Loader may assemble one Record from several backend tables, or expose several Models from the same business data. The Rust runtime receives schema descriptors; generated TypeScript and Dart types provide the language-facing API.
 
-See the [compiler guide](crates/compiler/README.md) for supported declarations and generated types.
+See the [compiler guide](schema/reference.md) for supported declarations and generated types.
 
 ## Mutation and local state
 
@@ -32,7 +32,7 @@ The application provides the transaction runner. Batch processing uses one outer
 
 Background jobs can also notify inside an existing application transaction. A notification inside that transaction is not proof of commit: use the SDK's completion check and invoke the returned notification hook only after the transaction resolves.
 
-The [backend SDK guide](packages/server/README.md) shows both registration and transaction-bound notification. The first adapter targets [Prisma/PostgreSQL](packages/persistence-prisma/README.md).
+The [backend SDK guide](backend/setup.md) shows both registration and transaction-bound notification. The first adapter targets [Prisma/PostgreSQL](backend/prisma.md).
 
 ## Channel, Cursor and Checkpoint
 
@@ -53,13 +53,25 @@ Consider one pending title edit:
 
 ACK and Pull can arrive in either order. If Pull arrives first, the stored cursor can satisfy the checkpoint when ACK later arrives. If ACK arrives first, optimism remains until the required Pull progress is applied under the existing settlement rules.
 
-A server may normalize the title or reject the edit. Rejections are retained in the local inbox so the application can explain the result to the user. See [recovery](docs/architecture/compatibility-and-recovery.md) for retry and rejection handling.
+A server may normalize the title or reject the edit. Rejections are retained in the local inbox so the application can explain the result to the user. See [recovery](frontend/storage.md) for retry and rejection handling.
+
+## Stamps across channels
+
+A **Stamp** orders content for one record across channels. When a record is notified, the backend allocates a newer stamp. The client applies a newer value and ignores delayed older content, regardless of which channel delivers it. Equal stamps are idempotent; inconsistent content for the same stamp is a diagnostic condition.
+
+A newer deletion withdraws the record across channels. Its tombstone is retained while other channel claims still need to confirm the deletion. Stamps are required on pull changes; they are separate from each channel's cursor. See the [stamp acceptance tests](https://github.com/steve-z-wang/ahead/blob/main/crates/sqlite/tests/stamp_scenarios.rs) for the ordering cases.
+
+## Local reads and sync reads
+
+`get`, `query`, relation accessors, raw SQL and `watch` read local SQLite through the Rust engine. They do not call a loader. Read-only SQL uses the on-disk tables rather than copying the full record set into a separate projection.
+
+The backend's loader is the sync read path: after notification identifies changed records, it supplies their current authorized contents. This separation lets your local record schema differ from your backend database layout.
 
 ## Current limits
 
-- A Record may be claimed through multiple Channels, but the first version has no cross-channel Record Revision or total ordering. Late responses can still expose the existing overlapping-channel limitations.
-- The reference client's per-change malformed Pull skip behavior is retained. A cursor is not an unconditional proof that every malformed change was applied successfully.
+- A malformed pull change can be skipped while the cursor advances. A cursor is not an unconditional proof that every malformed change was applied successfully.
 - Live wakeups are process-local. Multi-process deployments need an application-provided committed notification mechanism.
-- The SQLite implementation keeps a full in-memory state snapshot and creates an isolated projection for read-only SQL. Production-scale cache performance requires measurement.
+- Generated clients currently use HTTP sync; the backend has WebSocket support, with built-in client integration tracked in [issue #35](https://github.com/steve-z-wang/ahead/issues/35).
+- Production-scale cache performance requires measurement with your working set.
 
-The [implementation record](docs/implementation-progress.md) distinguishes verified behavior from planned work. [Next things](docs/next-things.md) preserves future proposals, including Record Revisions, without making them current guarantees.
+See [sync and recovery](frontend/sync.md) for application behavior and [local storage](frontend/storage.md) for storage constraints.

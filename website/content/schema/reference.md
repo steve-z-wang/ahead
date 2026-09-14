@@ -1,0 +1,112 @@
+# Schema compiler reference
+
+The compiler reads sorted `.model` files and generates client and backend interfaces for the same contract. State transitions execute in Rust; generated code performs typed construction, conversion and forwarding. Start with [define a schema](define.md) for a walkthrough.
+
+## Command
+
+```sh
+cargo run -p ahead-compiler -- compile INPUT_DIR OUTPUT_DIR \
+  --backend-runtime BACKEND_IMPORT \
+  --client-runtime CLIENT_IMPORT
+```
+
+| Argument / option | Meaning |
+| --- | --- |
+| `INPUT_DIR` | Directory containing `.model` files; sorted and compiled together |
+| `OUTPUT_DIR` | Destination for generated artifacts |
+| `--backend-runtime SPEC` | TypeScript backend import; default `@ahead/server` |
+| `--client-runtime SPEC` | TypeScript client import; default `@ahead/client` |
+| `--mutation-history FILE` | Retained mutation history; default output directory's `mutation-history.json` |
+| `--initialize-mutation-history` | Allow a missing explicitly selected history file; only version 1 declarations |
+| `--schema-fence FILE` | Published schema to check; default existing output `schema.json` |
+
+For source-checkout use, supply runtime paths relative to the output directory; see the [working command](define.md#generate-from-a-source-checkout). Default package names are not evidence of published packages. Unknown syntax or incompatible contracts fail with a diagnostic; syntax errors include source location. Validation runs before generated artifacts are replaced.
+
+## Outputs
+
+| File | Contents |
+| --- | --- |
+| `schema.json` | Client schema descriptor, requirements and mutation policies |
+| `backend.json` | Backend descriptor including supported mutation inputs |
+| `generated.ts` | TypeScript records, identities, patches, model facades and mutation builders |
+| `client.ts` | Schema-bound `GeneratedClient`, channels and runtime re-exports |
+| `backend.ts` | Typed `Handlers`, `Loaders`, inputs, record references and bound `createBackend` |
+| `generated.dart` | Dart models, patches, mutation builders and generated client |
+| `mutation-history.json` | Retained mutation versions and input contracts; path configurable |
+
+Dart output imports `package:ahead/ahead.dart`. Commit the history used to generate released clients; regenerating from an empty history loses compatibility information.
+
+## Fields and identities
+
+| Declaration | TypeScript | Dart | Meaning |
+| --- | --- | --- | --- |
+| `String` | `string` | `String` | Text |
+| `UUID` | `string` | `String` | UUID represented as text |
+| `Int` | `number` | `int` | Integer within the supported JSON safe range |
+| `Float` | `number` | `double` | Finite number |
+| `Bool` / `Boolean` | `boolean` | `bool` | Boolean |
+| `DateTime` | `Date` | `DateTime` | Converted to/from UTC wire text |
+| Enum name | Generated enum type | Generated enum type | One declared value |
+| `T?` | Nullable type | Nullable type | Field can be null |
+| `T[]` | Array | List | List of scalar/enum values |
+
+`@@id(field,...)` defines identity, including composite keys. Identity fields must be nonnullable. `@@unique(field,...)` declares a unique group. Generated patches exclude identity fields. Complete records contain all declared fields, including nullable ones; an optional patch field is a separate concept.
+
+TypeScript omission leaves a patch field unchanged; null clears a nullable field. Dart uses `Present<T>` to distinguish supplied values from omission. Generated TypeScript is intended for `exactOptionalPropertyTypes`.
+
+## Relations
+
+```text
+model Book {
+  id String
+  comments Comment[]
+  @@id(id)
+}
+model Comment {
+  id String
+  bookId String
+  book Book @reference(via: [bookId], onTargetDelete: delete)
+  @@id(id)
+}
+```
+
+A reference names the local fields matching the target identity. `onTargetDelete` accepts `none` (default) or `delete`. Inverse declarations generate navigation without storing another copy of the relationship. Singular inverses require a unique foreign key. Named references/inverses can disambiguate multiple relations; see the [parser tests](https://github.com/steve-z-wang/ahead/blob/main/crates/compiler/tests/compiler.rs) for validated examples.
+
+## Mutations
+
+```text
+mutation Edit {
+  entry Entry.update<text,note>
+  @@version(1)
+}
+```
+
+| Slot | Meaning |
+| --- | --- |
+| `entry Entry.create` | Complete record to create |
+| `entry Entry.update<text,note>` | Identity and patch restricted to these fields |
+| `entry Entry.delete` | Identity to delete |
+| `entry Entry.delete?` | Optional operation |
+| `entries Entry.delete[]` | List of operations |
+
+Builders emit operations in declared slot order. Slot bindings can connect operations; prerequisites and `@@sequence` specify dependencies. See [advanced declarations](define.md#relations-prerequisites-and-ordering) and [compiler tests](https://github.com/steve-z-wang/ahead/blob/main/crates/compiler/tests/compiler.rs). The generator does not implement your backend business logic or host prerequisite callbacks.
+
+## History and compatibility
+
+Backend descriptors retain declared mutation versions with their input schemas and known field sets. Latest handlers use names such as `edit`; older versions use `editV1`.
+
+Same-version changes must be backward compatible. Adding nullable create fields or additional permitted patch/enum values can be compatible. Required create fields, field removal, changed types, reordered slots, changed bindings and changed dependency policy require a new mutation version. Versions cannot decrease and retained mutations cannot disappear.
+
+An explicitly selected missing history requires `--initialize-mutation-history`, which refuses an existing history and declarations above version 1. The schema fence prevents removing published model/field names. Broader identity/type/nullability compatibility fences remain incomplete; a passing compile is not a guarantee that any local database migration is supported.
+
+See [local migration](../frontend/runtime.md#opening-and-schema-changes) and separately migrate your backend tables.
+
+## Verify generated APIs
+
+Build the root native libraries, then run:
+
+```sh
+bash integration/generated-api/verify.sh
+```
+
+The checks cover Rust parser/history/CLI behavior, TypeScript positive and expected-error fixtures, Node native integration, Dart analysis and Dart native integration.

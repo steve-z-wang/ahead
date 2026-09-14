@@ -13,8 +13,8 @@ pub mod rows;
 pub mod store;
 pub mod transport;
 
+pub use ahead_core::*;
 pub use connection::*;
-pub use otter_core::*;
 pub use query::{Direction, QueryOrder, QuerySpec};
 pub use store::*;
 pub use transport::*;
@@ -115,7 +115,7 @@ impl<S: ClientStore> Client<S> {
         store.begin()?;
         let opened = (|| {
             ddl::reconcile(&mut store, &schema)?;
-            let row = store.query("SELECT client_id, generation FROM otter_client", &[])?;
+            let row = store.query("SELECT client_id, generation FROM ahead_client", &[])?;
             let (client_id, generation) = match row.rows.first() {
                 Some(r) => (
                     r[0].as_str().unwrap_or("").to_string(),
@@ -123,7 +123,7 @@ impl<S: ClientStore> Client<S> {
                 ),
                 None => {
                     let id = uuid::Uuid::new_v4().to_string();
-                    store.execute("INSERT INTO otter_client (client_id, next_ordinal, next_push, generation) VALUES (?,1,1,1)", &[Value::from(id.clone())])?;
+                    store.execute("INSERT INTO ahead_client (client_id, next_ordinal, next_push, generation) VALUES (?,1,1,1)", &[Value::from(id.clone())])?;
                     (id, 1)
                 }
             };
@@ -181,7 +181,7 @@ impl<S: ClientStore> Client<S> {
     /// Bump the generation inside the open transaction; a stale writer fails here.
     fn fence(&mut self) -> Result<()> {
         let affected = self.store.execute(
-            "UPDATE otter_client SET generation = generation + 1 WHERE generation = ?",
+            "UPDATE ahead_client SET generation = generation + 1 WHERE generation = ?",
             &[Value::from(self.generation)],
         )?;
         if affected != 1 {
@@ -213,7 +213,7 @@ impl<S: ClientStore> Client<S> {
                     return Err(e);
                 }
                 self.generation += 1;
-                changed.insert("otter_client".into());
+                changed.insert("ahead_client".into());
                 self.notify(changed);
                 Ok(value)
             }
@@ -304,7 +304,7 @@ impl<S: ClientStore> Client<S> {
         }
         self.generation += 1;
         let mut changed = session.changed;
-        changed.insert("otter_client".into());
+        changed.insert("ahead_client".into());
         self.notify(changed);
         Ok(())
     }
@@ -386,7 +386,7 @@ impl<S: ClientStore> Client<S> {
         query::rows_to_objects(rows)
     }
     pub fn pending_count(&mut self) -> Result<usize> {
-        self.view(|e| Ok(e.count("otter_mutation")? as usize))
+        self.view(|e| Ok(e.count("ahead_mutation")? as usize))
     }
     pub fn before_image_count(&mut self) -> Result<usize> {
         let tables: Vec<String> = self

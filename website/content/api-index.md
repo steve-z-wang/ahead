@@ -1,0 +1,42 @@
+# API reference
+
+Use this index to find the interface you call or implement. The examples use the `Entry` model and `Edit` mutation from the [getting-started tutorial](getting-started.md). Generated names change with your schema: `Entry` becomes your model name, and `edit` becomes your mutation name.
+
+## Application interfaces
+
+| Interface | Use it to | Reference |
+| --- | --- | --- |
+| `GeneratedClient.open` | Open a local database and optionally start background sync | [Generated client](frontend/client-api.md#open-a-client) |
+| `client.models.<model>` | Read, query, watch and follow relations in local data | [Model APIs](frontend/client-api.md#model-apis) |
+| `client.transaction` | Commit local writes and queued mutations together | [Transactions](frontend/client-api.md#transactions) |
+| `tx.models.<model>` | Create, update or delete local-only records | [Local-only writes](frontend/client-api.md#local-only-writes) |
+| `tx.mutate.<mutation>` | Apply a declared local change and queue its backend operation | [Mutations](frontend/client-api.md#mutations) |
+| `client.channels` | Subscribe or unsubscribe to a named channel | [Channels](frontend/client-api.md#channels) |
+| `client.connection` | Pause, resume or wake background sync | [Connections](frontend/runtime.md#connection-controls) |
+| `client.status`, `client.close` | Inspect pending work and release resources | [Status and lifecycle](frontend/client-api.md#status-and-lifecycle) |
+| Model, Identity, Patch, Filter and Order types | Pass typed data to generated methods | [Generated data types](frontend/client-api.md#generated-data-types) |
+| `Handlers<Tx>`, `HandlerCall` | Implement each mutation's authoritative business logic | [Handlers](backend/api.md#handlers) |
+| `Loaders<Tx>`, `LoaderCall` | Return current records for synchronization | [Loaders](backend/api.md#loaders) |
+| `notify`, `NotifyArgs`, model reference functions | Tell Ahead which records changed on which channels | [Notifications](backend/api.md#notifications) |
+| `createBackend`, `Options<Tx>` | Connect your implementations to the backend runtime | [Backend setup](backend/api.md#createbackend) |
+| `backend.listen` | Serve sync requests and close the listener | [Listener](backend/api.md#listener) |
+| `Authenticate`, `devAuth` | Identify the caller | [Authentication](backend/api.md#authentication) |
+| `MutationRejected`, `translateRejection`, `onError` | Reject business operations and diagnose failures | [Errors](backend/api.md#errors) |
+| `backend.notify`, `backend.bindTransaction` | Notify about writes performed outside a handler | [Background writes](backend/api.md#background-writes) |
+| `Database`, `Persistence`, `prisma` | Run business and sync storage in the same database transaction | [Database adapters](backend/database.md) |
+
+## Advanced interfaces
+
+| Interface | Use it to | Reference |
+| --- | --- | --- |
+| `Client`, `Transaction`, `QuerySpec`, `RecordValue` | Access the generic runtime beneath generated APIs | [Client runtime](frontend/runtime.md) |
+| `Transport`, `httpTransport`, `ConnectionOptions` | Supply network I/O and refresh credentials | [Transports](frontend/runtime.md#transports) |
+| `RuntimeConnection`, `AuthenticationExpired` | Control Dart sync and signal expired credentials | [Connections](frontend/runtime.md#connection-controls) |
+| `recordStatus`, `dismissRejection`, `drop` | Inspect a record's pending work and handle rejected or unsent mutations | [Recovery APIs](frontend/runtime.md#pending-work-and-recovery) |
+| `pendingTasks`, `runPrerequisites`, `setReadiness` | Complete prerequisite I/O before a mutation can be sent | [Prerequisites](frontend/runtime.md#prerequisites) |
+| `freeze`, `acknowledge`, `applyPull` | Drive the low-level protocol in a custom integration | [Manual protocol](frontend/runtime.md#manual-protocol) |
+| `ReadPort`, `WritePort`, `LivePort`, model factories and codecs | Bind generated facades to a compatible runtime | [Generated extension points](frontend/client-api.md#extension-points) |
+| `loaderHooks`, `Native` | Prepare a loader call or supply the native backend binding | [Backend extension points](backend/api.md#extension-points) |
+| Compiler command and `.model` declarations | Generate and evolve the interface contract | [Schema compiler](schema/reference.md) |
+
+The generated application API is the normal entry point. Raw backend protocol methods marked `@internal` in the implementation are not a supported application integration surface; use `listen`, handlers, loaders and transaction-bound notifications.

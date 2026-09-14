@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'package:otter_sync/otter_sync.dart';
+import 'package:ahead/ahead.dart';
 import 'package:test/test.dart';
 
 void main() {

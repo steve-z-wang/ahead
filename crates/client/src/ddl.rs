@@ -1,48 +1,48 @@
 //! The tables are the schema record. Reconciliation makes them match the compiled schema or fails.
 use crate::store::ClientStore;
-use otter_core::{
+use ahead_core::{
     FieldDescriptor, ModelDescriptor, Result, ScalarType, Schema, ValueType, invalid,
 };
 use serde_json::Value;
 use std::collections::BTreeMap;
 
 pub const FRAMEWORK_TABLES: &[&str] = &[
-    "otter_client",
-    "otter_record",
-    "otter_claim",
-    "otter_subscription",
-    "otter_mutation",
-    "otter_mutation_operation",
-    "otter_mutation_dependency",
-    "otter_mutation_prerequisite",
-    "otter_push_checkpoint",
-    "otter_rejection",
+    "ahead_client",
+    "ahead_record",
+    "ahead_claim",
+    "ahead_subscription",
+    "ahead_mutation",
+    "ahead_mutation_operation",
+    "ahead_mutation_dependency",
+    "ahead_mutation_prerequisite",
+    "ahead_push_checkpoint",
+    "ahead_rejection",
 ];
 
 pub const FRAMEWORK_DDL: &str = "
-CREATE TABLE IF NOT EXISTS otter_client (
+CREATE TABLE IF NOT EXISTS ahead_client (
   client_id    TEXT PRIMARY KEY,
   next_ordinal INTEGER NOT NULL,
   next_push    INTEGER NOT NULL,
   generation   INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS otter_record (
+CREATE TABLE IF NOT EXISTS ahead_record (
   model TEXT NOT NULL, identity TEXT NOT NULL, stamp INTEGER NOT NULL,
   PRIMARY KEY (model, identity)
 );
-CREATE TABLE IF NOT EXISTS otter_claim (
+CREATE TABLE IF NOT EXISTS ahead_claim (
   channel TEXT NOT NULL, model TEXT NOT NULL, identity TEXT NOT NULL,
   PRIMARY KEY (channel, model, identity)
 );
-CREATE INDEX IF NOT EXISTS otter_claim_record ON otter_claim (model, identity);
-CREATE TABLE IF NOT EXISTS otter_subscription (
+CREATE INDEX IF NOT EXISTS ahead_claim_record ON ahead_claim (model, identity);
+CREATE TABLE IF NOT EXISTS ahead_subscription (
   channel TEXT PRIMARY KEY, cursor INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS otter_mutation (
+CREATE TABLE IF NOT EXISTS ahead_mutation (
   ordinal INTEGER PRIMARY KEY, name TEXT NOT NULL, version INTEGER NOT NULL, push INTEGER
 );
-CREATE TABLE IF NOT EXISTS otter_mutation_operation (
-  ordinal INTEGER NOT NULL REFERENCES otter_mutation(ordinal) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS ahead_mutation_operation (
+  ordinal INTEGER NOT NULL REFERENCES ahead_mutation(ordinal) ON DELETE CASCADE,
   position INTEGER NOT NULL,
   kind TEXT NOT NULL CHECK (kind IN ('wire','companion','effect')),
   model TEXT NOT NULL, identity TEXT NOT NULL,
@@ -50,24 +50,24 @@ CREATE TABLE IF NOT EXISTS otter_mutation_operation (
   \"values\" TEXT,
   PRIMARY KEY (ordinal, position)
 );
-CREATE INDEX IF NOT EXISTS otter_mutation_operation_record ON otter_mutation_operation (model, identity, ordinal, position);
-CREATE TABLE IF NOT EXISTS otter_mutation_dependency (
-  ordinal INTEGER NOT NULL REFERENCES otter_mutation(ordinal) ON DELETE CASCADE,
-  depends_on INTEGER NOT NULL REFERENCES otter_mutation(ordinal) ON DELETE CASCADE,
+CREATE INDEX IF NOT EXISTS ahead_mutation_operation_record ON ahead_mutation_operation (model, identity, ordinal, position);
+CREATE TABLE IF NOT EXISTS ahead_mutation_dependency (
+  ordinal INTEGER NOT NULL REFERENCES ahead_mutation(ordinal) ON DELETE CASCADE,
+  depends_on INTEGER NOT NULL REFERENCES ahead_mutation(ordinal) ON DELETE CASCADE,
   kind TEXT NOT NULL CHECK (kind IN ('lifecycle','sequence')),
   PRIMARY KEY (ordinal, depends_on),
   CHECK (depends_on < ordinal)
 );
-CREATE TABLE IF NOT EXISTS otter_mutation_prerequisite (
-  ordinal INTEGER NOT NULL REFERENCES otter_mutation(ordinal) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS ahead_mutation_prerequisite (
+  ordinal INTEGER NOT NULL REFERENCES ahead_mutation(ordinal) ON DELETE CASCADE,
   key TEXT NOT NULL, error TEXT,
   PRIMARY KEY (ordinal, key)
 );
-CREATE TABLE IF NOT EXISTS otter_push_checkpoint (
+CREATE TABLE IF NOT EXISTS ahead_push_checkpoint (
   push INTEGER NOT NULL, channel TEXT NOT NULL, cursor INTEGER NOT NULL,
   PRIMARY KEY (push, channel)
 );
-CREATE TABLE IF NOT EXISTS otter_rejection (
+CREATE TABLE IF NOT EXISTS ahead_rejection (
   ordinal INTEGER PRIMARY KEY, name TEXT NOT NULL, code TEXT NOT NULL, detail TEXT
 );
 ";
@@ -77,7 +77,7 @@ pub fn quote(name: &str) -> String {
 }
 
 pub fn before_table(model: &str) -> String {
-    format!("otter_before_{model}")
+    format!("ahead_before_{model}")
 }
 
 pub fn storage_type(value_type: &ValueType) -> &'static str {

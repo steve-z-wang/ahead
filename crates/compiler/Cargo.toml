@@ -1,11 +1,11 @@
 [package]
-name = "otter-compiler"
+name = "ahead-compiler"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 [dependencies]
-otter-core = { path = "../core" }
+ahead-core = { path = "../core" }
 serde_json.workspace = true
 [[bin]]
-name = "otter-sync"
+name = "ahead"
 path = "src/main.rs"

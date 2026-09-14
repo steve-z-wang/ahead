@@ -1,7 +1,7 @@
 //! Acceptance scenarios for per-record stamps across channels.
 mod common;
+use ahead_client::*;
 use common::*;
-use otter_client::*;
 
 fn stamped(channel: &str, from: u64, to: u64, stamp: u64, text: Option<&str>) -> PullPage {
     let mut p = page(channel, from, to, text);
@@ -24,7 +24,7 @@ fn delayed_page_from_another_channel_cannot_regress_newer_content() {
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "new");
     assert_eq!(c.cursor("a").unwrap(), 10);
     assert_eq!(c.cursor("b").unwrap(), 5);
-    assert_eq!(table_count(&mut c, "otter_claim"), 2);
+    assert_eq!(table_count(&mut c, "ahead_claim"), 2);
     // A catches up with the same change at its own stamp: still nothing to change.
     c.apply_page(stamped("a", 10, 11, 9, Some("new"))).unwrap();
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "new");
@@ -40,7 +40,7 @@ fn redelivered_page_is_a_no_op() {
     let again = c.apply_page(stamped("a", 0, 1, 1, Some("A"))).unwrap();
     assert!(again.stale);
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "A");
-    assert_eq!(table_count(&mut c, "otter_claim"), 1);
+    assert_eq!(table_count(&mut c, "ahead_claim"), 1);
 }
 
 /// Spec scenario 6: a delete with a newer stamp removes the record on the first channel
@@ -57,16 +57,16 @@ fn delete_across_channels_keeps_a_tombstone_until_every_claim_confirms() {
     // The delete reaches B first (stamp 4): record gone, A's claim remains as the tombstone marker.
     c.apply_page(stamped("b", 1, 2, 4, None)).unwrap();
     assert!(c.read(&key()).unwrap().is_none());
-    assert_eq!(table_count(&mut c, "otter_claim"), 1);
-    assert_eq!(table_count(&mut c, "otter_record"), 1);
+    assert_eq!(table_count(&mut c, "ahead_claim"), 1);
+    assert_eq!(table_count(&mut c, "ahead_record"), 1);
     // A delayed older upsert (stamp 3) on A must not resurrect the record.
     c.apply_page(stamped("a", 1, 2, 3, Some("A2"))).unwrap();
     assert!(c.read(&key()).unwrap().is_none());
-    assert_eq!(table_count(&mut c, "otter_record"), 1);
+    assert_eq!(table_count(&mut c, "ahead_record"), 1);
     // A's copy of the delete (stamp 5, A's own notification) clears the last claim and the tombstone.
     c.apply_page(stamped("a", 2, 3, 5, None)).unwrap();
-    assert_eq!(table_count(&mut c, "otter_claim"), 0);
-    assert_eq!(table_count(&mut c, "otter_record"), 0);
+    assert_eq!(table_count(&mut c, "ahead_claim"), 0);
+    assert_eq!(table_count(&mut c, "ahead_record"), 0);
 }
 
 /// Spec scenario 5: a record moves A -> B -> A. Each hop is a delete on the old channel and
@@ -91,7 +91,7 @@ fn move_between_channels_and_back() {
         c.read(&key()).unwrap().is_none(),
         "the newest stamp is B's delete"
     );
-    assert_eq!(table_count(&mut c, "otter_claim"), 1);
+    assert_eq!(table_count(&mut c, "ahead_claim"), 1);
     // The app's next notification on A (stamp 6) restores it.
     c.apply_page(stamped("a", 3, 4, 6, Some("back in A")))
         .unwrap();
@@ -113,10 +113,10 @@ fn reopen_preserves_stamps_claims_and_tombstones() {
     drop(c);
     let mut c = open(&path);
     assert!(c.read(&key()).unwrap().is_none());
-    assert_eq!(table_count(&mut c, "otter_record"), 1);
-    assert_eq!(table_count(&mut c, "otter_claim"), 1);
+    assert_eq!(table_count(&mut c, "ahead_record"), 1);
+    assert_eq!(table_count(&mut c, "ahead_claim"), 1);
     c.apply_page(stamped("a", 1, 2, 3, Some("stale"))).unwrap();
     assert!(c.read(&key()).unwrap().is_none());
     c.apply_page(stamped("a", 2, 3, 5, None)).unwrap();
-    assert_eq!(table_count(&mut c, "otter_record"), 0);
+    assert_eq!(table_count(&mut c, "ahead_record"), 0);
 }

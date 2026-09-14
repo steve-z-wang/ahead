@@ -1,7 +1,7 @@
 mod common;
+use ahead_client::*;
+use ahead_sqlite::SqliteStore;
 use common::*;
-use otter_client::*;
-use otter_sqlite::SqliteStore;
 use serde_json::{Value, json};
 
 fn stamped(channel: &str, from: u64, to: u64, stamp: u64, text: Option<&str>) -> PullPage {
@@ -19,22 +19,22 @@ fn channel_claims_and_cross_channel_delete() {
     c.apply_page(stamped("a", 0, 1, 1, Some("A"))).unwrap();
     c.apply_page(stamped("b", 0, 1, 2, Some("B"))).unwrap();
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
-    assert_eq!(table_count(&mut c, "otter_claim"), 2);
+    assert_eq!(table_count(&mut c, "ahead_claim"), 2);
     c.apply_page(stamped("a", 1, 2, 3, None)).unwrap();
     assert!(
         c.read(&key()).unwrap().is_none(),
         "a stamped delete applies across channels"
     );
     assert_eq!(
-        table_count(&mut c, "otter_claim"),
+        table_count(&mut c, "ahead_claim"),
         1,
         "b's claim is the pending tombstone confirmation"
     );
-    assert_eq!(table_count(&mut c, "otter_record"), 1);
+    assert_eq!(table_count(&mut c, "ahead_record"), 1);
     c.apply_page(stamped("b", 1, 2, 4, None)).unwrap();
-    assert_eq!(table_count(&mut c, "otter_claim"), 0);
+    assert_eq!(table_count(&mut c, "ahead_claim"), 0);
     assert_eq!(
-        table_count(&mut c, "otter_record"),
+        table_count(&mut c, "ahead_record"),
         0,
         "tombstone dropped once every channel confirmed"
     );
@@ -56,7 +56,7 @@ fn older_stamp_cannot_regress_newer_authority_but_keeps_claim_bookkeeping() {
     );
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "NEW");
     assert_eq!(
-        table_count(&mut c, "otter_claim"),
+        table_count(&mut c, "ahead_claim"),
         2,
         "stale content still records the claim"
     );
@@ -68,7 +68,7 @@ fn older_stamp_cannot_regress_newer_authority_but_keeps_claim_bookkeeping() {
         "NEW",
         "an old tombstone cannot delete newer content"
     );
-    assert_eq!(table_count(&mut c, "otter_claim"), 1);
+    assert_eq!(table_count(&mut c, "ahead_claim"), 1);
 }
 
 #[test]
@@ -102,7 +102,7 @@ fn newer_authority_lands_beneath_pending_edits_and_replays_them() {
     c.apply_page(page("book", 1, 2, Some("SERVER"))).unwrap();
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
     assert_eq!(
-        c.read_sql("SELECT text FROM otter_before_Entry", &[])
+        c.read_sql("SELECT text FROM ahead_before_Entry", &[])
             .unwrap(),
         vec![json!({"text":"SERVER"})]
     );
@@ -163,11 +163,11 @@ fn delete_cascades_to_descendants_and_their_claims() {
         }],
     })
     .unwrap();
-    assert_eq!(table_count(&mut c, "otter_claim"), 2);
+    assert_eq!(table_count(&mut c, "ahead_claim"), 2);
     c.apply_page(book(3, Value::Null)).unwrap();
     assert!(c.query("Comment", &json!({})).unwrap().is_empty());
-    assert_eq!(table_count(&mut c, "otter_claim"), 0);
-    assert_eq!(table_count(&mut c, "otter_record"), 0);
+    assert_eq!(table_count(&mut c, "ahead_claim"), 0);
+    assert_eq!(table_count(&mut c, "ahead_record"), 0);
 }
 
 #[test]
@@ -203,8 +203,8 @@ fn unsubscribing_settles_its_checkpoint_and_later_pages_are_dropped() {
         0,
         "nothing will advance that cursor again, so the push settles"
     );
-    assert_eq!(table_count(&mut c, "otter_push_checkpoint"), 0);
-    assert_eq!(table_count(&mut c, "otter_subscription"), 0);
+    assert_eq!(table_count(&mut c, "ahead_push_checkpoint"), 0);
+    assert_eq!(table_count(&mut c, "ahead_subscription"), 0);
     let entries = table_count(&mut c, "Entry");
     let report = c.apply_page(page("a", 0, 1, Some("X"))).unwrap();
     assert!(
@@ -212,7 +212,7 @@ fn unsubscribing_settles_its_checkpoint_and_later_pages_are_dropped() {
         "a page for an unsubscribed channel is dropped whole"
     );
     assert_eq!(
-        table_count(&mut c, "otter_subscription"),
+        table_count(&mut c, "ahead_subscription"),
         0,
         "applying a page never subscribes"
     );

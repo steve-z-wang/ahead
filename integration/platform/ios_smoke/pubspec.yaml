@@ -1,5 +1,5 @@
-name: otter_ios_smoke
-description: iOS simulator smoke harness for otter_sync.
+name: ahead_ios_smoke
+description: iOS simulator smoke harness for ahead.
 publish_to: none
 version: 1.0.0+1
 
@@ -9,7 +9,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  otter_sync:
+  ahead:
     path: ../../../packages/dart
 
 dev_dependencies:

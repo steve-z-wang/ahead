@@ -1,4 +1,4 @@
-use otter_compiler::compile;
+use ahead_compiler::compile;
 #[test]
 fn schema_and_mutations() {
     let v=compile("enum Status { active archived } model Entry { owner UUID id UUID title String note String? labels String[] at DateTime status Status @@id(owner,id) @@unique(title) } mutation Edit { entry Entry.update<title,note> @@version(2) }").unwrap();
@@ -24,11 +24,11 @@ fn rejects_invalid_identity() {
 #[test]
 fn emitters_include_typed_conversion() {
     let v = compile(include_str!("../../../fixtures/compiler/example.model")).unwrap();
-    let ts = otter_compiler::typescript(&v);
+    let ts = ahead_compiler::typescript(&v);
     assert!(ts.contains("export interface EntryIdentity"));
     assert!(ts.contains("new Date("));
     assert!(ts.contains("EditEntry"));
-    let dart = otter_compiler::dart(&v);
+    let dart = ahead_compiler::dart(&v);
     assert!(dart.contains("class EntryPatch"));
     assert!(dart.contains("DateTime.parse("));
 }
@@ -68,8 +68,8 @@ fn singular_inverse_requires_a_unique_foreign_key() {
 #[test]
 fn backend_emitter_declares_handlers_loaders_and_references() {
     let v = compile(include_str!("../../../fixtures/compiler/relations.model")).unwrap();
-    let ts = otter_compiler::backend_typescript(&v, "@ottersync/server");
-    assert!(ts.contains("from \"@ottersync/server\""));
+    let ts = ahead_compiler::backend_typescript(&v, "@ahead/server");
+    assert!(ts.contains("from \"@ahead/server\""));
     assert!(ts.contains("export interface Handlers<Tx> {"));
     assert!(ts.contains(
         " addBook(call: HandlerCall<Tx, AddBookInput>): Promise<void | { channel: string }>;"
@@ -86,7 +86,7 @@ fn backend_emitter_declares_handlers_loaders_and_references() {
     assert!(ts.contains("export function Book(identity: BookIdentity): RecordRef { return { model: \"Book\", identity }; }"));
     assert!(ts.contains("export interface AddBookInput {\n book: Book;\n}"));
     assert!(ts.contains("export function createBackend<Tx>("));
-    assert!(!otter_compiler::typescript(&v).contains("backendConfig"));
+    assert!(!ahead_compiler::typescript(&v).contains("backendConfig"));
 }
 #[test]
 fn backend_emitter_suffixes_older_mutation_versions() {
@@ -95,7 +95,7 @@ fn backend_emitter_suffixes_older_mutation_versions() {
     let mut old = v["mutations"][0].clone();
     old["version"] = serde_json::json!(1);
     with_history["backendMutations"] = serde_json::json!([old, v["mutations"][0].clone()]);
-    let ts = otter_compiler::backend_typescript(&with_history, "@ottersync/server");
+    let ts = ahead_compiler::backend_typescript(&with_history, "@ahead/server");
     assert!(ts.contains(" edit(call: HandlerCall<Tx, EditInput>)"));
     assert!(ts.contains(" editV1(call: HandlerCall<Tx, EditV1Input>)"));
 }

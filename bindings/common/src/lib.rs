@@ -1,6 +1,6 @@
 //! One command/value contract shared by native language bridges.
-use otter_client::*;
-use otter_sqlite::SqliteStore;
+use ahead_client::*;
+use ahead_sqlite::SqliteStore;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 #[derive(Default)]

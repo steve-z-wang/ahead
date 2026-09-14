@@ -1,5 +1,5 @@
 //! Storage contract: a SQL executor with transactions. The engine owns every statement.
-use otter_core::Result;
+use ahead_core::Result;
 use serde_json::Value;
 
 #[derive(Clone, Debug, Default, PartialEq)]

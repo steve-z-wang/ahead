@@ -310,27 +310,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "otter-binding"
+name = "ahead-binding"
 version = "0.1.0"
 dependencies = [
- "otter-client",
- "otter-core",
- "otter-sqlite",
+ "ahead-client",
+ "ahead-core",
+ "ahead-sqlite",
  "serde_json",
 ]
 
 [[package]]
-name = "otter-client"
+name = "ahead-client"
 version = "0.1.0"
 dependencies = [
- "otter-core",
+ "ahead-core",
  "serde",
  "serde_json",
  "uuid",
 ]
 
 [[package]]
-name = "otter-core"
+name = "ahead-core"
 version = "0.1.0"
 dependencies = [
  "chrono",
@@ -343,11 +343,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "otter-node"
+name = "ahead-node"
 version = "0.1.0"
 dependencies = [
- "otter-binding",
- "otter-server",
+ "ahead-binding",
+ "ahead-server",
  "napi",
  "napi-build",
  "napi-derive",
@@ -355,21 +355,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "otter-server"
+name = "ahead-server"
 version = "0.1.0"
 dependencies = [
- "otter-core",
+ "ahead-core",
  "serde",
  "serde_json",
  "thiserror",
 ]
 
 [[package]]
-name = "otter-sqlite"
+name = "ahead-sqlite"
 version = "0.1.0"
 dependencies = [
- "otter-client",
- "otter-core",
+ "ahead-client",
+ "ahead-core",
  "rusqlite",
  "serde_json",
 ]

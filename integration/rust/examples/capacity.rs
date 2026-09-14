@@ -1,7 +1,7 @@
 //! Reproducible diagnostic, not a throughput guarantee. Each enqueue is a real SQLite commit.
-use otter_client::{Client, Mutation, Operation, OperationKind};
-use otter_core::{PullPage, RecordChange, Schema};
-use otter_sqlite::SqliteStore;
+use ahead_client::{Client, Mutation, Operation, OperationKind};
+use ahead_core::{PullPage, RecordChange, Schema};
+use ahead_sqlite::SqliteStore;
 use serde_json::json;
 use std::time::Instant;
 fn main() {
