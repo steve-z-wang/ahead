@@ -24,7 +24,7 @@ website/.venv/bin/python -m mkdocs build --strict -f website/mkdocs.yml
 website/.venv/bin/python website/check_links.py
 ```
 
-The static output is `website/site/`. Relative navigation supports both the local preview and the configured GitHub Pages project path `/otter-sync/`.
+The static output is `website/site/`. Relative navigation supports both the local preview and the configured GitHub Pages project path `/ahead/`.
 
 `prepare.py` has an explicit source-to-route map. Selected guide links become site links; links to other existing repository files become GitHub `blob/main` links. Fenced and inline code are preserved. Website-authored Markdown uses site-relative destinations. Ordinary inline Markdown links and reference definitions are supported; use these forms instead of raw HTML links for repository references. Missing selected pages and unresolved local Markdown links fail preparation. To add a page, update both the map and `mkdocs.yml` navigation. Historical documents can remain repository links without joining the navigation.
 

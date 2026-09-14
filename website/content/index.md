@@ -5,78 +5,74 @@ hide:
 
 <div class="otter-intro" markdown="1">
 
-<p class="otter-kicker">LOCAL-FIRST STATE FRAMEWORK</p>
+# Ahead
 
-# State lives here.<br>Your backend stays yours.
+<p class="otter-lead">Ahead is a schema-driven framework for building local-first apps with your own backend.</p>
 
-<p class="otter-lead">Read and edit local data. Keep it through restarts. Let the framework reconcile your changes with your application’s backend.</p>
+<p class="otter-platforms">Clients: TypeScript · Flutter<br>Backend: TypeScript</p>
 
-<p class="otter-platforms">TypeScript and Dart clients · TypeScript backend SDK · Shared Rust runtime</p>
-
-[Run the example](examples/rust-round-trip/README.md){ .md-button .md-button--primary }
-[Understand the model](concepts.md){ .md-button }
+[See the API](project.md#build-with-ahead){ .md-button .md-button--primary }
+[Compare frameworks](project.md#how-ahead-compares-with-other-sync-frameworks){ .md-button }
 
 </div>
 
-<div class="otter-flow" role="group" aria-label="How a local edit reaches authoritative settlement">
-  <div class="otter-flow-step"><span class="otter-state">LOCAL EDIT</span><strong>Visible immediately</strong><span>Your query reads the optimistic result.</span></div>
-  <div class="otter-flow-step"><span class="otter-state">DURABLE MUTATION</span><strong>Ready when connected</strong><span>Queued intent survives a restart.</span></div>
-  <div class="otter-flow-step"><span class="otter-state">AUTHORITATIVE STATE</span><strong>Reconciled through Pull</strong><span>Accepted edits settle at their checkpoints.</span></div>
-</div>
+- **Schema-driven.** Define your models and local mutations in a schema. Ahead handles the local state changes.
+- **Type-safe end to end.** Get typed client calls and backend read/write interfaces from the same schema.
+- **Works offline.** Read and write local SQLite without a connection. Ahead persists changes and syncs in the background.
+- **Your backend.** Implement your own read and write logic and choose your database. No vendor cloud service required.
 
-## Try a complete round trip
-
-Start the example from a source checkout with Rust, Node 22.18+, Python 3 and PostgreSQL command-line tools installed:
-
-```sh
-bash examples/rust-round-trip/run.sh
-```
-
-Then open the TypeScript client in a second terminal at the repository root:
-
-```sh
-node examples/rust-round-trip/client.mts
-```
-
-Try `sync`, `edit hello`, and `show`. Edit while offline, reopen the client, then reconnect to see the queued change reach the backend. The [quick start](examples/rust-round-trip/README.md) also walks through server normalization and rejection.
+## Build with Ahead
 
 <div class="otter-guide-grid" markdown="1">
 
 <div markdown="1">
 
-### Build the client
+### 1. Define your schema
 
-Query, watch and mutate local SQLite through typed APIs. Rust owns the durable queue and optimistic replay.
+Describe your models and local write operations. Ahead generates the client APIs and typed backend interfaces.
 
-[TypeScript client](packages/client-js/README.md) · [Dart client](packages/dart/README.md)
-
-</div>
-<div markdown="1">
-
-### Connect your backend
-
-Implement Handlers and Loaders. Notify explicit Channels of changed records within transactions your application owns.
-
-[Backend SDK](packages/server/README.md) · [Prisma adapter](packages/persistence-prisma/README.md)
+[Schema guide](crates/compiler/README.md)
 
 </div>
 <div markdown="1">
 
-### Define your models
+### 2. Read and write locally
 
-Generate language types from a schema. Client models can differ from backend tables; the Rust runtime reads generic schema data.
+Call the generated client to read and update local data. Watch queries to update your UI when the data changes.
 
-[Schema compiler](crates/compiler/README.md) · [Architecture](docs/architecture/code-organization.md)
+[TypeScript](packages/client-js/README.md) · [Flutter](packages/dart/README.md)
+
+</div>
+<div markdown="1">
+
+### 3. Implement your backend
+
+Implement handlers for writes and loaders for reads through the generated interfaces. Use your own business logic and database.
+
+[Backend guide](packages/server/README.md)
 
 </div>
 
 </div>
 
-!!! note "Source alpha"
-    Start from the runnable source example. Native Node and Dart flows are verified on macOS and Linux. Browser/WASM is not implemented; mobile runtime support is not yet verified. See [implementation status](docs/implementation-progress.md) and [compatibility and recovery](docs/architecture/compatibility-and-recovery.md) before integrating an existing application.
+## Local state, background sync
 
-## One set of state rules
+Writes take effect locally, so your app can read the updated data without waiting for the network. Ahead saves pending writes and syncs them with your backend when connected. If the backend rejects a mutation, its local changes roll back.
 
-The shared Rust runtime handles schema validation, optimistic state, mutation scheduling, channel cursors and settlement. The language SDKs expose those capabilities through TypeScript and Dart APIs. Your business logic, authorization, network I/O and backend transactions stay in your application.
+[View the architecture](project.md#local-state-background-sync) · [Read the concepts](concepts.md)
 
-[Read the concepts](concepts.md) or explore the [tests and verification](integration/README.md).
+## Current support
+
+| Layer | Supported today |
+| --- | --- |
+| Frontend / client | [TypeScript](packages/client-js/README.md) · [Flutter](packages/dart/README.md) |
+| Backend | [TypeScript](packages/server/README.md) |
+| Database adapter | [Prisma with PostgreSQL](packages/persistence-prisma/README.md) |
+
+The TypeScript client and backend currently run on Node.js. The clients use native runtimes; browser support is not yet implemented. See [platform validation](integration/platform/README.md) for tested environments.
+
+Need another language, runtime, or database adapter? [Request support](https://github.com/steve-z-wang/ahead/issues/new). More integrations can be added.
+
+## Project status
+
+Ahead is an early alpha. Packages have not been published, and a license has not yet been added. Mobile runtime support is not yet verified; see [implementation status](docs/implementation-progress.md) for current coverage.

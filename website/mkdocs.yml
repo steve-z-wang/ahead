@@ -1,8 +1,8 @@
-site_name: Otter Sync
-site_description: TypeScript and Dart clients, a TypeScript backend SDK, and a shared Rust runtime.
-site_url: https://steve-z-wang.github.io/otter-sync/
-repo_url: https://github.com/steve-z-wang/otter-sync
-repo_name: steve-z-wang/otter-sync
+site_name: Ahead
+site_description: Ahead is a schema-driven framework for building local-first apps with your own backend.
+site_url: https://steve-z-wang.github.io/ahead/
+repo_url: https://github.com/steve-z-wang/ahead
+repo_name: steve-z-wang/ahead
 edit_uri: ''
 docs_dir: .generated
 site_dir: site

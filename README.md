@@ -1,22 +1,46 @@
+<p>
+  <img src="https://raw.githubusercontent.com/steve-z-wang/ahead/main/website/assets/logo.svg" width="64" height="64" alt="Ahead logo">
+</p>
+
 # Ahead
 
-Local-first state for TypeScript and Dart. Write your API as handlers. Call it like a local function. It works offline, and the client is always one step ahead of the server.
+[![Verify](https://github.com/steve-z-wang/ahead/actions/workflows/verify.yml/badge.svg?branch=main)](https://github.com/steve-z-wang/ahead/actions/workflows/verify.yml)
+[![Documentation](https://github.com/steve-z-wang/ahead/actions/workflows/docs.yml/badge.svg?branch=main)](https://github.com/steve-z-wang/ahead/actions/workflows/docs.yml)
 
-Ahead is a library, not a service. Mutations settle in your own database transaction, and your app reads from a local SQLite copy that catches up as the server confirms.
+Ahead is a schema-driven framework for building local-first apps with your own backend.
 
-## How it fits together
+- **Schema-driven.** Define your models and local mutations in a schema. Ahead handles the local state changes.
+- **Type-safe end to end.** Get typed client calls and backend read/write interfaces from the same schema.
+- **Works offline.** Read and write local SQLite without a connection. Ahead persists changes and syncs in the background.
+- **Your backend.** Implement your own read and write logic and choose your database. No vendor cloud service required.
 
-![How Ahead fits together](docs/architecture.svg)
+## Current support
 
-1. Your app writes in a transaction. The change lands in local SQLite, and reads see it at once.
-2. The connection pushes the mutation to your backend when the network allows.
-3. The handler runs in one database transaction and calls `notify` with the records that changed.
-4. Every client subscribed to that channel pulls those records. The backend answers through the loader.
-5. Local SQLite updates and `watch` fires again. If the handler rejected the mutation, the local change rolls back instead.
+| Layer | Supported today |
+| --- | --- |
+| Frontend / client | [TypeScript](packages/client-js/README.md) · [Flutter](packages/dart/README.md) |
+| Backend | [TypeScript](packages/server/README.md) |
+| Database adapter | [Prisma with PostgreSQL](packages/persistence-prisma/README.md) |
 
-## How it works
+The TypeScript client and backend currently run on Node.js. The clients use native runtimes; browser support is not yet implemented. See [platform validation](integration/platform/README.md) for tested environments.
 
-### 1. Describe the local data and the mutations it sends to the backend
+Need another language, runtime, or database adapter? [Request support](https://github.com/steve-z-wang/ahead/issues/new). More integrations can be added.
+
+## Local state, background sync
+
+![Ahead architecture: local state and background sync](docs/architecture.svg)
+
+Generated clients currently sync over HTTP. The WebSocket streaming shown in the diagram is [planned for these clients](https://github.com/steve-z-wang/ahead/issues/35).
+
+On your server, **handlers** process writes and **loaders** read records to send to clients. A **channel** groups record changes for clients to subscribe to; `notify` marks which records changed.
+
+Writes update local SQLite immediately, so reads see changes before sync completes. Changes to local data update query subscriptions (`watch`). If the backend rejects a mutation, its local changes roll back.
+
+## Build with Ahead
+
+### 1. Define your models and mutations
+
+Write your data models and local write operations (mutations) in a `.model` file:
 
 ```
 model Todo {
@@ -29,9 +53,12 @@ model Todo {
 mutation AddTodo { todo Todo.create }
 ```
 
-The compiler turns this file into a typed client for TypeScript and Dart, and into `Handlers` and `Loaders` types for the backend.
+The compiler generates the client used below and the backend's `Handlers` and `Loaders` interfaces. See the [schema compiler guide](crates/compiler/README.md) for generation commands.
 
-### 2. Read and write on the client
+### 2. Read and write locally
+
+<details markdown="1">
+<summary>Open the client</summary>
 
 ```ts
 // Open the local database and connect.
@@ -45,10 +72,15 @@ const client = await GeneratedClient.open({
   }),
 });
 
+```
+
+</details>
+
+```ts
 // Read.
 const open = await client.models.todo.query({ where: { done: false } });
 
-// Watch. Updates on every change.
+// Watch this query and render again when local data changes.
 client.models.todo.watch({ where: { done: false } }, (todos) => render(todos));
 
 // Write, inside a transaction.
@@ -58,15 +90,42 @@ await client.transaction(async (tx) => {
   });
 });
 
-// Subscribe to the channels you want to sync.
+// Receive record changes published to the "todos" channel.
 await client.channels.subscribe("todos");
 ```
 
-The connection sends queued mutations when the network allows, retries on its own, and pulls every record the backend notified about.
+Ahead sends queued writes when the network allows, retries failed sync requests, and fetches changed records from your subscribed channels.
 
-### 3. Write the backend
+### 3. Implement handlers and loaders for your backend
+
+This example uses Prisma with PostgreSQL and the [included database adapter](packages/persistence-prisma/README.md).
 
 ```ts
+// Handle a write using your database transaction.
+const handlers: Handlers<Tx> = {
+  async addTodo({ input, tx, notify }) {
+    await tx.todo.create({ data: input.todo });
+
+    // Mark these records as changed in the "todos" channel.
+    notify({ channel: "todos", records: [input.todo] });
+  },
+};
+
+// Read the requested records from your database for sync.
+const loaders: Loaders<Tx> = {
+  todo: ({ ids, tx }) =>
+    Promise.all(ids.map((identity) => tx.todo.findUnique({ where: identity }))),
+};
+```
+
+<details markdown="1">
+<summary>Imports and server setup</summary>
+
+Add these imports and the transaction type before the handlers and loaders above:
+
+```ts
+import { PrismaClient, type Prisma } from "@prisma/client";
+import { prisma } from "./packages/persistence-prisma/index.mts";
 import {
   createBackend,
   devAuth,
@@ -74,22 +133,12 @@ import {
   type Loaders,
 } from "./generated/backend.ts";
 
-// Implement the handler from the generated mutation interface.
-const handlers: Handlers<Tx> = {
-  async addTodo({ input, tx, notify }) {
-    await tx.todo.create({ data: input.todo });
+type Tx = Prisma.TransactionClient;
+```
 
-    // Notify the subscribed clients to reload these records.
-    notify({ channel: "todos", records: [input.todo] });
-  },
-};
+Start the server after defining the handlers and loaders:
 
-// Implement the loader from the generated model interface.
-const loaders: Loaders<Tx> = {
-  todo: ({ ids, tx }) =>
-    Promise.all(ids.map((identity) => tx.todo.findUnique({ where: identity }))),
-};
-
+```ts
 // Start the server.
 const backend = createBackend({
   database: prisma(new PrismaClient()),
@@ -100,24 +149,27 @@ const backend = createBackend({
 await backend.listen({ port: 4242 });
 ```
 
-## Try it
+</details>
 
-You need Rust, Node 22.18+, Python 3 and the PostgreSQL command-line tools.
+## How Ahead compares with other sync frameworks
 
-```sh
-bash examples/rust-round-trip/run.sh
-```
+Ahead generates local operations from your schema and gives you typed interfaces to implement backend reads and writes.
 
-In another terminal:
+| Project | How local updates work | How backend writes work | How you define the read / sync path | Required backend database |
+| --- | --- | --- | --- | --- |
+| **Ahead** | Generated local operations from your schema | You implement the business logic through a generated, typed write interface | You mark changes and define the read path through a generated typed read interface. | No fixed database |
+| [Replicache](https://doc.replicache.dev/byob/local-mutations) | You write local update functions | Your write API runs the requested operations | You implement a [read API](https://doc.replicache.dev/reference/server-pull) that returns data changes | No fixed database |
+| [Zero](https://zero.rocicorp.dev/docs/mutators) | You write local update functions | Your server functions handle each write | You define [queries](https://zero.rocicorp.dev/docs/queries); Zero syncs matching database rows | PostgreSQL with database replication enabled |
+| [PowerSync](https://docs.powersync.com/intro/powersync-philosophy) | You update local SQLite | Your write API processes the changes | You define sync rules to select which database records reach each client | A supported database with change tracking enabled |
+| [Electric](https://electric.ax/docs/sync/guides/writes) | You choose how to update local state | You choose how writes reach your backend | You define [shapes](https://electric.ax/docs/sync/guides/shapes) to select Postgres rows for sync | PostgreSQL with database replication enabled |
+| [InstantDB](https://www.instantdb.com/docs) | You update records through the SDK | Instant applies writes using your permission rules | You query through the SDK; Instant keeps the results up to date | Instant's database backend |
 
-```sh
-node examples/rust-round-trip/client.mts
-```
+Ahead needs a database adapter that provides consistent transactions and stores sync metadata. Replicache also requires [consistent transaction snapshots](https://doc.replicache.dev/byob/remote-database).
 
-Type `edit some text`. The entry prints twice: first the local change, then the server's version. Stop the server, edit again, and start it back up to watch the queue settle. See the [example README](examples/rust-round-trip/README.md).
+Instant Cloud is closed to new signups and will shut down on August 31, 2027. You can still host Instant yourself. See the [official announcement](https://www.instantdb.com/essays/instant_team_joins_openai).
 
-## Status
+## Project status
 
-Ahead is a source alpha with no package release and no license yet. It runs on macOS through Node and Dart.
+Ahead is an early alpha. Packages have not been published, and a license has not yet been added.
 
-[Documentation](website/README.md)
+[Schema guide](crates/compiler/README.md) · [Client guide](packages/client-js/README.md) · [Backend guide](packages/server/README.md)
