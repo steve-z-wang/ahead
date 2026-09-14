@@ -102,7 +102,7 @@ The seven checks in `crates/sim/src/invariants.rs::CHECKS`, run after every step
 
 ### Two kinds of test on one harness
 
-- `tests/invariants.rs` runs `for seed in 0..N { step; check }`. `N` defaults to a few hundred so `cargo test` stays fast; `SIM_SEEDS=100000 cargo test -p sim` runs the long form, for a nightly job. A failure prints the seed and the trace. `random_sequences_violate_no_invariant` runs with direct writes off; `random_sequences_with_direct_writes` is `#[ignore]`d until #33 is fixed.
+- `tests/invariants.rs` runs `for seed in 0..N { step; check }`. `N` defaults to 60 seeds of 120 steps so `cargo test` stays fast; `SIM_SEEDS=5000 SIM_STEPS=300 cargo test -p ahead-sim --test invariants` runs the long form, for a nightly job. A failure prints the seed and the trace. `random_sequences_violate_no_invariant` runs with direct writes off; `random_sequences_with_direct_writes` is `#[ignore]`d until #33 is fixed.
 - The other files are named scenarios: a hand-written action list and a Given/When/Then assertion, one per guarantee clause. The test name is the guarantee.
 
 ### Shrinking
