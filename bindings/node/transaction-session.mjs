@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-const { runProbe } = createRequire(import.meta.url)('./ahead-node.node');
+const { runProbe } = createRequire(import.meta.url)('./savoia-node.node');
 const scopes = new WeakMap();
 
 /** Spike capability: only an active caller-owned transaction can bind it. */

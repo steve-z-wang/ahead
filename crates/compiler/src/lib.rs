@@ -288,7 +288,7 @@ pub fn compile(source: &str) -> Result<Value, String> {
                             .take()
                             .parse::<u64>()
                             .map_err(|_| p.err("expected positive version"))?;
-                        if version == 0 || version > ahead_core::MAX_SAFE_INTEGER {
+                        if version == 0 || version > savoia_core::MAX_SAFE_INTEGER {
                             return Err(p.err("version must be positive"));
                         }
                         p.need(")")?;
@@ -649,7 +649,7 @@ pub fn compile(source: &str) -> Result<Value, String> {
     }
     requirements=requirements.into_iter().map(|r|json!({"model":r["model"],"field":r["field"],"name":r["invocation"]["0"]["name"],"arguments":r["invocation"]["0"]["arguments"]})).collect();
     let schema = json!({"models":models,"enums":enums,"requirements":requirements,"prerequisites":prerequisites,"clientPolicies":mutations});
-    ahead_core::Schema::from_value(schema.clone()).map_err(|e| p.err(e.to_string()))?;
+    savoia_core::Schema::from_value(schema.clone()).map_err(|e| p.err(e.to_string()))?;
     let mut seen = std::collections::BTreeSet::new();
     for mutation in &mutations {
         if !seen.insert(mutation["name"].as_str().unwrap()) {

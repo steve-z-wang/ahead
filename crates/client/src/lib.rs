@@ -13,9 +13,9 @@ pub mod rows;
 pub mod store;
 pub mod transport;
 
-pub use ahead_core::*;
 pub use connection::*;
 pub use query::{Direction, QueryOrder, QuerySpec};
+pub use savoia_core::*;
 pub use store::*;
 pub use transport::*;
 

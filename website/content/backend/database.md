@@ -1,6 +1,6 @@
 # Database adapters
 
-Ahead does not require a particular backend database. Your adapter supplies transactions and stores Ahead's receipts, invalidations and counters alongside your business writes. The included implementation uses Prisma and PostgreSQL. Local client storage is SQLite regardless of your backend choice.
+Savoia does not require a particular backend database. Your adapter supplies transactions and stores Savoia's receipts, invalidations and counters alongside your business writes. The included implementation uses Prisma and PostgreSQL. Local client storage is SQLite regardless of your backend choice.
 
 ## Database and Persistence
 
@@ -15,7 +15,7 @@ interface Database<Tx> {
 }
 ```
 
-`transaction` passes your transaction object to the callback, commits before resolving, and rolls back if the callback rejects. `persistence(tx)` must bind Ahead's storage operations to **that same transaction**, rather than opening a separate connection/transaction. Handlers and loaders receive the same `tx`.
+`transaction` passes your transaction object to the callback, commits before resolving, and rolls back if the callback rejects. `persistence(tx)` must bind Savoia's storage operations to **that same transaction**, rather than opening a separate connection/transaction. Handlers and loaders receive the same `tx`.
 
 The transaction must provide a coherent snapshot (Repeatable Read or stronger for the PostgreSQL implementation), serialize concurrent operations on the same client identity, and support per-mutation savepoints. Retry serialization conflicts as whole transactions. Because the callback can run again, irreversible external side effects should be arranged by your application's transaction/outbox mechanism.
 
@@ -41,7 +41,7 @@ const database = prisma(db, { retries: 3, timeout: 20_000 });
 
 `timeout` is in milliseconds and defaults to 20,000. `retries` defaults to 3 retries after the first attempt. The runner uses `RepeatableRead` and retries Prisma `P2034`, or `P2010` with PostgreSQL `40001` / `40P01`. Other failures propagate immediately. Use nonnegative retry counts and an appropriate database timeout.
 
-Ahead stores synchronization metadata in tables prefixed `ahead_`.
+Savoia retains the existing `ahead_` synchronization tables so the project rename does not reset receipts, stamps or channel progress. No database migration is required for this rename.
 
 ## Implement another adapter
 

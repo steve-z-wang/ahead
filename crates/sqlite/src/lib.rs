@@ -1,8 +1,8 @@
 //! SQLite implements the client's storage contract with one writer and one reader connection.
-use ahead_client::{ClientStore, SqlRows};
-use ahead_core::{Result, invalid};
 use rusqlite::types::{Value as SqlValue, ValueRef};
 use rusqlite::{Connection, params_from_iter};
+use savoia_client::{ClientStore, SqlRows};
+use savoia_core::{Result, invalid};
 use serde_json::Value;
 use std::path::Path;
 
@@ -11,7 +11,7 @@ pub struct SqliteStore {
     reader: Connection,
 }
 
-fn db(e: rusqlite::Error) -> ahead_core::Error {
+fn db(e: rusqlite::Error) -> savoia_core::Error {
     invalid(format!("sqlite: {e}"))
 }
 

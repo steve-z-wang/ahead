@@ -1,6 +1,6 @@
 # Getting started
 
-Run a complete Ahead app from source: a generated TypeScript client with local SQLite, and your own TypeScript backend using Prisma/PostgreSQL. You will make a local edit, see the backend normalize it, work offline and observe a business rejection.
+Run a complete Savoia app from source: a generated TypeScript client with local SQLite, and your own TypeScript backend using Prisma/PostgreSQL. You will make a local edit, see the backend normalize it, work offline and observe a business rejection.
 
 ## Prerequisites
 
@@ -17,8 +17,8 @@ Run all commands below from the repository root. Packages have not been publishe
 ## 1. Start the backend
 
 ```sh
-git clone https://github.com/zanminwang/ahead.git
-cd ahead
+git clone https://github.com/zanminwang/ahead.git savoia
+cd savoia
 bash examples/rust-round-trip/run.sh
 ```
 
@@ -42,7 +42,7 @@ node examples/rust-round-trip/client.mts
 
 The client opens `example-client.sqlite`, starts background sync and subscribes to `book:demo`. It may first print null while its cache is empty, then the entry with text `Hello from the server`.
 
-The CLI accepts `edit TEXT`, `offline`, `online`, `status` and `quit`. `AHEAD_DATABASE` selects a different local SQLite file, and `AHEAD_URL` selects a backend URL.
+The CLI accepts `edit TEXT`, `offline`, `online`, `status` and `quit`. `SAVOIA_DATABASE` selects a different local SQLite file, and `SAVOIA_URL` selects a backend URL.
 
 ## 3. Make an edit
 
@@ -95,7 +95,7 @@ Enter `quit` in the client, then stop the backend runner with Ctrl-C. Client SQL
 For a new backend run, use a **new local database path** so old receipt/cursor history is not paired with a reset server:
 
 ```sh
-AHEAD_DATABASE=example-client-second-run.sqlite node examples/rust-round-trip/client.mts
+SAVOIA_DATABASE=example-client-second-run.sqlite node examples/rust-round-trip/client.mts
 ```
 
 Choose a fresh filename for each fresh backend cluster. Do not delete an application's pending state as a general recovery technique.

@@ -24,13 +24,13 @@ bash scripts/build.sh
 
     ```yaml
     dependencies:
-      ahead:
-        path: /absolute/path/to/ahead/packages/dart
+      savoia:
+        path: /absolute/path/to/savoia/packages/dart
     ```
 
-    Run `flutter pub get`, or `dart pub get` in a Dart application. The package currently requires Dart 3.12 or newer. Generated code imports `package:ahead/ahead.dart`.
+    Run `flutter pub get`, or `dart pub get` in a Dart application. The package currently requires Dart 3.12 or newer. Generated code imports `package:savoia/savoia.dart`.
 
-    For desktop development, `libraryPath` points to `target/debug/libahead_dart.dylib` on macOS or `libahead_dart.so` on Linux. Outside iOS it is required; on iOS, omitting it uses process-linked native symbols. Mobile packaging needs platform-specific native build/link steps; see [platform setup](platforms.md). Choose a writable application directory for the SQLite file.
+    For desktop development, `libraryPath` points to `target/debug/libsavoia_dart.dylib` on macOS or `libsavoia_dart.so` on Linux. Outside iOS it is required; on iOS, omitting it uses process-linked native symbols. Mobile packaging needs platform-specific native build/link steps; see [platform setup](platforms.md). Choose a writable application directory for the SQLite file.
 
 ## Open local storage
 
@@ -51,7 +51,7 @@ bash scripts/build.sh
 
     final client = await GeneratedClient.open(
       path: 'local.sqlite',
-      libraryPath: '/absolute/path/to/ahead/target/debug/libahead_dart.dylib',
+      libraryPath: '/absolute/path/to/savoia/target/debug/libsavoia_dart.dylib',
     );
     final entry = await client.models.entry.get(const EntryIdentity(id: 'entry-1'));
     print(entry?.text);
@@ -84,7 +84,7 @@ Start the [tutorial backend](../getting-started.md), then open a client with a t
     ```dart
     import 'dart:convert';
     import 'dart:io';
-    import 'package:ahead/ahead.dart';
+    import 'package:savoia/savoia.dart';
     import 'generated/generated.dart';
 
     final http = HttpClient();
@@ -107,7 +107,7 @@ Start the [tutorial backend](../getting-started.md), then open a client with a t
 
     final client = await GeneratedClient.open(
       path: 'local.sqlite',
-      libraryPath: '/absolute/path/to/ahead/target/debug/libahead_dart.dylib',
+      libraryPath: '/absolute/path/to/savoia/target/debug/libsavoia_dart.dylib',
       transport: transport,
       onError: (error) => print(error),
     );
@@ -184,6 +184,20 @@ In Flutter, use the watch stream with `StreamBuilder<List<Entry>>`; retain it fo
     http.close(force: true);
     ```
 
-These connection calls assume you supplied a transport at open. Database/client lifetime belongs to the application; subscriptions belong to their views. Close your own HTTP client after closing Ahead.
+These connection calls assume you supplied a transport at open. Database/client lifetime belongs to the application; subscriptions belong to their views. Close your own HTTP client after closing Savoia.
 
 See [Client API](client-api.md) for typed calls, [offline work and sync](sync.md) for connection/recovery behavior, and [advanced client APIs](runtime.md) for SQL, savepoints and prerequisites.
+
+## Update an existing Ahead checkout
+
+The framework is now named Savoia. Update source imports and rebuild native artifacts together; an older native library does not export the new `savoia_call` / `savoia_free` symbols.
+
+| Previous name | Current name |
+| --- | --- |
+| `@ahead/client`, `@ahead/server`, `@ahead/prisma` | `@savoia/client`, `@savoia/server`, `@savoia/prisma` |
+| `package:ahead/ahead.dart` | `package:savoia/savoia.dart` |
+| `ahead-compiler` / `ahead` executable | `savoia-compiler` / `savoia` executable |
+| `AHEAD_LIBRARY`, `AHEAD_DART_LIBRARY` | `SAVOIA_LIBRARY`, `SAVOIA_DART_LIBRARY` |
+| Example `AHEAD_URL`, `AHEAD_DATABASE` | `SAVOIA_URL`, `SAVOIA_DATABASE` |
+
+Run `bash scripts/build.sh`, regenerate your schema interfaces, and run `dart pub get` or `flutter pub get` for the renamed path dependency. Use the newly built `libsavoia_dart` library (without the hyphen used in crate names). Keep the same SQLite path and backend database: persisted storage and wire formats have not changed.

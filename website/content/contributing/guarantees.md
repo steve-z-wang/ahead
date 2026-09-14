@@ -341,7 +341,7 @@ Primary:
 - crates/sqlite/tests/downlink.rs::older_stamp_cannot_regress_newer_authority_but_keeps_claim_bookkeeping
 - crates/sqlite/tests/downlink.rs::equal_stamp_is_idempotent_or_a_diagnostic
 - crates/sqlite/tests/stamp_scenarios.rs::delayed_page_from_another_channel_cannot_regress_newer_content
-- crates/core/tests/contracts.rs::field_default_and_record_stamp_round_trip_and_ahead_prefix_is_rejected (page without stamp refused)
+- crates/core/tests/contracts.rs::field_default_and_record_stamp_round_trip_and_storage_prefix_is_rejected (page without stamp refused)
 - crates/server/tests/stamp.rs::pull_rejects_rows_without_a_positive_stamp
 
 Supporting:

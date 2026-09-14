@@ -15,7 +15,7 @@ export { httpTransport } from "./transport.mts";
 import { createRequire } from "node:module";
 import { EventEmitter } from "node:events";
 const native = createRequire(import.meta.url)(
-  "../../bindings/node/ahead-node.node",
+  "../../bindings/node/savoia-node.node",
 ) as { clientCall(request: string): Promise<string> };
 export type RecordValue = Record<string, unknown>;
 export class Client {

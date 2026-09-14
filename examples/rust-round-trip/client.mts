@@ -5,9 +5,9 @@ import { GeneratedClient, httpTransport } from "./generated/client.ts";
 
 // Open the local database and start syncing with the backend.
 const client = await GeneratedClient.open({
-  path: resolve(process.env.AHEAD_DATABASE ?? "example-client.sqlite"),
+  path: resolve(process.env.SAVOIA_DATABASE ?? "example-client.sqlite"),
   transport: httpTransport({
-    url: process.env.AHEAD_URL ?? "http://127.0.0.1:4242",
+    url: process.env.SAVOIA_URL ?? "http://127.0.0.1:4242",
     token: "demo-user",
   }),
   connection: { onError: (error) => console.error(`sync: ${String(error)}`) },

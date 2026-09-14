@@ -96,7 +96,7 @@ export type Handler<Tx, Input = any> = (
 export type Loader<Tx, Identity = any, Row = object> = (
   call: LoaderCall<Tx, Identity>,
 ) => Promise<readonly (Row | null)[]>;
-export const RECORD: unique symbol = Symbol("ahead.record");
+export const RECORD: unique symbol = Symbol("savoia.record");
 function toRef(value: unknown): RecordRef {
   if (value !== null && typeof value === "object") {
     const tagged = (value as { [RECORD]?: RecordRef })[RECORD];
@@ -221,7 +221,7 @@ type MutationDescriptor = {
 export function createBackend<T>(options: BackendOptions<T>) {
   const native =
     options.native ??
-    (require("../../bindings/node/ahead-node.node") as Native);
+    (require("../../bindings/node/savoia-node.node") as Native);
   const descriptor = options.config as {
     schema?: { models?: { name: string }[] };
     mutations?: MutationDescriptor[];

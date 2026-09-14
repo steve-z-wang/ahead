@@ -1,6 +1,6 @@
 # Supported platforms
 
-Ahead clients use the native Rust engine and SQLite. Building the application package and validating it on the target platform are separate steps.
+Savoia clients use the native Rust engine and SQLite. Building the application package and validating it on the target platform are separate steps.
 
 | Platform | Available support |
 | --- | --- |
@@ -12,7 +12,7 @@ Ahead clients use the native Rust engine and SQLite. Building the application pa
 
 ## Desktop setup
 
-Build the native libraries with `bash scripts/build.sh`. TypeScript uses the Node addon. Dart takes an explicit `libraryPath`: `target/debug/libahead_dart.dylib` on macOS or `target/debug/libahead_dart.so` on Linux. See [client setup](setup.md) for language-specific examples.
+Build the native libraries with `bash scripts/build.sh`. TypeScript uses the Node addon. Dart takes an explicit `libraryPath`: `target/debug/libsavoia_dart.dylib` on macOS or `target/debug/libsavoia_dart.so` on Linux. See [client setup](setup.md) for language-specific examples.
 
 ## Flutter native integration
 

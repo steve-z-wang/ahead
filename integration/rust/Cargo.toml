@@ -1,12 +1,12 @@
 [package]
-name = "ahead-integration"
+name = "savoia-integration"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 [dependencies]
-ahead-core = { path = "../../crates/core" }
-ahead-client = { path = "../../crates/client" }
-ahead-server = { path = "../../crates/server" }
-ahead-sqlite = { path = "../../crates/sqlite" }
+savoia-core = { path = "../../crates/core" }
+savoia-client = { path = "../../crates/client" }
+savoia-server = { path = "../../crates/server" }
+savoia-sqlite = { path = "../../crates/sqlite" }
 serde_json.workspace = true
 tempfile.workspace = true

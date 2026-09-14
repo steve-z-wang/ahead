@@ -1,8 +1,8 @@
 //! Cross-runtime scenarios. Host persistence is deliberately simple; real database contracts live in integration/persistence.
-use ahead_client::{Client, Mutation, Operation, OperationKind};
-use ahead_core::{PullPage, PullRequest, PushReceipt, Schema};
-use ahead_server::{Config, Host};
-use ahead_sqlite::SqliteStore;
+use savoia_client::{Client, Mutation, Operation, OperationKind};
+use savoia_core::{PullPage, PullRequest, PushReceipt, Schema};
+use savoia_server::{Config, Host};
+use savoia_sqlite::SqliteStore;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -48,7 +48,7 @@ impl Backend {
     }
     fn push(&self, body: &[u8]) -> String {
         let before = self.0.lock().unwrap().clone();
-        match run(ahead_server::process_push(&config(), "u", body, self)) {
+        match run(savoia_server::process_push(&config(), "u", body, self)) {
             Ok(r) => r,
             Err(e) => {
                 *self.0.lock().unwrap() = before;
@@ -65,7 +65,7 @@ impl Backend {
         .encode()
         .unwrap();
         PullPage::decode(
-            run(ahead_server::process_pull(&config(), "u", &body, self))
+            run(savoia_server::process_pull(&config(), "u", &body, self))
                 .unwrap()
                 .as_bytes(),
         )
@@ -76,7 +76,7 @@ impl Host for Backend {
     fn call(
         &self,
         r: Value,
-    ) -> Pin<Box<dyn Future<Output = ahead_server::Result<Value>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = savoia_server::Result<Value>> + Send + '_>> {
         Box::pin(async move {
             let mut db = self.0.lock().unwrap();
             Ok(match r["op"].as_str().unwrap(){
@@ -180,7 +180,7 @@ fn deterministic_interleavings_preserve_local_priority_and_eventually_converge()
         if seed & 16 != 0 {
             edit(&mut client, "reject");
             let body = client.freeze().unwrap().unwrap();
-            let seq = ahead_core::PushRequest::decode(&body)
+            let seq = savoia_core::PushRequest::decode(&body)
                 .unwrap()
                 .batch_sequence;
             let ack = server.push(&body);

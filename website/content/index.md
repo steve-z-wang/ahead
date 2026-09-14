@@ -4,11 +4,11 @@ hide:
   - toc
 ---
 
-# Ahead
+# Savoia
 
-Ahead is a schema-driven framework for building local-first apps with your own backend.
+Savoia is a schema-driven framework for building local-first apps with your own backend.
 
-Define your records and mutations once. Ahead generates typed client calls and backend interfaces, keeps local state in SQLite, and synchronizes through your handlers and loaders.
+Define your records and mutations once. Savoia generates typed client calls and backend interfaces, keeps local state in SQLite, and synchronizes through your handlers and loaders.
 
 - **Schema-driven.** Describe your models and local mutations in one contract.
 - **Typed end to end.** Generate client APIs and backend read/write interfaces together.
@@ -42,4 +42,4 @@ Packages are currently used from source. Follow the tutorial's repository comman
 
 ## Project
 
-[GitHub](https://github.com/zanminwang/ahead) · [Framework comparison](https://github.com/zanminwang/ahead/blob/main/README.md#how-ahead-compares-with-other-sync-frameworks) · [Issues](https://github.com/zanminwang/ahead/issues) · [Contribute to the documentation](contributing/documentation.md)
+[GitHub](https://github.com/zanminwang/ahead) · [Framework comparison](https://github.com/zanminwang/ahead/blob/main/README.md#how-savoia-compares-with-other-sync-frameworks) · [Issues](https://github.com/zanminwang/ahead/issues) · [Contribute to the documentation](contributing/documentation.md)

@@ -1,5 +1,5 @@
-use ahead_client::ClientStore;
-use ahead_sqlite::SqliteStore;
+use savoia_client::ClientStore;
+use savoia_sqlite::SqliteStore;
 use serde_json::json;
 
 fn store() -> (tempfile::TempDir, SqliteStore) {

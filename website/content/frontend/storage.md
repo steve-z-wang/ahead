@@ -1,6 +1,8 @@
 # Local storage
 
-Ahead stores cached records, queued mutations, channel progress and rejection details in a local SQLite file. This page explains how to manage that file and recover from storage or synchronization failures.
+Savoia stores cached records, queued mutations, channel progress and rejection details in a local SQLite file. This page explains how to manage that file and recover from storage or synchronization failures.
+
+The Savoia rename preserves the existing SQLite layout, including internal `ahead_` tables. Reopen the same file to retain queued mutations, client identity and channel progress; renaming the framework does not require resetting local data.
 
 ## Choose a database path
 

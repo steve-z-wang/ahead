@@ -3,7 +3,7 @@ use crate::engine::Engine;
 use crate::rows::merge_identity;
 use crate::store::ClientStore;
 use crate::{ApplyReport, Client};
-use ahead_core::{PullPage, RecordChange, Result, invalid};
+use savoia_core::{PullPage, RecordChange, Result, invalid};
 use serde_json::json;
 
 impl<S: ClientStore> Engine<'_, S> {

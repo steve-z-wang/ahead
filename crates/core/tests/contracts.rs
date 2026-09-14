@@ -1,4 +1,4 @@
-use ahead_core::*;
+use savoia_core::*;
 use serde_json::{Value, json};
 
 fn schema() -> Schema {
@@ -196,7 +196,7 @@ fn shared_wire_fixtures_preserve_counter_and_checkpoint_boundaries() {
 }
 
 #[test]
-fn field_default_and_record_stamp_round_trip_and_ahead_prefix_is_rejected() {
+fn field_default_and_record_stamp_round_trip_and_storage_prefix_is_rejected() {
     let field: FieldDescriptor = serde_json::from_value(
         json!({"name":"rank","nullable":false,"type":{"kind":"scalar","name":"int"},"default":0}),
     )

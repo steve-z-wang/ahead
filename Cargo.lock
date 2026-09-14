@@ -3,89 +3,6 @@
 version = 4
 
 [[package]]
-name = "ahead-binding"
-version = "0.1.0"
-dependencies = [
- "ahead-client",
- "ahead-core",
- "ahead-sqlite",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "ahead-client"
-version = "0.1.0"
-dependencies = [
- "ahead-core",
- "serde",
- "serde_json",
- "uuid",
-]
-
-[[package]]
-name = "ahead-compiler"
-version = "0.1.0"
-dependencies = [
- "ahead-core",
- "serde_json",
-]
-
-[[package]]
-name = "ahead-core"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_jcs",
- "serde_json",
- "sha2",
- "thiserror",
- "uuid",
-]
-
-[[package]]
-name = "ahead-dart"
-version = "0.1.0"
-dependencies = [
- "ahead-binding",
- "serde_json",
-]
-
-[[package]]
-name = "ahead-integration"
-version = "0.1.0"
-dependencies = [
- "ahead-client",
- "ahead-core",
- "ahead-server",
- "ahead-sqlite",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "ahead-server"
-version = "0.1.0"
-dependencies = [
- "ahead-core",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "ahead-sqlite"
-version = "0.1.0"
-dependencies = [
- "ahead-client",
- "ahead-core",
- "rusqlite",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
 name = "android_system_properties"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -464,6 +381,89 @@ name = "ryu-js"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6518fc26bced4d53678a22d6e423e9d8716377def84545fe328236e3af070e7f"
+
+[[package]]
+name = "savoia-binding"
+version = "0.1.0"
+dependencies = [
+ "savoia-client",
+ "savoia-core",
+ "savoia-sqlite",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "savoia-client"
+version = "0.1.0"
+dependencies = [
+ "savoia-core",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "savoia-compiler"
+version = "0.1.0"
+dependencies = [
+ "savoia-core",
+ "serde_json",
+]
+
+[[package]]
+name = "savoia-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_jcs",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
+name = "savoia-dart"
+version = "0.1.0"
+dependencies = [
+ "savoia-binding",
+ "serde_json",
+]
+
+[[package]]
+name = "savoia-integration"
+version = "0.1.0"
+dependencies = [
+ "savoia-client",
+ "savoia-core",
+ "savoia-server",
+ "savoia-sqlite",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "savoia-server"
+version = "0.1.0"
+dependencies = [
+ "savoia-core",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "savoia-sqlite"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+ "savoia-client",
+ "savoia-core",
+ "serde_json",
+ "tempfile",
+]
 
 [[package]]
 name = "serde"

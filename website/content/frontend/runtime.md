@@ -4,7 +4,7 @@ The generated client delegates to a generic runtime, available as `client.client
 
 ## Opening and schema changes
 
-TypeScript imports `Client` from `packages/client-js/index.mts` in a source checkout. Dart imports `package:ahead/ahead.dart` through the local package dependency described in the [client setup guide](setup.md).
+TypeScript imports `Client` from `packages/client-js/index.mts` in a source checkout. Dart imports `package:savoia/savoia.dart` through the local package dependency described in the [client setup guide](setup.md).
 
 === "TypeScript"
 
@@ -17,7 +17,7 @@ TypeScript imports `Client` from `packages/client-js/index.mts` in a source chec
     ```dart
     final raw = await Client.open(
       path: 'local.sqlite', schema: schema,
-      libraryPath: '/absolute/path/to/libahead_dart.dylib',
+      libraryPath: '/absolute/path/to/libsavoia_dart.dylib',
     );
     ```
 
@@ -40,7 +40,7 @@ Both forms accept `migration`. For an explicitly changed descriptor:
     ```dart
     final raw = await Client.open(
       path: 'local.sqlite', schema: schema,
-      libraryPath: '/absolute/path/to/libahead_dart.dylib',
+      libraryPath: '/absolute/path/to/libsavoia_dart.dylib',
       migration: {
         'defaults': {'Entry': {'addedField': null}},
         'replayPull': true,

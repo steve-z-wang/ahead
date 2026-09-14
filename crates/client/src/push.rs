@@ -3,7 +3,7 @@ use crate::engine::Engine;
 use crate::queue::Queued;
 use crate::store::ClientStore;
 use crate::{Mutation, Operation, OperationKind, mutate::apply_to_row};
-use ahead_core::{
+use savoia_core::{
     ChannelCheckpoint, PushReceipt, PushRequest, RecordKey, Rejection, Result, canonical_json,
     invalid,
 };
@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 const MAX_MUTATIONS: usize = 20;
 
 fn keys_of<'a>(
-    schema: &ahead_core::Schema,
+    schema: &savoia_core::Schema,
     ops: impl Iterator<Item = &'a Operation>,
 ) -> Result<BTreeSet<String>> {
     ops.map(|op| schema.record_key(&op.model, &op.identity)?.encoded())

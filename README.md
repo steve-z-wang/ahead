@@ -1,13 +1,13 @@
-# Ahead
+# Savoia
 
 [![Verify](https://github.com/zanminwang/ahead/actions/workflows/verify.yml/badge.svg?branch=main)](https://github.com/zanminwang/ahead/actions/workflows/verify.yml)
 [![Documentation](https://github.com/zanminwang/ahead/actions/workflows/docs.yml/badge.svg?branch=main)](https://github.com/zanminwang/ahead/actions/workflows/docs.yml)
 
-Ahead is a schema-driven framework for building local-first apps with your own backend.
+Savoia is a schema-driven framework for building local-first apps with your own backend.
 
-- **Schema-driven.** Define your models and local mutations in a schema. Ahead handles the local state changes.
+- **Schema-driven.** Define your models and local mutations in a schema. Savoia handles the local state changes.
 - **Type-safe end to end.** Get typed client calls and backend read/write interfaces from the same schema.
-- **Works offline.** Read and write local SQLite without a connection. Ahead persists changes and syncs in the background.
+- **Works offline.** Read and write local SQLite without a connection. Savoia persists changes and syncs in the background.
 - **Your backend.** Implement your own read and write logic and choose your database. No vendor cloud service required.
 
 ## Why local-first?
@@ -16,7 +16,7 @@ Local-first apps read and write data on the device, so everyday interactions don
 
 ## How it works
 
-![Ahead architecture: local state and background sync](website/content/assets/architecture.svg)
+![Savoia architecture: local state and background sync](website/content/assets/architecture.svg)
 
 Generated clients currently sync over HTTP. The WebSocket streaming shown in the diagram is [planned for these clients](https://github.com/zanminwang/ahead/issues/35).
 
@@ -36,7 +36,7 @@ The TypeScript client and backend currently run on Node.js. The clients use nati
 
 Need another language, runtime, or database adapter? [Request support](https://github.com/zanminwang/ahead/issues/new). More integrations can be added.
 
-## Build with Ahead
+## Build with Savoia
 
 ### 1. Define your models and mutations
 
@@ -94,7 +94,7 @@ await client.transaction(async (tx) => {
 await client.channels.subscribe("todos");
 ```
 
-Ahead sends queued writes when the network allows, retries failed sync requests, and fetches changed records from your subscribed channels.
+Savoia sends queued writes when the network allows, retries failed sync requests, and fetches changed records from your subscribed channels.
 
 ### 3. Implement handlers and loaders for your backend
 
@@ -151,25 +151,25 @@ await backend.listen({ port: 4242 });
 
 </details>
 
-## How Ahead compares with other sync frameworks
+## How Savoia compares with other sync frameworks
 
-Ahead generates local operations from your schema and gives you typed interfaces to implement backend reads and writes.
+Savoia generates local operations from your schema and gives you typed interfaces to implement backend reads and writes.
 
 | Project | How local updates work | How backend writes work | How you define the read / sync path | Required backend database |
 | --- | --- | --- | --- | --- |
-| **Ahead** | Generated local operations from your schema | You implement the business logic through a generated, typed write interface | You mark changes and define the read path through a generated typed read interface. | No fixed database |
+| **Savoia** | Generated local operations from your schema | You implement the business logic through a generated, typed write interface | You mark changes and define the read path through a generated typed read interface. | No fixed database |
 | [Replicache](https://doc.replicache.dev/byob/local-mutations) | You write local update functions | Your write API runs the requested operations | You implement a [read API](https://doc.replicache.dev/reference/server-pull) that returns data changes | No fixed database |
 | [Zero](https://zero.rocicorp.dev/docs/mutators) | You write local update functions | Your server functions handle each write | You define [queries](https://zero.rocicorp.dev/docs/queries); Zero syncs matching database rows | PostgreSQL with database replication enabled |
 | [PowerSync](https://docs.powersync.com/intro/powersync-philosophy) | You update local SQLite | Your write API processes the changes | You define sync rules to select which database records reach each client | A supported database with change tracking enabled |
 | [Electric](https://electric.ax/docs/sync/guides/writes) | You choose how to update local state | You choose how writes reach your backend | You define [shapes](https://electric.ax/docs/sync/guides/shapes) to select Postgres rows for sync | PostgreSQL with database replication enabled |
 | [InstantDB](https://www.instantdb.com/docs) | You update records through the SDK | Instant applies writes using your permission rules | You query through the SDK; Instant keeps the results up to date | Instant's database backend |
 
-Ahead needs a database adapter that provides consistent transactions and stores sync metadata. Replicache also requires [consistent transaction snapshots](https://doc.replicache.dev/byob/remote-database).
+Savoia needs a database adapter that provides consistent transactions and stores sync metadata. Replicache also requires [consistent transaction snapshots](https://doc.replicache.dev/byob/remote-database).
 
 Instant Cloud is closed to new signups and will shut down on August 31, 2027. You can still host Instant yourself. See the [official announcement](https://www.instantdb.com/essays/instant_team_joins_openai).
 
 ## Project status
 
-Ahead is an early alpha. Packages have not been published, and a license has not yet been added.
+Savoia is an early alpha. Packages have not been published, and a license has not yet been added.
 
 [Schema guide](website/content/schema/reference.md) · [Client guide](website/content/frontend/setup.md) · [Backend guide](website/content/backend/setup.md)

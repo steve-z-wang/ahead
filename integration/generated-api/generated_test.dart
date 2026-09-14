@@ -13,7 +13,7 @@ void main(){
  });
  test('generated mutations and query use real native client',()async{
   final temp=await Directory.systemTemp.createTemp('generated-api-');
-  final client=await GeneratedClient.open(path:'${temp.path}/state.sqlite',libraryPath:Platform.environment['AHEAD_DART_LIBRARY'] ?? '../../target/debug/libahead_dart.dylib');
+  final client=await GeneratedClient.open(path:'${temp.path}/state.sqlite',libraryPath:Platform.environment['SAVOIA_DART_LIBRARY'] ?? '../../target/debug/libsavoia_dart.dylib');
   try{
    expect(await client.transaction((tx)=>tx.mutate.createEntry(entry:row)),1);
    expect((await client.models.entry.get(const EntryIdentity(id:id)))?.title,'hello');

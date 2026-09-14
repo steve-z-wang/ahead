@@ -1,5 +1,5 @@
-name: ahead_ios_smoke
-description: iOS simulator smoke harness for ahead.
+name: savoia_ios_smoke
+description: iOS simulator smoke harness for savoia.
 publish_to: none
 version: 1.0.0+1
 
@@ -9,7 +9,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  ahead:
+  savoia:
     path: ../../../packages/dart
 
 dev_dependencies:

@@ -105,7 +105,7 @@ export class PrismaPersistence {
       case "release": {
         if (!Number.isSafeInteger(r.ordinal) || r.ordinal < 1)
           throw new Error("Invalid savepoint ordinal");
-        const name = `ahead_mutation_${r.ordinal}`;
+        const name = `savoia_mutation_${r.ordinal}`;
         const command =
           r.op === "savepoint"
             ? "SAVEPOINT"

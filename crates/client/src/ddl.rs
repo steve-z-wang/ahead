@@ -1,6 +1,6 @@
 //! The tables are the schema record. Reconciliation makes them match the compiled schema or fails.
 use crate::store::ClientStore;
-use ahead_core::{
+use savoia_core::{
     FieldDescriptor, ModelDescriptor, Result, ScalarType, Schema, ValueType, invalid,
 };
 use serde_json::Value;

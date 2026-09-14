@@ -61,7 +61,7 @@ fixtures/
 | Part | What it is |
 | --- | --- |
 | Clients | `Client<SqliteStore>`, one temporary SQLite file each. Real files, so "crash" is dropping the client and reopening the same path, and DDL reconciliation is on the path too. |
-| Server | `ahead_server` over an in-memory host that implements claim, receipt, head, scan, load, publish. The one in `integration/rust/tests/scenarios.rs` is the starting point. PostgreSQL semantics are proven separately in `integration/persistence`. |
+| Server | `savoia_server` over an in-memory host that implements claim, receipt, head, scan, load, publish. The one in `integration/rust/tests/scenarios.rs` is the starting point. PostgreSQL semantics are proven separately in `integration/persistence`. |
 | Network | Two queues, requests and responses. No clock. Delay is "not delivered this step"; reorder, duplicate and drop are queue operations chosen by the RNG. |
 | RNG | One seeded generator; every random choice comes from it, so a seed reproduces a run exactly. |
 | Trace | The list of actions taken. Printed on failure; used by the shrinker. |

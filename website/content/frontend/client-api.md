@@ -25,7 +25,7 @@ Examples below assume an `Entry` model with `id`, `text` and nullable `note`, an
 
     final client = await GeneratedClient.open(
       path: 'local.sqlite',
-      libraryPath: '/absolute/path/to/libahead_dart.dylib',
+      libraryPath: '/absolute/path/to/libsavoia_dart.dylib',
     );
     ```
 

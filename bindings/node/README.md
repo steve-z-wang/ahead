@@ -1,3 +1,3 @@
-# Ahead Node bindings
+# Savoia Node bindings
 
 See the [documentation](../../website/content/contributing/testing.md).

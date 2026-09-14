@@ -5,7 +5,7 @@ The compiler reads sorted `.model` files and generates client and backend interf
 ## Command
 
 ```sh
-cargo run -p ahead-compiler -- compile INPUT_DIR OUTPUT_DIR \
+cargo run -p savoia-compiler -- compile INPUT_DIR OUTPUT_DIR \
   --backend-runtime BACKEND_IMPORT \
   --client-runtime CLIENT_IMPORT
 ```
@@ -14,8 +14,8 @@ cargo run -p ahead-compiler -- compile INPUT_DIR OUTPUT_DIR \
 | --- | --- |
 | `INPUT_DIR` | Directory containing `.model` files; sorted and compiled together |
 | `OUTPUT_DIR` | Destination for generated artifacts |
-| `--backend-runtime SPEC` | TypeScript backend import; default `@ahead/server` |
-| `--client-runtime SPEC` | TypeScript client import; default `@ahead/client` |
+| `--backend-runtime SPEC` | TypeScript backend import; default `@savoia/server` |
+| `--client-runtime SPEC` | TypeScript client import; default `@savoia/client` |
 | `--mutation-history FILE` | Retained mutation history; default output directory's `mutation-history.json` |
 | `--initialize-mutation-history` | Allow a missing explicitly selected history file; only version 1 declarations |
 | `--schema-fence FILE` | Published schema to check; default existing output `schema.json` |
@@ -34,7 +34,7 @@ For source-checkout use, supply runtime paths relative to the output directory; 
 | `generated.dart` | Dart models, patches, mutation builders and generated client |
 | `mutation-history.json` | Retained mutation versions and input contracts; path configurable |
 
-Dart output imports `package:ahead/ahead.dart`. Commit the history used to generate released clients; regenerating from an empty history loses compatibility information.
+Dart output imports `package:savoia/savoia.dart`. Commit the history used to generate released clients; regenerating from an empty history loses compatibility information.
 
 ## Fields and identities
 

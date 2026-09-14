@@ -9,7 +9,7 @@ import {createExample} from '../../examples/rust-round-trip/server.mts';
 import {Client} from '../../packages/client-js/index.mts';
 
 test('Node SDK -> native Rust -> HTTP -> Rust backend -> Prisma -> SQLite, then Dart',async()=>{
- const app=await createExample();const directory=await mkdtemp(join(tmpdir(),'ahead-e2e-'));let client;let server;
+ const app=await createExample();const directory=await mkdtemp(join(tmpdir(),'savoia-e2e-'));let client;let server;
  try{
   await app.initialize();server=await app.listen(0);const url=server.url;
   const transport=async(kind,body)=>{const response=await fetch(`${url}/sync/${kind==='push'?'mutations':'pull'}`,{method:'POST',headers:{authorization:'Bearer demo-user','content-type':'application/json'},body});if(!response.ok)throw Error(`HTTP ${response.status}: ${await response.text()}`);return response.text();};
@@ -31,14 +31,14 @@ test('Node SDK -> native Rust -> HTTP -> Rust backend -> Prisma -> SQLite, then 
   const waitSettled=async()=>{for(let i=0;i<200;i++){if((await client.status()).pending===0)return;await new Promise(r=>setTimeout(r,10));}throw Error('background sync did not settle');};
   try{await client.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:'  background  '}}]});await waitSettled();assert.equal((await client.read('Entry',{id:'entry-1'})).text,'background');await background.pause();await client.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:'  resumed  '}}]});await new Promise(r=>setTimeout(r,30));assert.equal((await client.status()).pending,1);await background.resume();await waitSettled();assert.equal((await client.read('Entry',{id:'entry-1'})).text,'resumed');}finally{await background.close();}
   const root=fileURLToPath(new URL('../..',import.meta.url));
-  await new Promise((resolve,reject)=>{const child=spawn('dart',[`--packages=${join(root,'packages/dart/.dart_tool/package_config.json')}`,'../../integration/e2e/dart_client.dart',url,directory],{cwd:join(root,'packages/dart'),env:{...process.env,AHEAD_LIBRARY:process.env.AHEAD_LIBRARY ?? join(root,`target/debug/libahead_dart.${process.platform === 'darwin' ? 'dylib' : 'so'}`)},stdio:'inherit'});child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(Error(`Dart E2E exited ${code}`)));});
+  await new Promise((resolve,reject)=>{const child=spawn('dart',[`--packages=${join(root,'packages/dart/.dart_tool/package_config.json')}`,'../../integration/e2e/dart_client.dart',url,directory],{cwd:join(root,'packages/dart'),env:{...process.env,SAVOIA_LIBRARY:process.env.SAVOIA_LIBRARY ?? join(root,`target/debug/libsavoia_dart.${process.platform === 'darwin' ? 'dylib' : 'so'}`)},stdio:'inherit'});child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(Error(`Dart E2E exited ${code}`)));});
   assert.equal((await app.db.entry.findUnique({where:{id:'entry-1'}})).text,'from Dart');
  }finally{await client?.close();await server?.close();await app.close();await rm(directory,{recursive:true,force:true});}
 });
 
 test('documented CLI keeps offline edits local and syncs them on online', { timeout: 30000 }, async () => {
  const app = await createExample();
- const directory = await mkdtemp(join(tmpdir(), 'ahead-cli-'));
+ const directory = await mkdtemp(join(tmpdir(), 'savoia-cli-'));
  let child;
  let output = '';
  let ended;
@@ -49,7 +49,7 @@ test('documented CLI keeps offline edits local and syncs them on online', { time
   const root = fileURLToPath(new URL('../..', import.meta.url));
   child = spawn(process.execPath, ['examples/rust-round-trip/client.mts'], {
    cwd: root,
-   env: { ...process.env, AHEAD_URL: server.url, AHEAD_DATABASE: join(directory, 'client.sqlite') },
+   env: { ...process.env, SAVOIA_URL: server.url, SAVOIA_DATABASE: join(directory, 'client.sqlite') },
    stdio: ['pipe', 'pipe', 'pipe'],
   });
   const exited = new Promise((resolve, reject) => {

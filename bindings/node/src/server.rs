@@ -3,11 +3,11 @@ use napi_derive::napi;
 use serde_json::Value;
 use std::{future::Future, pin::Pin};
 struct CallbackHost(ThreadsafeFunction<String, Promise<String>, String, Status, false>);
-impl ahead_server::Host for CallbackHost {
+impl savoia_server::Host for CallbackHost {
     fn call(
         &self,
         request: Value,
-    ) -> Pin<Box<dyn Future<Output = ahead_server::Result<Value>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = savoia_server::Result<Value>> + Send + '_>> {
         Box::pin(async move {
             let returned = self
                 .0
@@ -20,8 +20,8 @@ impl ahead_server::Host for CallbackHost {
         })
     }
 }
-fn config(raw: &str) -> Result<ahead_server::Config> {
-    ahead_server::Config::decode(
+fn config(raw: &str) -> Result<savoia_server::Config> {
+    savoia_server::Config::decode(
         serde_json::from_str(raw).map_err(|e| Error::from_reason(e.to_string()))?,
     )
     .map_err(Error::from_reason)
@@ -37,7 +37,7 @@ pub async fn process_push(
     request_json: String,
     callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
 ) -> Result<String> {
-    ahead_server::process_push(
+    savoia_server::process_push(
         &config(&config_json)?,
         &owner,
         request_json.as_bytes(),
@@ -53,7 +53,7 @@ pub async fn process_pull(
     request_json: String,
     callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
 ) -> Result<String> {
-    ahead_server::process_pull(
+    savoia_server::process_pull(
         &config(&config_json)?,
         &owner,
         request_json.as_bytes(),
@@ -73,7 +73,7 @@ pub async fn publish(
         serde_json::from_str(&changes_json).map_err(|e| Error::from_reason(e.to_string()))?;
     let channels =
         serde_json::from_str(&channels_json).map_err(|e| Error::from_reason(e.to_string()))?;
-    ahead_server::publish(
+    savoia_server::publish(
         &config(&config_json)?,
         &changes,
         &channels,
@@ -90,7 +90,7 @@ pub async fn negotiate_live(
     callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
 ) -> Result<String> {
     let result =
-        ahead_server::live::negotiate(&owner, request_json.as_bytes(), &CallbackHost(callback))
+        savoia_server::live::negotiate(&owner, request_json.as_bytes(), &CallbackHost(callback))
             .await
             .map_err(Error::from_reason)?;
     serde_json::to_string(&result).map_err(|e| Error::from_reason(e.to_string()))
@@ -110,7 +110,7 @@ pub async fn pull_live(
     {
         return Err(Error::from_reason("invalid live cursor"));
     }
-    let result = ahead_server::live::pull(
+    let result = savoia_server::live::pull(
         &config(&config_json)?,
         &owner,
         &scope,

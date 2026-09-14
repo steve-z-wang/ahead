@@ -1,7 +1,7 @@
-use ahead_client::ClientStore;
-use ahead_client::ddl::{FRAMEWORK_DDL, FRAMEWORK_TABLES, reconcile};
-use ahead_core::Schema;
-use ahead_sqlite::SqliteStore;
+use savoia_client::ClientStore;
+use savoia_client::ddl::{FRAMEWORK_DDL, FRAMEWORK_TABLES, reconcile};
+use savoia_core::Schema;
+use savoia_sqlite::SqliteStore;
 use serde_json::{Value, json};
 
 fn schema(fields: Value) -> Schema {
@@ -26,7 +26,7 @@ fn columns(s: &mut SqliteStore, table: &str) -> Vec<(String, String, i64)> {
         })
         .collect()
 }
-fn open(dir: &tempfile::TempDir, schema: &Schema) -> ahead_core::Result<SqliteStore> {
+fn open(dir: &tempfile::TempDir, schema: &Schema) -> savoia_core::Result<SqliteStore> {
     let mut s = SqliteStore::open(dir.path().join("db")).unwrap();
     s.execute_batch(FRAMEWORK_DDL).unwrap();
     s.begin().unwrap();

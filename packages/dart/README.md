@@ -1,3 +1,3 @@
-# Ahead Dart client
+# Savoia Dart client
 
 See the [documentation](../../website/content/frontend/setup.md).

@@ -1,7 +1,7 @@
 //! Per-record stamp, channel claims and subscriptions.
 use crate::engine::{Engine, as_u64};
 use crate::store::ClientStore;
-use ahead_core::{RecordKey, Result};
+use savoia_core::{RecordKey, Result};
 use serde_json::{Value, json};
 
 impl<S: ClientStore> Engine<'_, S> {

@@ -1,5 +1,5 @@
-site_name: Ahead
-site_description: Ahead is a schema-driven framework for building local-first apps with your own backend.
+site_name: Savoia
+site_description: Savoia is a schema-driven framework for building local-first apps with your own backend.
 site_url: https://zanminwang.github.io/ahead/
 repo_url: https://github.com/zanminwang/ahead
 repo_name: zanminwang/ahead
@@ -49,7 +49,7 @@ nav:
   - Docs:
       - Getting started:
           - Run your first app: getting-started.md
-          - How Ahead works: concepts.md
+          - How Savoia works: concepts.md
           - Find an interface: api-index.md
       - Schema:
           - Define models and mutations: schema/define.md

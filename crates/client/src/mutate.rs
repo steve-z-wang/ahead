@@ -4,7 +4,7 @@ use crate::engine::Engine;
 use crate::rows::merge_identity;
 use crate::store::ClientStore;
 use crate::{Mutation, Operation, OperationKind, policies};
-use ahead_core::{RecordKey, Result, Schema, invalid};
+use savoia_core::{RecordKey, Result, Schema, invalid};
 use serde_json::Value;
 use std::collections::BTreeSet;
 

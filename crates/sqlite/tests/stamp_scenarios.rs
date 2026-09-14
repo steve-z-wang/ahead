@@ -1,7 +1,7 @@
 //! Acceptance scenarios for per-record stamps across channels.
 mod common;
-use ahead_client::*;
 use common::*;
+use savoia_client::*;
 
 fn stamped(channel: &str, from: u64, to: u64, stamp: u64, text: Option<&str>) -> PullPage {
     let mut p = page(channel, from, to, text);

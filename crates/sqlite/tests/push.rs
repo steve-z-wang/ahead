@@ -1,7 +1,7 @@
 mod common;
-use ahead_client::*;
-use ahead_sqlite::SqliteStore;
 use common::*;
+use savoia_client::*;
+use savoia_sqlite::SqliteStore;
 use serde_json::json;
 
 fn receipt(channel: &str, cursor: u64) -> PushReceipt {

@@ -1,6 +1,6 @@
 # Backend interfaces
 
-Your backend implements the write path through handlers and the read/sync path through loaders. The compiler generates their TypeScript interfaces from your schema. Ahead supplies protocol processing; your application supplies business logic, authorization and a database transaction.
+Your backend implements the write path through handlers and the read/sync path through loaders. The compiler generates their TypeScript interfaces from your schema. Savoia supplies protocol processing; your application supplies business logic, authorization and a database transaction.
 
 Examples use the `Entry` / `Edit` schema from [getting started](../getting-started.md). The complete working implementation is [server.mts](https://github.com/zanminwang/ahead/blob/main/examples/rust-round-trip/server.mts).
 
@@ -25,7 +25,7 @@ const server = await backend.listen({ port: 4242 });
 console.log(server.url);
 ```
 
-The imports assume the same directory depth as the repository example. `handlers.ts` and `loaders.ts` contain the implementations below. Generate the Prisma application client and apply Ahead's metadata migration first; see [database adapters](database.md).
+The imports assume the same directory depth as the repository example. `handlers.ts` and `loaders.ts` contain the implementations below. Generate the Prisma application client and apply Savoia's metadata migration first; see [database adapters](database.md).
 
 The generated `Options<Tx>` requires:
 
@@ -75,7 +75,7 @@ This reproduces the demo's normalization and rejection behavior. It is not an ap
 
 A handler returns `Promise<void | { channel: string }>`. Returning void selects the only notified channel as its receipt checkpoint. If several channels were notified, return one of those channels explicitly. No notification causes `handler.no_channel`; several channels without a selection cause `handler.ambiguous_checkpoint`. These are programming errors that abort the batch.
 
-One mutation can have several slots and perform several business writes. Ahead runs it in a savepoint inside the batch transaction. The schema describes the local operation and typed input; it does not require the backend to replay the same database operations. The backend can normalize values or use different tables.
+One mutation can have several slots and perform several business writes. Savoia runs it in a savepoint inside the batch transaction. The schema describes the local operation and typed input; it does not require the backend to replay the same database operations. The backend can normalize values or use different tables.
 
 The latest `Edit` version uses `handlers.edit`. Additional retained versions use names such as `editV1`. Keep the handlers required by the generated interface while clients can still send those versions. A known but unsupported version fails before any handler executes.
 
@@ -129,7 +129,7 @@ notify({ channel: 'book:demo', records: [Entry({ id: 'entry-1' })] });
 
 The channel must be nonblank. Decoded handler slots such as `input.entry` carry record-reference metadata and can be passed directly. Spreading or cloning a slot can lose this metadata; use the generated model reference function when constructing a reference yourself. The low-level `RECORD` symbol marks these decoded references; applications normally do not need to manipulate it.
 
-Notify every channel that distributes the changed record, including when its loader should now return null. Ahead does not infer changes from arbitrary writes to your database. Multiple calls are allowed, but a successful handler must notify at least one channel.
+Notify every channel that distributes the changed record, including when its loader should now return null. Savoia does not infer changes from arbitrary writes to your database. Multiple calls are allowed, but a successful handler must notify at least one channel.
 
 Each notification allocates a per-record **stamp** and a channel **cursor**. Stamps prevent older content from another channel from overwriting newer content. When channels return different views of one identity, notification order therefore matters. Channels are not isolated copies of the same record. See [concepts](../concepts.md).
 

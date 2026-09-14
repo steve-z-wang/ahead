@@ -62,7 +62,7 @@ You can close and reopen the same local database without losing queued changes. 
 
 After a local mutation, the connection pushes its frozen request. A successful receipt can require a channel checkpoint. The runtime retains optimistic state until the necessary authoritative progress is applied, then settles the accepted work and replays remaining local changes. This lets a handler's normalized result replace the optimistic value.
 
-If a handler rejects the mutation, Ahead removes that mutation's optimistic contribution and retains its rejection code locally. Later valid pending work may still affect the displayed record, so rollback is not necessarily a return to the value the user saw before all edits.
+If a handler rejects the mutation, Savoia removes that mutation's optimistic contribution and retains its rejection code locally. Later valid pending work may still affect the displayed record, so rollback is not necessarily a return to the value the user saw before all edits.
 
 === "TypeScript"
 

@@ -17,7 +17,7 @@ Use this index to find the interface you call or implement. The examples use the
 | Model, Identity, Patch, Filter and Order types | Pass typed data to generated methods | [Generated data types](frontend/client-api.md#generated-data-types) |
 | `Handlers<Tx>`, `HandlerCall` | Implement each mutation's authoritative business logic | [Handlers](backend/api.md#handlers) |
 | `Loaders<Tx>`, `LoaderCall` | Return current records for synchronization | [Loaders](backend/api.md#loaders) |
-| `notify`, `NotifyArgs`, model reference functions | Tell Ahead which records changed on which channels | [Notifications](backend/api.md#notifications) |
+| `notify`, `NotifyArgs`, model reference functions | Tell Savoia which records changed on which channels | [Notifications](backend/api.md#notifications) |
 | `createBackend`, `Options<Tx>` | Connect your implementations to the backend runtime | [Backend setup](backend/api.md#createbackend) |
 | `backend.listen` | Serve sync requests and close the listener | [Listener](backend/api.md#listener) |
 | `Authenticate`, `devAuth` | Identify the caller | [Authentication](backend/api.md#authentication) |

@@ -2,7 +2,7 @@
 use crate::engine::{Engine, as_u64};
 use crate::store::ClientStore;
 use crate::{Mutation, Operation, OperationKind};
-use ahead_core::{ChannelCheckpoint, RecordKey, Rejection, Result, invalid};
+use savoia_core::{ChannelCheckpoint, RecordKey, Rejection, Result, invalid};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -80,7 +80,7 @@ impl<S: ClientStore> Engine<'_, S> {
         let value = as_u64(&current)?;
         let next = value
             .checked_add(1)
-            .filter(|v| *v <= ahead_core::MAX_SAFE_INTEGER)
+            .filter(|v| *v <= savoia_core::MAX_SAFE_INTEGER)
             .ok_or_else(|| invalid("counter exhausted"))?;
         self.exec(
             "ahead_client",

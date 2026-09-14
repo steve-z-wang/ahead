@@ -310,27 +310,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "ahead-binding"
+name = "savoia-binding"
 version = "0.1.0"
 dependencies = [
- "ahead-client",
- "ahead-core",
- "ahead-sqlite",
+ "savoia-client",
+ "savoia-core",
+ "savoia-sqlite",
  "serde_json",
 ]
 
 [[package]]
-name = "ahead-client"
+name = "savoia-client"
 version = "0.1.0"
 dependencies = [
- "ahead-core",
+ "savoia-core",
  "serde",
  "serde_json",
  "uuid",
 ]
 
 [[package]]
-name = "ahead-core"
+name = "savoia-core"
 version = "0.1.0"
 dependencies = [
  "chrono",
@@ -343,11 +343,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "ahead-node"
+name = "savoia-node"
 version = "0.1.0"
 dependencies = [
- "ahead-binding",
- "ahead-server",
+ "savoia-binding",
+ "savoia-server",
  "napi",
  "napi-build",
  "napi-derive",
@@ -355,21 +355,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "ahead-server"
+name = "savoia-server"
 version = "0.1.0"
 dependencies = [
- "ahead-core",
+ "savoia-core",
  "serde",
  "serde_json",
  "thiserror",
 ]
 
 [[package]]
-name = "ahead-sqlite"
+name = "savoia-sqlite"
 version = "0.1.0"
 dependencies = [
- "ahead-client",
- "ahead-core",
+ "savoia-client",
+ "savoia-core",
  "rusqlite",
  "serde_json",
 ]

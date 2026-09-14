@@ -26,7 +26,7 @@ mutation Edit {
 For the existing repository example, run from the repository root:
 
 ```sh
-cargo run -p ahead-compiler -- compile \
+cargo run -p savoia-compiler -- compile \
   examples/rust-round-trip/models examples/rust-round-trip/generated \
   --backend-runtime ../../../packages/server/index.mts \
   --client-runtime ../../../packages/client-js/index.mts
