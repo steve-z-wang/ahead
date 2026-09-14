@@ -1,4 +1,4 @@
-//! Guarantees D1–D6 from docs/guarantees.md as named scenarios on the simulation.
+//! Guarantees D1–D6 from docs/engineering/guarantees.md as named scenarios on the simulation.
 use ahead_sim::{Action, MutationSpec, Sim, schema::entry_key};
 
 fn subscribe(sim: &mut Sim, client: usize, channels: &[&str]) {

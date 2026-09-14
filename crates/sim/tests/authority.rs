@@ -189,7 +189,7 @@ fn a4_handler_without_a_channel_aborts_the_batch() {
 #[ignore = "issue #32: a page from a previous subscription of the same channel is not \
 recognized as stale; it can be delivered after Unsubscribe/Subscribe resets the cursor to \
 0 and either errors as a gap or is wrongly applied, instead of being dropped. See A2 in \
-docs/guarantees.md."]
+docs/engineering/guarantees.md."]
 fn a2_page_from_a_previous_subscription_is_stale_not_a_gap() {
     let mut sim = Sim::new(36, 1);
     sim.apply(Action::Subscribe {

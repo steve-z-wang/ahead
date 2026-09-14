@@ -69,7 +69,7 @@ nav:
       - Contributing:
           - Contribute to the docs: https://github.com/zanminwang/ahead/blob/main/docs/writing/guides.md
           - Testing: https://github.com/zanminwang/ahead/blob/main/docs/engineering/testing/running.md
-          - Guarantees and proofs: https://github.com/zanminwang/ahead/blob/main/docs/engineering/testing/guarantees.md
+          - Guarantees and proofs: https://github.com/zanminwang/ahead/blob/main/docs/engineering/guarantees.md
           - Testing strategy: https://github.com/zanminwang/ahead/blob/main/docs/engineering/testing/strategy.md
   - GitHub: https://github.com/zanminwang/ahead
 validation:

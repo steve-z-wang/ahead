@@ -2,7 +2,7 @@
 
 This page describes the planned test organization. The simulation and conformance runners below are proposed work; see [running the current tests](running.md) for commands available in this checkout. Simulation implementation is tracked in [PR #34](https://github.com/zanminwang/ahead/pull/34).
 
-[guarantees](guarantees.md) says what the framework promises and where each promise is proven. This page says how the test suite is organized to produce those proofs, and how to add one.
+[guarantees](../guarantees.md) says what the framework promises and where each promise is proven. This page says how the test suite is organized to produce those proofs, and how to add one.
 
 ## Principle
 
@@ -117,14 +117,14 @@ Two models with one relation (an `Entry` with `Comment` children), two or three 
 
 1. Done: the three `fixtures/scenarios` cases are `crates/sim/tests/distribution.rs`.
 2. Done: `crates/sim/tests/invariants.rs`.
-3. Remaining: named scenarios for the clauses [guarantees](guarantees.md) still marks `partial`: P4 after a schema change, D4 child membership, R3 crash at every commit, C3 queued bytes across a schema change, and the two clauses opened by #32 and #33.
+3. Remaining: named scenarios for the clauses [guarantees](../guarantees.md) still marks `partial`: P4 after a schema change, D4 child membership, R3 crash at every commit, C3 queued bytes across a schema change, and the two clauses opened by #32 and #33.
 4. Done: the old in-process integration crate under `integration/` is deleted.
 
 ## Adding a test
 
 Ask which guarantee it proves. If none, it is either a unit test for a pure function (put it next to that function) or a translation test for a binding (put it in `integration/bindings`, and keep it about translation).
 
-- **A new guarantee**: add the entry to [guarantees](guarantees.md) first, with `unproven`, then write the primary proof, then update the entry.
+- **A new guarantee**: add the entry to [guarantees](../guarantees.md) first, with `unproven`, then write the primary proof, then update the entry.
 - **A new clause of an existing guarantee**: a named scenario in the matching `crates/sim/tests/*.rs`, named after the clause.
 - **A new invariant**: add it to the sim's invariant list; every existing seed now checks it.
 - **A conformance case**: a script under `fixtures/scenarios/<name>/` with expected final state; the runner picks it up in all three languages.
