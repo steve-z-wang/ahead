@@ -198,6 +198,7 @@ Supporting:
 A mutation whose prerequisite task is not ready is not frozen. A lifecycle dependency must be accepted before its dependent is sent, and the two are never in one batch. A sequence dependency may share a batch when the predecessor was selected earlier in it.
 
 Primary:
+- crates/sim/tests/push.rs::p3_lifecycle_dependent_waits_for_the_parent_receipt (the child is never in the parent's batch, asserted byte for byte)
 - crates/sqlite/tests/push.rs::failed_prerequisite_stays_optimistic_independent_work_can_overtake
 - crates/sqlite/tests/push.rs::lifecycle_dependency_waits_for_parent_ack_but_sequence_can_share_batch (lifecycle clause; the name promises a sequence case the body lacks)
 - crates/sqlite/tests/push.rs::schema_sequence_relationship_blocks_dependent_but_not_independent_work (sequence clause; the name promises an independent mutation the body lacks)
@@ -250,7 +251,7 @@ Supporting:
 - integration/bindings/node/transaction-bridge.test.mjs::Rust error after host write rolls back business and framework
 - integration/bindings/node/transaction-bridge.test.mjs::business rejection rolls back its savepoint while preceding mutation commits
 
-Note: Savepoint-level rollback against a real database is proven only against PostgreSQL; the sim's host does not model savepoints.
+Note: Savepoint-level rollback against a real database is proven only against PostgreSQL; the sim's host models savepoints as a snapshot stack, and the host unit test `crates/sim/src/host.rs::rejection_rolls_back_one_mutation_and_failure_aborts_the_batch` covers per-mutation rollback and an aborted batch on that model; real PostgreSQL savepoint semantics are proven only in `integration/persistence`.
 
 ## A. Authority and settlement
 
@@ -311,7 +312,7 @@ Primary:
 - integration/persistence/server/runtime.test.mjs::an all-rejected batch settles with no checkpoints
 
 Supporting:
-- none
+- crates/sim/tests/push.rs::receipts_round_trip
 
 ### A5 Batches settle in accepted-prefix order
 
@@ -341,6 +342,7 @@ Supporting:
 Every delivered record carries a per-record stamp allocated by the server at notify. The client applies content when the stamp is greater than the stored one, treats an equal stamp as idempotent, and discards older content. Delivery order and delivering Channel do not matter. A page lacking a stamp is refused.
 
 Primary:
+- crates/sim/tests/distribution.rs::d2_delayed_page_from_another_channel_cannot_regress_newer_content
 - crates/sqlite/tests/downlink.rs::older_stamp_cannot_regress_newer_authority_but_keeps_claim_bookkeeping
 - crates/sqlite/tests/downlink.rs::equal_stamp_is_idempotent_or_a_diagnostic
 - crates/sqlite/tests/stamp_scenarios.rs::delayed_page_from_another_channel_cannot_regress_newer_content
@@ -356,7 +358,7 @@ Supporting:
 Every `(channel, record)` publish allocates the next stamp for that record, so one notify fanning out to Channel A then Channel B yields two consecutive stamps, ordered by the order the handler called notify. Each Channel's cursor advances on its own; it does not track or compare stamps.
 
 Primary:
-- crates/sim/tests/distribution.rs::d3_each_channel_publish_allocates_its_own_stamp (one notify to A then B allocates two consecutive stamps in notify order; each Channel's cursor advances independently)
+- crates/sim/tests/distribution.rs::d3_each_channel_publish_allocates_its_own_stamp (through the client: independent per-channel cursors, `cursor("a") == 2` and `cursor("b") == 1`, and the client ending on the later content - not the stamp-allocation clause itself, which MemHost's own counter cannot prove; see `crates/server/tests/stamp.rs::publish_requires_cursor_and_stamp_from_the_host` below for that)
 - integration/persistence/server/runtime.test.mjs::publish allocates one stamp per notify and stores it on the invalidation row (stamps 1, 2, 3; cursors of a and b advance independently)
 - crates/server/tests/stamp.rs::publish_requires_cursor_and_stamp_from_the_host
 - crates/sqlite/tests/downlink.rs::channel_claims_and_cross_channel_delete (client cursors independent)
@@ -383,6 +385,7 @@ Note: Child records moving with their parent across channels is not asserted.
 A delete with a newer stamp removes the record locally regardless of remaining claims; the remaining claims are the Channels whose delete has not arrived. An older delete cannot replace newer content. Releasing one Channel's claim never affects another Channel's claim.
 
 Primary:
+- crates/sim/tests/distribution.rs::d5_delete_across_channels_keeps_a_tombstone_until_every_claim_confirms
 - crates/sqlite/tests/downlink.rs::channel_claims_and_cross_channel_delete
 - crates/sqlite/tests/downlink.rs::older_stamp_cannot_regress_newer_authority_but_keeps_claim_bookkeeping (older tombstone discarded, claim still released)
 - crates/sqlite/tests/stamp_scenarios.rs::delete_across_channels_keeps_a_tombstone_until_every_claim_confirms
@@ -396,6 +399,7 @@ Supporting:
 Unsubscribing a Channel drops its claims and the records no other Channel claims, then resets its cursor. A loader returning null for a record is applied as a delete on that Channel.
 
 Primary:
+- crates/sim/tests/distribution.rs::d6_unsubscribe_keeps_what_other_channels_claim
 - crates/sqlite/tests/client.rs::unsubscribe_drops_records_nobody_else_claims_and_restarts_from_zero
 - crates/sqlite/tests/downlink.rs::channel_claims_and_cross_channel_delete (null state applied as delete)
 - crates/sqlite/tests/downlink.rs::delete_cascades_to_descendants_and_their_claims
@@ -432,7 +436,7 @@ Primary:
 Supporting:
 - none
 
-Note: The runner proves this with direct writes off. `crates/sim/tests/invariants.rs::random_sequences_with_direct_writes` is `#[ignore]`d until #33; direct writes are excluded from the checked property until that bug is fixed.
+Note: The runner proves this with direct writes off. `crates/sim/tests/invariants.rs::random_sequences_with_direct_writes` is `#[ignore]`d until #33; direct writes are excluded from the checked property until that bug is fixed. The runner checks every invariant after every step and also settles every 25 steps (a legal sequence of actions, so shrinking still applies) before checking again, so a client is not only rarely caught at a channel's head mid-run. The count of actual content comparisons `no_pending_means_converged` makes is asserted to a floor of 1,000 across all seeds, so this coverage cannot silently drop.
 
 ### R3 Crash at any durable boundary loses nothing
 

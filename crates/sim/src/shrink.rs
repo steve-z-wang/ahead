@@ -3,12 +3,23 @@
 use crate::{Action, Sim};
 
 pub fn replay(seed: u64, clients: usize, trace: &[Action]) -> Result<(), String> {
-    let mut sim = Sim::new(seed, clients);
-    for a in trace {
-        sim.apply(a.clone())?;
-        sim.check()?;
-    }
-    Ok(())
+    // Removing one candidate action (in particular a `Restart`) can leave a later
+    // action in the trace targeting a client that is still crashed; `Sim::client`
+    // panics rather than returning an `Err` for that ("client is crashed"), since
+    // ordinary forward stepping never produces such a trace. A shrink candidate is
+    // free to be invalid in this way - it just must not be accepted as a smaller
+    // reproduction of the *original* failure - so treat a panic here the same as any
+    // other error whose `key` does not match: caught, reported under a key of its
+    // own, and therefore always rejected as a shrink.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut sim = Sim::new(seed, clients);
+        for a in trace {
+            sim.apply(a.clone())?;
+            sim.check()?;
+        }
+        Ok(())
+    }));
+    result.unwrap_or_else(|_| Err("shrink candidate panicked".to_string()))
 }
 
 /// The identity of a failure, so `shrink` can tell "the same failure" apart from a
@@ -124,6 +135,10 @@ mod tests {
     /// correctly keeps this reduction (it is the same invariant, not a different
     /// bug), it just cannot single out one specific *mechanism* by which that
     /// invariant fires - see task-11-report.md for the fix-round writeup.
+    ///
+    /// When issue #33 is fixed this trace no longer fails; rewrite the test around a
+    /// different guaranteed failure (for example a `Direct` on a crashed client via a
+    /// strict replay).
     #[test]
     fn shrink_of_the_issue_33_repro_keeps_the_same_failure() {
         let failing = vec![

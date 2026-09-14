@@ -10,7 +10,7 @@ type Check = fn(&mut Sim) -> Result<(), String>;
 const CHECKS: &[(&str, Check)] = &[
     ("stamps never decrease", stamps_never_decrease),
     ("cursors never decrease", cursors_never_decrease),
-    ("handler calls match outcomes", handler_calls_match_outcomes),
+    ("no mutation executes twice", no_mutation_executes_twice),
     ("no pending means converged", no_pending_means_converged),
     (
         "claims belong to subscriptions",
@@ -102,11 +102,19 @@ fn cursors_never_decrease(sim: &mut Sim) -> Result<(), String> {
     Ok(())
 }
 
-fn handler_calls_match_outcomes(sim: &mut Sim) -> Result<(), String> {
-    let calls = sim.host.handler_calls();
-    let outcomes = sim.host.accepted() + sim.host.rejected() + sim.host.failed();
-    if calls != outcomes {
-        return Err(format!("{calls} handler calls, {outcomes} outcomes"));
+/// No mutation executes twice: the (clientId, batchSequence, ordinal) triples the
+/// host recorded for every `handle` call are pairwise distinct across the whole run.
+/// A retry that reached the handler again (instead of being answered from the stored
+/// receipt) would duplicate one of these triples.
+fn no_mutation_executes_twice(sim: &mut Sim) -> Result<(), String> {
+    let mut seen = BTreeSet::new();
+    for triple in sim.host.handler_invocations() {
+        if !seen.insert(triple.clone()) {
+            return Err(format!(
+                "handler invoked twice for client {} batch {} ordinal {}",
+                triple.0, triple.1, triple.2
+            ));
+        }
     }
     Ok(())
 }
@@ -169,6 +177,7 @@ fn no_pending_means_converged(sim: &mut Sim) -> Result<(), String> {
                 }
                 let local = sim.client(i).read(&key).map_err(|e| e.to_string())?;
                 let server = normalized(sim.host.state(&key), &key.model);
+                sim.comparisons += 1;
                 if local != server {
                     return Err(format!(
                         "client {i} at head of {channel} but {} is {local:?}, server has {server:?} (not converged)",

@@ -87,7 +87,7 @@ fn r3_crash_after_every_step_loses_nothing() {
     reference.settle();
     let expected = reference.read_text(0, &entry_key("e1"));
     let expected_rejections = reference.client(0).rejections().unwrap().len();
-    for crash_at in 0..13 {
+    for crash_at in 0..script().len() {
         let mut sim = Sim::new(52, 1);
         for (i, a) in script().into_iter().enumerate() {
             sim.apply(a).unwrap();

@@ -157,6 +157,11 @@ fn a4_handler_without_a_channel_aborts_the_batch() {
     })
     .unwrap();
     sim.apply(Action::Freeze { client: 0 }).unwrap();
+    let frozen = sim
+        .client(0)
+        .freeze()
+        .unwrap()
+        .expect("still frozen, unacknowledged");
     sim.apply(Action::Deliver).unwrap();
     assert!(matches!(
         sim.net.pop(),
@@ -167,7 +172,77 @@ fn a4_handler_without_a_channel_aborts_the_batch() {
         "aborted batch left nothing"
     );
     assert_eq!(sim.client(0).pending_count().unwrap(), 1);
+    assert_eq!(
+        sim.client(0).freeze().unwrap().unwrap(),
+        frozen,
+        "the client retries the same bytes"
+    );
     sim.check().unwrap();
+}
+
+/// A2 (open): a page pulled from channel "a" before an Unsubscribe/Subscribe cycle
+/// can still be in flight when the resubscribe resets the channel's cursor to 0; it
+/// must be dropped as stale, a page from a previous subscription, rather than
+/// treated as a gap or applied against the reset cursor. No reproduction of this
+/// existed in the repo; this is the nine-action repro from issue #32.
+#[test]
+#[ignore = "issue #32: a page from a previous subscription of the same channel is not \
+recognized as stale; it can be delivered after Unsubscribe/Subscribe resets the cursor to \
+0 and either errors as a gap or is wrongly applied, instead of being dropped. See A2 in \
+docs/guarantees.md."]
+fn a2_page_from_a_previous_subscription_is_stale_not_a_gap() {
+    let mut sim = Sim::new(36, 1);
+    sim.apply(Action::Subscribe {
+        client: 0,
+        channel: "a".into(),
+    })
+    .unwrap();
+    sim.apply(Action::Enqueue {
+        client: 0,
+        mutation: MutationSpec::CreateEntry {
+            id: "e1".into(),
+            text: "1".into(),
+        },
+    })
+    .unwrap();
+    sim.apply(Action::Freeze { client: 0 }).unwrap();
+    sim.drain();
+    sim.apply(Action::Pull {
+        client: 0,
+        channel: "a".into(),
+    })
+    .unwrap();
+    sim.drain();
+    sim.apply(Action::Enqueue {
+        client: 0,
+        mutation: MutationSpec::CreateEntry {
+            id: "e2".into(),
+            text: "2".into(),
+        },
+    })
+    .unwrap();
+    sim.apply(Action::Freeze { client: 0 }).unwrap();
+    sim.drain();
+    sim.apply(Action::Pull {
+        client: 0,
+        channel: "a".into(),
+    })
+    .unwrap();
+    sim.apply(Action::Unsubscribe {
+        client: 0,
+        channel: "a".into(),
+    })
+    .unwrap();
+    sim.apply(Action::Subscribe {
+        client: 0,
+        channel: "a".into(),
+    })
+    .unwrap();
+    assert!(
+        sim.apply(Action::Deliver).is_ok(),
+        "the client must drop the stale page rather than error"
+    );
+    assert_eq!(sim.client(0).cursor("a").unwrap(), 0);
 }
 
 /// A5: batch 2's checkpoint is reached before batch 1's; nothing settles until batch

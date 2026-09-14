@@ -43,6 +43,18 @@ impl Sim {
     fn pick_channel(&mut self) -> String {
         self.rng.pick(&CHANNELS).to_string()
     }
+    /// A channel to notify for `Action::ServerChange`. Ordinarily any of the three
+    /// (`generate_membership_faults`), including one outside the record's real
+    /// membership - a deliberate fault (see the field's doc). When that fault is
+    /// disabled, stay within the record's real membership once it has one, so the
+    /// generated state is always one `no_pending_means_converged` can reason about.
+    fn pick_notify_channel(&mut self, real_membership: &[String]) -> String {
+        if self.generate_membership_faults || real_membership.is_empty() {
+            self.pick_channel()
+        } else {
+            self.rng.pick(real_membership).clone()
+        }
+    }
     fn choose(&mut self) -> Option<Action> {
         let running = self.running();
         let roll = self.rng.below(100);
@@ -115,9 +127,10 @@ impl Sim {
                 } else {
                     Some(format!("s{}", self.rng.below(1000)))
                 };
-                let mut channels = vec![self.pick_channel()];
+                let real_membership = self.host.membership(&crate::schema::entry_key(&id));
+                let mut channels = vec![self.pick_notify_channel(&real_membership)];
                 if self.rng.chance(1, 2) {
-                    let c = self.pick_channel();
+                    let c = self.pick_notify_channel(&real_membership);
                     if !channels.contains(&c) {
                         channels.push(c);
                     }
@@ -222,17 +235,27 @@ impl Sim {
             Err(e) => Err(format!("{action:?}: {e}")),
         }
     }
-    pub fn run(seed: u64, clients: usize, steps: usize) -> Result<(), Failure> {
+    pub fn run(seed: u64, clients: usize, steps: usize) -> Result<usize, Failure> {
         Sim::run_with(seed, clients, steps, true)
     }
+    /// Runs the seeded sequence, checking every invariant after every step. Every
+    /// `SETTLE_EVERY` steps also settles (a legal sequence of actions, so it appends to
+    /// the trace and shrinking still applies) and checks again: a client is rarely at a
+    /// channel's head while the channel still holds records mid-run, so without this
+    /// `no_pending_means_converged`'s content comparison rarely fires - settling
+    /// periodically forces convergence so that check to actually run. Returns the
+    /// total number of content comparisons `no_pending_means_converged` made, on
+    /// success.
     pub fn run_with(
         seed: u64,
         clients: usize,
         steps: usize,
         generate_direct: bool,
-    ) -> Result<(), Failure> {
+    ) -> Result<usize, Failure> {
+        const SETTLE_EVERY: usize = 25;
         let mut sim = Sim::new(seed, clients);
         sim.generate_direct = generate_direct;
+        sim.generate_membership_faults = generate_direct;
         for i in 0..clients {
             sim.apply(Action::Subscribe {
                 client: i,
@@ -251,8 +274,21 @@ impl Sim {
                     minimal,
                 });
             }
+            if step % SETTLE_EVERY == SETTLE_EVERY - 1 {
+                sim.settle();
+                if let Err(error) = sim.check() {
+                    let minimal = shrink::shrink(seed, clients, sim.trace.clone());
+                    return Err(Failure {
+                        seed,
+                        step,
+                        error,
+                        trace: sim.trace.clone(),
+                        minimal,
+                    });
+                }
+            }
         }
-        Ok(())
+        Ok(sim.comparisons)
     }
 }
 

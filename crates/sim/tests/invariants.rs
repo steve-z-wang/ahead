@@ -13,11 +13,18 @@ fn env(name: &str, default: usize) -> usize {
 fn random_sequences_violate_no_invariant() {
     let seeds = env("SIM_SEEDS", 60);
     let steps = env("SIM_STEPS", 120);
+    let mut comparisons = 0;
     for seed in 0..seeds as u64 {
-        if let Err(failure) = Sim::run_with(seed, 3, steps, false) {
-            panic!("{failure}");
+        match Sim::run_with(seed, 3, steps, false) {
+            Ok(n) => comparisons += n,
+            Err(failure) => panic!("{failure}"),
         }
     }
+    assert!(
+        comparisons >= 1000,
+        "only {comparisons} content comparisons across all seeds; coverage dropped \
+         (periodic settle in Sim::run_with should keep this well above the floor)"
+    );
 }
 
 #[test]
@@ -50,8 +57,18 @@ fn every_run_ends_converged_after_settle() {
             })
             .unwrap();
         }
-        for _ in 0..80 {
-            sim.step().unwrap();
+        for step in 0..80 {
+            if let Err(error) = sim.step() {
+                let minimal = otter_sim::shrink::shrink(seed, 2, sim.trace.clone());
+                let failure = otter_sim::Failure {
+                    seed,
+                    step,
+                    error,
+                    trace: sim.trace.clone(),
+                    minimal,
+                };
+                panic!("{failure}");
+            }
         }
         for i in 0..2 {
             sim.apply(otter_sim::Action::Restart { client: i }).unwrap();

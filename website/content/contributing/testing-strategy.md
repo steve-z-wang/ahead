@@ -69,6 +69,8 @@ fixtures/
 
 The oracle is deliberately small. It knows semantics (what the server accepted, what each client has been told) and nothing about how the engine stores or replays. A large oracle that mirrors engine code would only prove the engine agrees with a copy of itself.
 
+The oracle is not a separate module: `MemHost`'s own tables (authoritative content and stamps) and each client's recorded receipts (the pending side, via `pending_count`) play that role; the invariants read those directly.
+
 ### Actions
 
 Each step the RNG picks one:
@@ -88,15 +90,15 @@ Each step the RNG picks one:
 
 ### Invariants
 
-Checked after every step:
+The seven checks in `crates/sim/src/invariants.rs::CHECKS`, run after every step:
 
-- Each client's authoritative base for every record equals the oracle's content at the stamp the client has accepted.
-- Each client's pending set equals the oracle's unsettled set for that client.
-- Per record, the local stamp never decreases. Per channel, the cursor never decreases.
-- Handler invocations on the server equal the number of distinct accepted mutations (P1).
-- A client with nothing pending and every subscribed channel at head holds the server's current content (convergence).
-- Claim rows belong to subscribed channels; a record row has at least one claim; a tombstone has no record row (the #8 invariants).
-- The receipt a client stored equals the receipt the server stored, byte for byte.
+- `stamps never decrease`: per record, a client's stored stamp never regresses.
+- `cursors never decrease`: per channel, a client's stored cursor never regresses.
+- `no mutation executes twice`: no `(clientId, batchSequence, ordinal)` triple reaches the server's handler more than once.
+- `no pending means converged`: a client with nothing pending and every subscribed channel at head holds the server's current content.
+- `claims belong to subscriptions`: every claim row's channel is one the client is subscribed to.
+- `record rows have a claim`: every record row has a claim or a pending mutation.
+- `receipts match server`: the receipt a client stored equals the receipt the server stored, byte for byte.
 
 ### Two kinds of test on one harness
 

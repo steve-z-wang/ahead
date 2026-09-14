@@ -51,6 +51,15 @@ struct State {
     accepted: usize,
     rejected: usize,
     failed: usize,
+    /// The (clientId, batchSequence) of the push currently being processed, captured
+    /// from the `claim` op - the `handle` op does not carry either field, only
+    /// `ordinal` (see `crates/server/src/lib.rs::process_push`).
+    current_push: Option<(String, u64)>,
+    /// (clientId, batchSequence, ordinal) for every `handle` call, in call order.
+    /// `no_mutation_executes_twice` asserts these are pairwise distinct: a retry that
+    /// reached the handler again (rather than being short-circuited by the stored
+    /// receipt) would duplicate one.
+    handler_invocations: Vec<(String, u64, u64)>,
 }
 
 pub struct MemHost(Mutex<State>);
@@ -170,6 +179,11 @@ impl MemHost {
     pub fn handler_calls(&self) -> usize {
         self.0.lock().unwrap().handler_calls
     }
+    /// (clientId, batchSequence, ordinal) for every `handle` call the host has made,
+    /// in call order. See `no_mutation_executes_twice` in invariants.rs.
+    pub fn handler_invocations(&self) -> Vec<(String, u64, u64)> {
+        self.0.lock().unwrap().handler_invocations.clone()
+    }
     pub fn accepted(&self) -> usize {
         self.0.lock().unwrap().accepted
     }
@@ -221,9 +235,13 @@ impl MemHost {
         }
     }
     pub fn push(&self, owner: &str, bytes: &[u8]) -> Result<String, String> {
-        let (before, depth) = {
+        let (before, depth, invocations) = {
             let s = self.0.lock().unwrap();
-            (s.tables.clone(), s.savepoints.len())
+            (
+                s.tables.clone(),
+                s.savepoints.len(),
+                s.handler_invocations.len(),
+            )
         };
         let result = block_on(otter_server::process_push(
             &crate::schema::config(),
@@ -237,9 +255,17 @@ impl MemHost {
             // the matching `release`, so the savepoint stack must also be restored to
             // its pre-call depth here — this is the same invariant a successful push
             // already leaves it at (every `savepoint` is paired with a `release`).
+            //
+            // The client legitimately retries the same bytes after this (P6), and that
+            // retry will call `handle` again for the same ordinals - that is correct,
+            // not a double execution, because nothing from this attempt was ever
+            // durably accepted. So `handler_invocations` rolls back with the tables:
+            // only a triple recorded by a push that actually committed counts toward
+            // `no_mutation_executes_twice`.
             let mut s = self.0.lock().unwrap();
             s.tables = before;
             s.savepoints.truncate(depth);
+            s.handler_invocations.truncate(invocations);
         }
         result
     }
@@ -385,6 +411,13 @@ impl Host for MemHost {
             Ok(match op {
                 "claim" => {
                     let id = r["clientId"].as_str().unwrap().to_string();
+                    // The `handle` op below carries only `ordinal`, not `clientId` or
+                    // `batchSequence` (see process_push) - capture them here so the
+                    // triple can be recorded when a mutation actually reaches the
+                    // handler.
+                    if let Some(batch_sequence) = r["batchSequence"].as_u64() {
+                        s.current_push = Some((id.clone(), batch_sequence));
+                    }
                     s.clients
                         .entry(id)
                         .or_insert_with(|| json!({"clientId":r["clientId"],"owner":r["owner"],"sequence":0,"receipt":null}))
@@ -428,6 +461,12 @@ impl Host for MemHost {
                 }
                 "handle" => {
                     s.handler_calls += 1;
+                    if let (Some((client_id, batch_sequence)), Some(ordinal)) =
+                        (s.current_push.clone(), r["ordinal"].as_u64())
+                    {
+                        s.handler_invocations
+                            .push((client_id, batch_sequence, ordinal));
+                    }
                     if s.fail_next {
                         s.fail_next = false;
                         s.failed += 1;

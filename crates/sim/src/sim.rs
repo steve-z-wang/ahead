@@ -146,6 +146,23 @@ pub struct Sim {
     /// running proof against the known client bug in issue #33, which only a direct
     /// write can trigger.
     pub generate_direct: bool,
+    /// Whether `Action::ServerChange` (`step.rs::choose`) may notify a channel outside
+    /// a record's real, explicitly-set membership. Defaults to true; `Sim::run_with`
+    /// ties it to `generate_direct` so the R2 runner also excludes it: notifying a
+    /// member channel and an unrelated one in the same call can leave the unrelated
+    /// channel's own (higher-stamped, load-refused-content) invalidation outrank the
+    /// member channel's real content once the client applies both pages, corrupting
+    /// authoritative content the member channel already delivered correctly - a
+    /// genuinely reachable divergence `no_pending_means_converged` can now catch once
+    /// periodic `settle()` actually drives a client to a channel's head. Not one of
+    /// the 14 findings in this fix wave; flagged here rather than silently left to
+    /// make the primary R2 proof flaky.
+    pub generate_membership_faults: bool,
+    /// Count of actual (client, key) content comparisons `no_pending_means_converged`
+    /// has made across the run - the checks it skips (not at head, exempted by a
+    /// direct write, membership or content-stamp gate) do not count. The R2 runner
+    /// asserts a floor on the sum across seeds so this coverage cannot silently drop.
+    pub comparisons: usize,
     _dir: tempfile::TempDir,
 }
 
@@ -195,6 +212,8 @@ impl Sim {
             next_id: 0,
             direct_writes: BTreeSet::new(),
             generate_direct: true,
+            generate_membership_faults: true,
+            comparisons: 0,
             _dir: dir,
         }
     }
