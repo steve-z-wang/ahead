@@ -98,32 +98,43 @@ impl<S: ClientStore> Client<S> {
         String::from_utf8(request.encode()?).map_err(|_| invalid("utf8"))
     }
 
-    pub fn complete_downlink(&mut self, request: PullRequest, page: PullPage) -> Result<bool> {
-        if page.channel != request.channel || page.from_cursor != request.from_cursor {
+    /// One incoming path for HTTP catch-up and WebSocket pages. Optional request
+    /// metadata only validates HTTP response identity; cursor policy is shared.
+    pub fn receive_downlink(
+        &mut self,
+        page: PullPage,
+        request: Option<PullRequest>,
+    ) -> Result<DownlinkProgress> {
+        page.validate()?;
+        if let Some(request) = request
+            && (page.channel != request.channel || page.from_cursor != request.from_cursor)
+        {
             return Err(invalid("response does not match pull request"));
         }
         let continues = page.changes.len() == 50;
         if continues && page.to_cursor <= page.from_cursor {
             return Err(invalid("pull page did not advance"));
         }
-        self.apply_page(page)?;
-        Ok(continues)
-    }
-
-    /// Live pages may duplicate or overlap HTTP catch-up. Recover unseen noncontiguous
-    /// data via HTTP from the persisted cursor; never advance past a missing change.
-    pub fn apply_downlink_live(&mut self, page: PullPage) -> Result<&'static str> {
-        if !self.desired_channels()?.contains(&page.channel) {
-            return Ok("covered");
-        }
         let cursor = self.cursor(&page.channel)?;
-        if page.to_cursor <= cursor {
-            return Ok("covered");
-        }
-        if page.from_cursor != cursor {
-            return Ok("recover");
-        }
-        self.apply_page(page)?;
-        Ok("applied")
+        let disposition =
+            if !self.desired_channels()?.contains(&page.channel) || page.to_cursor <= cursor {
+                "covered"
+            } else if page.from_cursor > cursor {
+                "recover"
+            } else {
+                // apply_page filters changes already covered by the durable cursor.
+                self.apply_page(page)?;
+                "applied"
+            };
+        Ok(DownlinkProgress {
+            disposition,
+            continues,
+        })
     }
+}
+
+#[derive(Debug, Serialize)]
+pub struct DownlinkProgress {
+    pub disposition: &'static str,
+    pub continues: bool,
 }

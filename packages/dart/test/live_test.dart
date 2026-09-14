@@ -425,13 +425,27 @@ void main() {
         expect(errors, isEmpty);
         final beforeOverlap = pulls;
         recovery = page('overlap recovered', 1);
-        sockets.last.add(jsonEncode({...page('overlap', 0), 'toCursor': 2}));
+        sockets.last.add(jsonEncode({...page('overlap', 1), 'fromCursor': 0}));
         await until(
           () async =>
               (await client.read('Entry', {'id': 'live'}))?['text'] ==
-              'overlap recovered',
+              'overlap',
         );
-        expect(pulls, greaterThan(beforeOverlap));
+        expect(
+          pulls,
+          beforeOverlap,
+          reason: 'overlap applies directly without HTTP',
+        );
+        expect((await client.status())['cursors']['scope'], 2);
+        sockets.last.add(
+          jsonEncode({...page('duplicate', 1), 'fromCursor': 0}),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        expect(pulls, beforeOverlap);
+        expect(
+          (await client.read('Entry', {'id': 'live'}))?['text'],
+          'overlap',
+        );
         final before = pulls;
         recovery = page('recovered', 2);
         sockets.last.add(jsonEncode(page('gap', 10)));

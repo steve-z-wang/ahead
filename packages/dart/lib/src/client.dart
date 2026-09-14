@@ -322,6 +322,21 @@ class Client implements ReadPort {
                   !current.isCompleted &&
                   epoch == streamEpoch &&
                   generation == _liveGeneration;
+              Future<Map<String, dynamic>?> deliver(
+                Map<String, dynamic> page, {
+                String? request,
+              }) => _exclusive(() async {
+                if (!valid()) return null;
+                final result =
+                    await _send({
+                          'op': 'downlinkPage',
+                          'page': page,
+                          if (request != null) 'request': request,
+                        })
+                        as Map<String, dynamic>;
+                if (result['disposition'] == 'applied') _work.add(null);
+                return result;
+              });
               // Subscription invalidation aborts only this downlink session.
               Future<void> catchUp() async {
                 for (final scope in scopes) {
@@ -336,17 +351,15 @@ class Client implements ReadPort {
                     });
                     if (request == null || !valid()) return;
                     final response = await live.pull(request, current.future);
-                    final continues = await _exclusive(() async {
-                      if (!valid()) return false;
-                      final result = await _send({
-                        'op': 'downlinkComplete',
-                        'request': request,
-                        'page': jsonDecode(response),
-                      });
-                      _work.add(null);
-                      return result['continues'] == true;
-                    });
-                    if (!continues || !valid()) break;
+                    final result = await deliver(
+                      jsonDecode(response),
+                      request: request,
+                    );
+                    if (result == null ||
+                        !valid() ||
+                        (result['continues'] != true &&
+                            result['disposition'] != 'recover'))
+                      break;
                   }
                 }
               }
@@ -354,16 +367,8 @@ class Client implements ReadPort {
               await live.stream(
                 scopes,
                 (page) async {
-                  final outcome = await _exclusive(() async {
-                    if (!valid()) return 'covered';
-                    final result = await _send({
-                      'op': 'downlinkLive',
-                      'page': page,
-                    });
-                    if (result == 'applied') _work.add(null);
-                    return result;
-                  });
-                  if (outcome == 'recover') await catchUp();
+                  final result = await deliver(page);
+                  if (result?['disposition'] == 'recover') await catchUp();
                 },
                 current.future,
                 catchUp: catchUp,

@@ -195,7 +195,7 @@ test('pause cancels held catch-up and a late HTTP token cannot start a request',
  }finally{token.resolve('late');await fixture.close();await network.close();}
 });
 
-test('duplicate live pages are covered, overlapping unseen changes and gaps recover over HTTP',async()=>{
+test('one incoming page path covers duplicates, applies overlap directly and recovers genuine gaps',async()=>{
  const fixture=await openClient();let head=1;
  const network=await syncFixture((b,res)=>res.end(JSON.stringify({...page(`HTTP ${head}`,b.fromCursor),toCursor:head,changes:[{...page(`HTTP ${head}`,head-1).changes[0]}]})));
  try{
@@ -203,7 +203,7 @@ test('duplicate live pages are covered, overlapping unseen changes and gaps reco
   await until(async()=>(await fixture.client.status()).cursors.scope===1);
   network.sockets[0].send(JSON.stringify(page('duplicate')));await new Promise(r=>setTimeout(r,20));assert.equal(network.requests.length,1);
   head=2;network.sockets[0].send(JSON.stringify({...page('overlap'),toCursor:2,changes:[page('overlap',1).changes[0]]}));
-  await until(async()=>(await fixture.client.status()).cursors.scope===2);assert.equal(network.requests.at(-1).body.fromCursor,1);assert.equal((await fixture.client.read('Entry',{id:'live'})).text,'HTTP 2');
+  await until(async()=>(await fixture.client.status()).cursors.scope===2);assert.equal(network.requests.length,1,'overlap must not issue another HTTP pull');assert.equal((await fixture.client.read('Entry',{id:'live'})).text,'overlap');
   head=4;network.sockets[0].send(JSON.stringify(page('gap',3)));
   await until(async()=>(await fixture.client.status()).cursors.scope===4);assert.equal(network.requests.at(-1).body.fromCursor,2);assert.equal((await fixture.client.read('Entry',{id:'live'})).text,'HTTP 4');
  }finally{await fixture.close();await network.close();}

@@ -143,7 +143,7 @@ fn live_and_push_drivers_have_independent_lifecycle_and_retry_state() {
 }
 
 #[test]
-fn downlink_uses_durable_cursors_and_recovers_overlap_without_overwriting_push_cycle() {
+fn incoming_pages_share_cursor_policy_and_do_not_overwrite_push_cycle() {
     let dir = tempfile::tempdir().unwrap();
     let mut host = RuntimeHost::default();
     let schema: Value =
@@ -164,23 +164,21 @@ fn downlink_uses_durable_cursors_and_recovers_overlap_without_overwriting_push_c
     );
     let page = json!({"scope":"book","fromCursor":0,"toCursor":1,"changes":[{"syncId":1,"model":"Entry","identity":{"id":"e"},"stamp":1,"state":{"text":"A","note":null}}]});
     assert_eq!(
-        host.call(json!({"op":"downlinkComplete","handle":id,"request":request,"page":page}))
+        host.call(json!({"op":"downlinkPage","handle":id,"request":request,"page":page}))
             .unwrap()["value"]["continues"],
         false
     );
     assert_eq!(
-        host.call(json!({"op":"downlinkLive","handle":id,"page":page}))
-            .unwrap()["value"],
+        host.call(json!({"op":"downlinkPage","handle":id,"page":page}))
+            .unwrap()["value"]["disposition"],
         "covered"
     );
-    for from in [0, 2] {
-        let overlap = json!({"scope":"book","fromCursor":from,"toCursor":3,"changes":[]});
-        assert_eq!(
-            host.call(json!({"op":"downlinkLive","handle":id,"page":overlap}))
-                .unwrap()["value"],
-            "recover"
-        );
-    }
+    let gap = json!({"scope":"book","fromCursor":2,"toCursor":3,"changes":[]});
+    assert_eq!(
+        host.call(json!({"op":"downlinkPage","handle":id,"page":gap}))
+            .unwrap()["value"]["disposition"],
+        "recover"
+    );
     host.call(json!({"op":"enqueue","handle":id,"mutation":{"name":"Edit","operations":[{"model":"Entry","op":"update","identity":{"id":"e"},"values":{"text":"B"}}]}})).unwrap();
     host.call(json!({"op":"startSync","handle":id,"pushOnly":true}))
         .unwrap();
@@ -190,11 +188,72 @@ fn downlink_uses_durable_cursors_and_recovers_overlap_without_overwriting_push_c
         .unwrap()["value"]
         .clone();
     let page = json!({"scope":"book","fromCursor":1,"toCursor":1,"changes":[]});
-    host.call(json!({"op":"downlinkComplete","handle":id,"request":request,"page":page}))
+    host.call(json!({"op":"downlinkPage","handle":id,"request":request,"page":page}))
         .unwrap();
     assert_eq!(
         host.call(json!({"op":"next","handle":id})).unwrap()["value"],
         push
     );
     assert_eq!(push["kind"], "push");
+}
+
+#[test]
+fn incoming_overlap_is_identical_with_or_without_http_request_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut host = RuntimeHost::default();
+    let schema: Value =
+        serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
+    for with_request in [false, true] {
+        let id=host.call(json!({"op":"open","path":dir.path().join(if with_request {"http"} else {"ws"}),"schema":schema})).unwrap()["value"]["handle"].clone();
+        host.call(json!({"op":"channel","handle":id,"channel":"book","subscribed":true}))
+            .unwrap();
+        let request = host
+            .call(json!({"op":"downlinkRequest","handle":id,"scope":"book"}))
+            .unwrap()["value"]
+            .clone();
+        let first = json!({"scope":"book","fromCursor":0,"toCursor":1,"changes":[{"syncId":1,"model":"Entry","identity":{"id":"e"},"stamp":1,"state":{"text":"first","note":null}}]});
+        host.call(json!({"op":"downlinkPage","handle":id,"page":first}))
+            .unwrap();
+        let overlap = json!({"scope":"book","fromCursor":0,"toCursor":2,"changes":[{"syncId":1,"model":"Entry","identity":{"id":"e"},"stamp":1,"state":{"text":"covered conflicting content","note":null}},{"syncId":2,"model":"Entry","identity":{"id":"e"},"stamp":2,"state":{"text":"incoming overlap","note":null}}]});
+        let mut incoming = json!({"op":"downlinkPage","handle":id,"page":overlap});
+        if with_request {
+            incoming["request"] = request.clone();
+        }
+        assert_eq!(
+            host.call(incoming.clone()).unwrap()["value"],
+            json!({"disposition":"applied","continues":false})
+        );
+        assert_eq!(
+            host.call(incoming.clone()).unwrap()["value"]["disposition"],
+            "covered"
+        );
+        assert_eq!(
+            host.call(json!({"op":"status","handle":id})).unwrap()["value"]["cursors"]["book"],
+            2
+        );
+        assert_eq!(
+            host.call(
+                json!({"op":"read","handle":id,"key":{"model":"Entry","identity":{"id":"e"}}})
+            )
+            .unwrap()["value"]["text"],
+            "incoming overlap"
+        );
+        for invalid in [
+            json!({"scope":"other","fromCursor":0,"toCursor":2,"changes":[]}),
+            json!({"scope":"book","fromCursor":1,"toCursor":2,"changes":[]}),
+        ] {
+            assert!(
+                host.call(
+                    json!({"op":"downlinkPage","handle":id,"request":request,"page":invalid})
+                )
+                .is_err()
+            );
+        }
+        for old in ["downlinkComplete", "downlinkLive"] {
+            assert!(
+                host.call(json!({"op":old,"handle":id,"request":request,"page":overlap}))
+                    .is_err()
+            );
+        }
+    }
 }

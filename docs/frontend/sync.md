@@ -90,7 +90,7 @@ Provide `onError` to record background failures, and `refreshAuth` if your crede
 
 Use `wake()` after an application event that should prompt another scheduling check. Use `resume()` after explicitly pausing. A closed connection cannot resume; create a new one through `client.client.connect` or reopen the owning client.
 
-On connection or reconnection, Ahead establishes the WebSocket subscription, then catches up over HTTP from each channel's persisted cursor. It queues changes arriving during catch-up and continues with WebSocket updates once caught up. A gap triggers HTTP recovery from saved progress. Subscription changes replace the session; pages from replaced or canceled sessions cannot update local data.
+On connection or reconnection, Ahead establishes the WebSocket subscription, then catches up over HTTP from each channel's persisted cursor. It queues changes arriving during catch-up and continues with WebSocket updates once caught up. Both sources use the same Rust page processing: covered pages are discarded, overlapping pages apply their unseen changes, and gaps trigger HTTP recovery from saved progress. Subscription changes replace the session; pages from replaced or canceled sessions cannot update local data.
 
 ## Authentication and account changes
 

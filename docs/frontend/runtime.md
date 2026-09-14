@@ -199,9 +199,11 @@ Ahead manages these phases automatically:
 
 1. Connect to `/sync/live` and subscribe to the current channel set. The server installs listeners before acknowledging the subscription.
 2. Fetch missing records through `POST /sync/pull`, starting from each channel's saved cursor. Queue WebSocket pages arriving while catch-up runs.
-3. Apply queued and subsequent WebSocket pages in cursor order. Pages already covered by catch-up are discarded; an overlap or gap triggers HTTP recovery from the current cursor.
+3. Continue receiving WebSocket updates. HTTP and WebSocket pages enter the same serialized Rust processing path, using each channel's saved cursor.
 
-Both HTTP and WebSocket pages pass through the Rust engine into SQLite and update watches. Mutation submission runs independently through `POST /sync/mutations`. A connection with no subscribed channels can still submit mutations without opening a socket.
+For either source, a page already covered by the cursor is discarded. A page spanning the current cursor applies only its unseen changes; for example, at cursor `100`, a page covering `90 → 120` applies changes after `100` and advances to `120`. Only a page starting beyond the current cursor has a gap and requires HTTP recovery. Pages update SQLite and watches through the same engine logic.
+
+Mutation submission runs independently through `POST /sync/mutations`. A connection with no subscribed channels can still submit mutations without opening a socket.
 
 Reconnection and subscription changes repeat catch-up from saved progress. The client checks that every HTTP response and queued WebSocket page belongs to the current session before applying it. Pause and close cancel requests and sockets; resume creates a new session. The runtime does not poll for remote changes.
 

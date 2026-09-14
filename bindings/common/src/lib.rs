@@ -248,16 +248,14 @@ impl RuntimeHost {
                     "downlinkRequest" => {
                         json!(e.client.downlink_request(text(&request, "scope")?)?)
                     }
-                    "downlinkComplete" => {
-                        let pull = PullRequest::decode(text(&request, "request")?.as_bytes())?;
+                    "downlinkPage" => {
+                        let pull = request
+                            .get("request")
+                            .map(|_| PullRequest::decode(text(&request, "request")?.as_bytes()))
+                            .transpose()?;
                         let page =
                             PullPage::decode(serde_json::to_string(&request["page"])?.as_bytes())?;
-                        json!({"continues": e.client.complete_downlink(pull, page)?})
-                    }
-                    "downlinkLive" => {
-                        let page =
-                            PullPage::decode(serde_json::to_string(&request["page"])?.as_bytes())?;
-                        json!(e.client.apply_downlink_live(page)?)
+                        serde_json::to_value(e.client.receive_downlink(page, pull)?)?
                     }
                     "pull" => {
                         let page =

@@ -228,6 +228,17 @@ export class Client {
               !current.signal.aborted &&
               epoch === streamEpoch &&
               snapshot.generation === this.#liveGeneration;
+            const deliver = (page: object, request?: string) =>
+              this.#exclusive(async () => {
+                if (!valid()) return;
+                const result = await this.#send({
+                  op: "downlinkPage",
+                  page,
+                  ...(request === undefined ? {} : { request }),
+                });
+                if (result.disposition === "applied") this.#events.emit("work");
+                return result;
+              });
             const catchUp = async () => {
               for (const scope of snapshot.status.channels) {
                 for (;;) {
@@ -242,30 +253,20 @@ export class Client {
                     body,
                     current.signal,
                   );
-                  const result = await this.#exclusive(async () => {
-                    if (!valid()) return;
-                    const result = await this.#send({
-                      op: "downlinkComplete",
-                      request: body,
-                      page: JSON.parse(response),
-                    });
-                    this.#events.emit("work");
-                    return result;
-                  });
-                  if (!result?.continues) break;
+                  const result = await deliver(JSON.parse(response), body);
+                  if (
+                    !result ||
+                    (!result.continues && result.disposition !== "recover")
+                  )
+                    break;
                 }
               }
             };
             await live.stream(
               { scopes: snapshot.status.channels },
               async (page) => {
-                const disposition = await this.#exclusive(async () => {
-                  if (!valid()) return;
-                  const result = await this.#send({ op: "downlinkLive", page });
-                  if (result === "applied") this.#events.emit("work");
-                  return result;
-                });
-                if (disposition === "recover") await catchUp();
+                const result = await deliver(page);
+                if (result?.disposition === "recover") await catchUp();
               },
               current.signal,
               catchUp,
