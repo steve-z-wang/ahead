@@ -1,7 +1,3 @@
-<p>
-  <img src="https://raw.githubusercontent.com/steve-z-wang/ahead/main/website/assets/logo.svg" width="64" height="64" alt="Ahead logo">
-</p>
-
 # Ahead
 
 [![Verify](https://github.com/steve-z-wang/ahead/actions/workflows/verify.yml/badge.svg?branch=main)](https://github.com/steve-z-wang/ahead/actions/workflows/verify.yml)
