@@ -61,7 +61,7 @@ fixtures/
 | Part | What it is |
 | --- | --- |
 | Clients | `Client<SqliteStore>`, one temporary SQLite file each. Real files, so "crash" is dropping the client and reopening the same path, and DDL reconciliation is on the path too. |
-| Server | `ahead_server` over an in-memory host that implements claim, receipt, head, scan, load, publish. The one in `integration/rust/tests/scenarios.rs` is the starting point. PostgreSQL semantics are proven separately in `integration/persistence`. |
+| Server | `ahead_server` over an in-memory host that implements claim, receipt, head, scan, load, publish. PostgreSQL semantics are proven separately in `integration/persistence`. |
 | Network | Two queues, requests and responses. No clock. Delay is "not delivered this step"; reorder, duplicate and drop are queue operations chosen by the RNG. |
 | RNG | One seeded generator; every random choice comes from it, so a seed reproduces a run exactly. |
 | Trace | The list of actions taken. Printed on failure; used by the shrinker. |
@@ -100,7 +100,7 @@ Checked after every step:
 
 ### Two kinds of test on one harness
 
-- `tests/invariants.rs` runs `for seed in 0..N { step; check }`. `N` defaults to a few hundred so `cargo test` stays fast; `SIM_SEEDS=100000 cargo test -p sim` runs the long form, for a nightly job. A failure prints the seed and the trace.
+- `tests/invariants.rs` runs `for seed in 0..N { step; check }`. `N` defaults to a few hundred so `cargo test` stays fast; `SIM_SEEDS=100000 cargo test -p sim` runs the long form, for a nightly job. A failure prints the seed and the trace. `random_sequences_violate_no_invariant` runs with direct writes off; `random_sequences_with_direct_writes` is `#[ignore]`d until #33 is fixed.
 - The other files are named scenarios: a hand-written action list and a Given/When/Then assertion, one per guarantee clause. The test name is the guarantee.
 
 ### Shrinking
@@ -113,10 +113,10 @@ Two models with one relation (an `Entry` with `Comment` children), two or three 
 
 ### Order of work
 
-1. Port the three `fixtures/scenarios` cases from `crates/sqlite/tests/stamp_scenarios.rs` as the first named scenarios. This fixes the harness API.
-2. Add the random invariant runner.
-3. Fill the remaining named scenarios for every `unproven` and `partial` entry in [guarantees](guarantees.md).
-4. Delete `integration/rust/tests/scenarios.rs`; its 64 interleavings are a subset of what the runner covers.
+1. Done: the three `fixtures/scenarios` cases are `crates/sim/tests/distribution.rs`.
+2. Done: `crates/sim/tests/invariants.rs`.
+3. Remaining: named scenarios for the clauses [guarantees](guarantees.md) still marks `partial`: P4 after a schema change, D4 child membership, R3 crash at every commit, C3 queued bytes across a schema change, and the two clauses opened by #32 and #33.
+4. Done: the old in-process integration crate under `integration/` is deleted.
 
 ## Adding a test
 
