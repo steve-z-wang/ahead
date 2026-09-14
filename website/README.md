@@ -28,10 +28,10 @@ The static output is `website/site/`. Do not edit this generated directory. Rela
 
 Run `python3 website/check_examples.py` after building the repository and resolving the example and Dart dependencies. This typechecks snippets from `website/content/` and compiles the schema examples; it also runs in `scripts/test.sh`. Use `bash integration/e2e/run.sh` to check HTTP and SQLite behavior.
 
-## CI and manual publication
+## CI and publication
 
-The Documentation workflow builds and uploads a static artifact for relevant pull requests and pushes. Publication uses a manual workflow dispatch from `main`.
+The Documentation workflow builds and checks relevant pull requests and pushes. A successful build on `main` automatically deploys to GitHub Pages. Pull requests and other branches produce review artifacts without deploying.
 
-After merging to `main`, set **Settings → Pages → Build and deployment → Source → GitHub Actions**. Then open **Actions → Documentation → Run workflow**, select **main**, and run it. The deployment URL appears in the workflow environment. Dispatching from another branch builds an artifact only.
+Pages must use **Settings → Pages → Build and deployment → Source → GitHub Actions**. To redeploy manually, open **Actions → Documentation → Run workflow**, select **main**, and run it. The deployment URL appears in the workflow environment. Dispatching from another branch builds an artifact only.
 
 Source links point to `main` and become available after merge. Dependency updates should regenerate the pinned `requirements.txt` from a clean virtual environment and pass the checks above.

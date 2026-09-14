@@ -22,4 +22,4 @@ After building the native libraries and resolving the example/Dart dependencies,
 
 All documentation pages live in `website/content/`. MkDocs Material builds them directly; edit the page source and the local preview reloads automatically. Add new pages to `website/mkdocs.yml`. Repository and package READMEs link to these pages instead of duplicating the guides. Use relative Markdown links between pages and GitHub links for implementation source.
 
-See [website setup](https://github.com/zanminwang/ahead/blob/main/website/README.md) for installation, preview, strict builds and the manual Pages deployment workflow. Avoid independently maintained copies in GitHub Wiki. Website deployment and repository visibility are separate settings.
+See [website setup](https://github.com/zanminwang/ahead/blob/main/website/README.md) for installation, preview, strict builds and automatic Pages deployment after merging to `main` and the manual redeploy option. Avoid independently maintained copies in GitHub Wiki. Website deployment and repository visibility are separate settings.
