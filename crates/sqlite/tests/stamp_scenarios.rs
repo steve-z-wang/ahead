@@ -1,4 +1,4 @@
-//! Acceptance scenarios from docs/superpowers/specs/2026-09-12-record-stamp-design.md.
+//! Acceptance scenarios for per-record stamps across channels.
 mod common;
 use common::*;
 use otter_client::*;

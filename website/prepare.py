@@ -6,7 +6,7 @@ import shutil
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 ROOT = Path(__file__).resolve().parents[1]
-GITHUB = 'https://github.com/steve-z-wang/otter-sync/blob/main'
+GITHUB = 'https://github.com/steve-z-wang/ahead/blob/main'
 PAGES = {
     'website/content/index.md': 'index.md',
     'website/content/concepts.md': 'concepts.md',
