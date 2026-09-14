@@ -104,6 +104,94 @@ fn l4_direct_write_is_never_pushed_and_survives_rejection() {
     // a direct write diverges from the server by design (N4). Skip check().
 }
 
+/// L4: a direct write on a row whose create is still pending has no rollback base
+/// to advance. If the create is rejected, the row goes, direct write included
+/// (issue #33).
+#[test]
+fn l4_direct_write_on_pending_create_goes_with_the_rejected_create() {
+    let mut sim = Sim::new(1, 1);
+    sim.apply(Action::Subscribe {
+        client: 0,
+        channel: "a".into(),
+    })
+    .unwrap();
+    sim.apply(Action::Enqueue {
+        client: 0,
+        mutation: MutationSpec::CreateEntry {
+            id: "e1".into(),
+            text: "orig".into(),
+        },
+    })
+    .unwrap();
+    sim.apply(Action::Freeze { client: 0 }).unwrap();
+    sim.apply(Action::Direct {
+        client: 0,
+        key: "Entry:e1".into(),
+        text: "direct".into(),
+    })
+    .unwrap();
+    assert_eq!(
+        sim.read_text(0, &entry_key("e1")).as_deref(),
+        Some("direct"),
+        "the direct write is visible while the create is in flight"
+    );
+    sim.apply(Action::RejectNext {
+        code: "sim.denied".into(),
+    })
+    .unwrap();
+    sim.drain();
+    assert_eq!(
+        sim.read_text(0, &entry_key("e1")),
+        None,
+        "the rejected create takes the direct write with it"
+    );
+    sim.check().unwrap();
+}
+
+/// L4 with D2: a duplicate of a page the client already applied is stale, so it does
+/// not undo a direct write made in between; the direct write still diverges from the
+/// server by design.
+#[test]
+fn l4_stale_duplicate_page_does_not_undo_a_direct_write() {
+    let mut sim = Sim::new(1, 1);
+    sim.apply(Action::Subscribe {
+        client: 0,
+        channel: "a".into(),
+    })
+    .unwrap();
+    sim.apply(Action::ServerChange {
+        key: "Entry:e1".into(),
+        text: Some("server".into()),
+        channels: vec!["a".into()],
+    })
+    .unwrap();
+    sim.apply(Action::Pull {
+        client: 0,
+        channel: "a".into(),
+    })
+    .unwrap();
+    sim.apply(Action::Deliver).unwrap(); // server answers the pull
+    sim.apply(Action::Duplicate).unwrap(); // the page is now queued twice
+    sim.apply(Action::Deliver).unwrap(); // first copy applies
+    assert_eq!(
+        sim.read_text(0, &entry_key("e1")).as_deref(),
+        Some("server")
+    );
+    sim.apply(Action::Direct {
+        client: 0,
+        key: "Entry:e1".into(),
+        text: "direct".into(),
+    })
+    .unwrap();
+    sim.apply(Action::Deliver).unwrap(); // second copy is stale
+    assert_eq!(
+        sim.read_text(0, &entry_key("e1")).as_deref(),
+        Some("direct"),
+        "a stale page does not outrank a direct write"
+    );
+    sim.check().unwrap();
+}
+
 /// L5: deleting an Entry locally cascades to its Comments; the server does the same;
 /// both sides agree after settlement.
 #[test]

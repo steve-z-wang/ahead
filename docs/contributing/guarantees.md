@@ -137,10 +137,12 @@ Note: The unawaited-call clause is binding behavior and is proven only in the bi
 
 ### L4 Direct writes never push; companions follow their mutation
 
-A direct write outside a named mutation is final at commit, never enters the queue and is never sent. A companion operation attached to a mutation rolls back with it on rejection and becomes local truth on acceptance; the server never learns it existed. A direct write on a dirty row advances that row's rollback base so a later rejection does not undo it.
+A direct write outside a named mutation is final at commit, never enters the queue and is never sent. A companion operation attached to a mutation rolls back with it on rejection and becomes local truth on acceptance; the server never learns it existed. A direct write on a dirty row that exists in authority advances that row's rollback base so a later rejection does not undo it. A row whose create is still pending has no base to advance: if the create is rejected the row goes, direct write included. A stale page (one the client already applied) does not undo a direct write.
 
 Primary:
 - crates/sim/tests/local.rs::l4_direct_write_is_never_pushed_and_survives_rejection
+- crates/sim/tests/local.rs::l4_direct_write_on_pending_create_goes_with_the_rejected_create (pending-create row is removed on rejection)
+- crates/sim/tests/local.rs::l4_stale_duplicate_page_does_not_undo_a_direct_write
 - crates/sqlite/tests/push.rs::rejection_removes_optimism_preserves_direct_truth_and_has_durable_inbox (direct write on a dirty row survives the rejection)
 - crates/sqlite/tests/client.rs::local_transaction_and_mutation_savepoint_have_independent_fate (direct write leaves the queue empty)
 - crates/sqlite/tests/client.rs::schema_cascade_is_optimistic_same_fate_and_not_extra_wire_operations (companion rolls back with the mutation)
@@ -149,8 +151,6 @@ Primary:
 
 Supporting:
 - none
-
-Note: The advancing-base clause applies only to rows that exist in authority; a direct write on a pending-create row currently fabricates truth. Open, #33.
 
 ### L5 Delete cascades to local children as declared
 
