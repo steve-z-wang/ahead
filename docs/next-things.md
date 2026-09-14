@@ -10,7 +10,7 @@ Implement a schema-driven Rust client/server runtime, language SDKs, generators,
 
 ## Later work
 
-- [x] **Cross-channel record revision**: compare content versions when the same record arrives from different channels; do not use the channel cursor as a cross-channel recency measure. Shipped as the per-record stamp; see `docs/superpowers/specs/2026-09-12-record-stamp-design.md`.
+- [x] **Cross-channel record revision**: compare content versions when the same record arrives from different channels; do not use the channel cursor as a cross-channel recency measure. Shipped as the per-record stamp; see the [acceptance scenarios](../crates/sqlite/tests/stamp_scenarios.rs).
 - [x] Every record carries a stamp from creation; the stamp is allocated per `notify` and delivered from the invalidation row. Optional revisions and the "one stamp per publication" variant were rejected.
 - [x] Tests for same-stamp idempotence, conflict diagnostics, late old pages, delete across channels and Move A→B→A.
 - [ ] Tombstone retention is bounded by claims (dropped when every claiming channel has delivered the delete); channel generation / snapshot reset remain future work.
