@@ -5,6 +5,8 @@ repo_url: https://github.com/zanminwang/ahead
 repo_name: zanminwang/ahead
 edit_uri: ''
 strict: true
+docs_dir: docs
+site_dir: site
 theme:
   name: material
   language: en
@@ -65,10 +67,10 @@ nav:
           - Database adapters: backend/database.md
           - Prisma / PostgreSQL: backend/prisma.md
       - Contributing:
-          - Contribute to the docs: contributing/documentation.md
-          - Testing: contributing/testing.md
-          - Guarantees and proofs: contributing/guarantees.md
-          - Testing strategy: contributing/testing-strategy.md
+          - Contribute to the docs: https://github.com/zanminwang/ahead/blob/main/docs/writing/guides.md
+          - Testing: https://github.com/zanminwang/ahead/blob/main/docs/engineering/testing/running.md
+          - Guarantees and proofs: https://github.com/zanminwang/ahead/blob/main/docs/engineering/testing/guarantees.md
+          - Testing strategy: https://github.com/zanminwang/ahead/blob/main/docs/engineering/testing/strategy.md
   - GitHub: https://github.com/zanminwang/ahead
 validation:
   links:

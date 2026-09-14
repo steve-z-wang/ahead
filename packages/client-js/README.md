@@ -1,3 +1,3 @@
 # Ahead TypeScript client
 
-See the [documentation](../../docs/frontend/setup.md).
+See the [documentation](../../website/docs/frontend/setup.md).

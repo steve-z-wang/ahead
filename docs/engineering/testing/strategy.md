@@ -1,6 +1,6 @@
 # Testing strategy
 
-This page describes the planned test organization. The simulation and conformance runners below are proposed work; see [running the current tests](testing.md) for commands available in this checkout. Simulation implementation is tracked in [PR #34](https://github.com/zanminwang/ahead/pull/34).
+This page describes the planned test organization. The simulation and conformance runners below are proposed work; see [running the current tests](running.md) for commands available in this checkout. Simulation implementation is tracked in [PR #34](https://github.com/zanminwang/ahead/pull/34).
 
 [guarantees](guarantees.md) says what the framework promises and where each promise is proven. This page says how the test suite is organized to produce those proofs, and how to add one.
 

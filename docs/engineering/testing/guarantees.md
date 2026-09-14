@@ -7,7 +7,7 @@ Each entry lists:
 - **Primary**: the test that exercises the guarantee's own logic, or `unproven`.
 - **Supporting**: tests that prove a layer above or below does not break it.
 
-Paths are `file::test name`. This page is the map; [testing strategy](testing-strategy.md) describes the layers and how to add a case.
+Paths are `file::test name`. This page is the map; [testing strategy](strategy.md) describes the layers and how to add a case.
 
 ## Summary
 

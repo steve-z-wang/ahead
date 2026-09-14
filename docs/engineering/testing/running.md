@@ -20,4 +20,4 @@ Requires Rust, Node 22.18+ (tested with Node 26.4), Dart 3.12+, Python 3 and Pos
 
 For focused checks, run `bash integration/persistence/transaction-probe/run.sh` or `bash integration/generated-api/verify.sh`. The capacity diagnostic is available through `cargo run -p ahead-integration --example capacity`.
 
-See [guarantees and proofs](guarantees.md) for the proof inventory and [testing strategy](testing-strategy.md) for the planned test organization.
+See [guarantees and proofs](guarantees.md) for the proof inventory and [testing strategy](strategy.md) for the planned test organization.

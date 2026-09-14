@@ -42,4 +42,4 @@ Packages are currently used from source. Follow the tutorial's repository comman
 
 ## Project
 
-[GitHub](https://github.com/zanminwang/ahead) · [Framework comparison](https://github.com/zanminwang/ahead/blob/main/README.md#how-ahead-compares-with-other-sync-frameworks) · [Issues](https://github.com/zanminwang/ahead/issues) · [Contribute to the documentation](contributing/documentation.md)
+[GitHub](https://github.com/zanminwang/ahead) · [Framework comparison](https://github.com/zanminwang/ahead/blob/main/README.md#how-ahead-compares-with-other-sync-frameworks) · [Issues](https://github.com/zanminwang/ahead/issues) · [Contribute to the documentation](https://github.com/zanminwang/ahead/blob/main/docs/writing/guides.md)

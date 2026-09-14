@@ -28,4 +28,4 @@ The harness builds the native library and Flutter app, creates a disposable simu
 
 ## Verification
 
-`bash scripts/test.sh` runs the macOS/Linux host checks with real SQLite, native bindings and a disposable PostgreSQL backend. Platform-specific simulator checks run separately. See [testing](../contributing/testing.md) for the full workflow.
+`bash scripts/test.sh` runs the macOS/Linux host checks with real SQLite, native bindings and a disposable PostgreSQL backend. Platform-specific simulator checks run separately. See [testing](https://github.com/zanminwang/ahead/blob/main/docs/engineering/testing/running.md) for the full workflow.
