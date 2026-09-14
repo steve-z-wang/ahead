@@ -1,9 +1,12 @@
 """Keep snippet verification active for code inside language tabs."""
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
-from website.check_examples import snippets
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from check_examples import snippets
 
 
 class SnippetTests(unittest.TestCase):
@@ -36,7 +39,7 @@ await client.close();
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             (root / 'guide.md').write_text(markdown)
-            with patch('website.check_examples.ROOT', root):
+            with patch('check_examples.ROOT', root):
                 ts = snippets('ts', ['guide.md'])
                 dart = snippets('dart', ['guide.md'])
         self.assertEqual([code for _, code in ts], [

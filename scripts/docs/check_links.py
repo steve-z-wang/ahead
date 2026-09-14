@@ -3,7 +3,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote, urljoin, urlsplit
 
-SITE = Path(__file__).resolve().parent / 'site'
+SITE = Path(__file__).resolve().parents[2] / 'site'
 BASE = 'https://zanminwang.github.io/ahead/'
 
 

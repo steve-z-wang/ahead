@@ -1,3 +1,3 @@
 # Ahead Node bindings
 
-See the [documentation](../../website/content/contributing/testing.md).
+See the [documentation](../../docs/contributing/testing.md).
