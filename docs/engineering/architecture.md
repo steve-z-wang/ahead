@@ -103,21 +103,21 @@ flowchart LR
 
 ## Code map
 
-Current code locations for the components above. Some responsibilities still share files.
+Current code locations for the components above. Some responsibilities still share files. Each leaf document records known risks and implementation gaps in its section 11.
 
 | Component | Code location |
 |---|---|
 | Schema | Source syntax in [compiler/lib.rs](../../crates/compiler/src/lib.rs) |
 | Protocol | [core/protocol.rs](../../crates/core/src/protocol.rs); subscription messages in [server/live.rs](../../crates/server/src/live.rs) |
-| Compiler / Parse | [compiler/lib.rs](../../crates/compiler/src/lib.rs) |
-| Compiler / Validate | [compiler/lib.rs](../../crates/compiler/src/lib.rs) |
-| Compiler / Generate | Descriptors emitted by [compiler/lib.rs](../../crates/compiler/src/lib.rs), represented by [core/schema.rs](../../crates/core/src/schema.rs); typed interfaces in [compiler/emit.rs](../../crates/compiler/src/emit.rs) |
+| Compiler / Parse | [compiler/lib.rs](../../crates/compiler/src/lib.rs); file concatenation and error relocation in [compiler/main.rs](../../crates/compiler/src/main.rs) |
+| Compiler / Validate | [compiler/lib.rs](../../crates/compiler/src/lib.rs); version history and fence in [compiler/history.rs](../../crates/compiler/src/history.rs) |
+| Compiler / Generate | Descriptors emitted by [compiler/lib.rs](../../crates/compiler/src/lib.rs), represented by [core/schema.rs](../../crates/core/src/schema.rs); typed interfaces in [compiler/emit.rs](../../crates/compiler/src/emit.rs); output files in [compiler/main.rs](../../crates/compiler/src/main.rs) |
 | SDKs / Typed API | [client-js](../../packages/client-js), [dart](../../packages/dart/lib), [server](../../packages/server); model-specific interfaces are compiler output |
 | SDKs / Bindings | [bindings/common](../../bindings/common), [bindings/node](../../bindings/node), [bindings/dart](../../bindings/dart) |
-| Client / Frontend interface | [client/lib.rs](../../crates/client/src/lib.rs) |
+| Client / Frontend interface | [client/lib.rs](../../crates/client/src/lib.rs); per-transaction handle in [client/engine.rs](../../crates/client/src/engine.rs) |
 | Client / Engine / Local operations | [client/mutate.rs](../../crates/client/src/mutate.rs), [client/query.rs](../../crates/client/src/query.rs), [client/rows.rs](../../crates/client/src/rows.rs) |
-| Client / Engine / Push | [client/queue.rs](../../crates/client/src/queue.rs), [client/push.rs](../../crates/client/src/push.rs) |
-| Client / Engine / Pull | [client/downlink.rs](../../crates/client/src/downlink.rs), [client/ledger.rs](../../crates/client/src/ledger.rs) |
+| Client / Engine / Push | [client/queue.rs](../../crates/client/src/queue.rs), [client/push.rs](../../crates/client/src/push.rs); dependency derivation in [client/policies.rs](../../crates/client/src/policies.rs) |
+| Client / Engine / Pull | [client/downlink.rs](../../crates/client/src/downlink.rs), [client/ledger.rs](../../crates/client/src/ledger.rs); incoming-page dispositions in [client/transport.rs](../../crates/client/src/transport.rs) (`receive_downlink`) |
 | Client / Engine / Settlement | [client/push.rs](../../crates/client/src/push.rs) (`settle_push`, `remove_rejected`); replay in [client/mutate.rs](../../crates/client/src/mutate.rs) (`rebuild`) |
 | Client / Storage | [client/store.rs](../../crates/client/src/store.rs), [client/ddl.rs](../../crates/client/src/ddl.rs), [sqlite](../../crates/sqlite/src/lib.rs) |
 | Client / Connection / Transport | [client-js/transport.mts](../../packages/client-js/transport.mts), [client-js/live.mts](../../packages/client-js/live.mts), [dart/live.dart](../../packages/dart/lib/src/live.dart) |
@@ -126,6 +126,6 @@ Current code locations for the components above. Some responsibilities still sha
 | Server / Engine / Push | [server/lib.rs](../../crates/server/src/lib.rs) (`process_push`) |
 | Server / Engine / Pull | [server/lib.rs](../../crates/server/src/lib.rs) (`process_pull`) |
 | Server / Engine / Notify | [server/lib.rs](../../crates/server/src/lib.rs) (`publish`) |
-| Server / Persistence | Interface in [server/index.mts](../../packages/server/index.mts); adapter in [persistence-prisma](../../packages/persistence-prisma) |
+| Server / Persistence | Interface in [server/index.mts](../../packages/server/index.mts); adapter in [persistence-prisma](../../packages/persistence-prisma); tables in [migration.sql](../../packages/persistence-prisma/migration.sql) |
 | Server / Connection / Transport | [server/index.mts](../../packages/server/index.mts) |
 | Server / Connection / Controller | [server/live.rs](../../crates/server/src/live.rs), [server/index.mts](../../packages/server/index.mts) |

@@ -13,7 +13,7 @@ Paths are `file::test name`. This page is the map; [testing strategy](testing/st
 
 Eight groups. The first five are the sync engine and belong to the simulation; the last three are edges and belong to the layer they name.
 
-Status on 2026-09-13, against the tests on `main` with `crates/sim` in place (issue #13): **25 proven, 8 partial, 1 unproven**. The one unproven is S3 (three clients, identical state); no runner drives all three languages yet. `partial` means a primary test exists but a named clause is not asserted; the note under the entry says which. C4 is still proven only in the PostgreSQL suite with no in-process counterpart. Two open engine bugs the simulation found, #32 and #33, are named in the A2 and L4 notes.
+Status on 2026-09-13, against the tests on `main` with `crates/sim` in place (issue #13), with C1 revised to partial on 2026-09-14 after the component architecture review: **24 proven, 9 partial, 1 unproven**. The one unproven is S3 (three clients, identical state); no runner drives all three languages yet. `partial` means a primary test exists but a named clause is not asserted; the note under the entry says which. C4 is still proven only in the PostgreSQL suite with no in-process counterpart. Two open engine bugs the simulation found, #32 and #33, are named in the A2 and L4 notes.
 
 **L. Local writes** — what a transaction promises before anything reaches the network.
 
@@ -70,7 +70,7 @@ Status on 2026-09-13, against the tests on `main` with `crates/sim` in place (is
 
 | ID | Guarantee | Primary |
 | --- | --- | --- |
-| C1 | Wire format is byte-compatible with the reference | proven |
+| C1 | Wire format is byte-compatible with the reference | partial |
 | C2 | Received states tolerate extra fields, not missing ones | proven |
 | C3 | Additive schema changes open; others fail without damage | partial |
 | C4 | Unsupported handler versions refuse the batch | partial |
@@ -301,6 +301,8 @@ Primary:
 Supporting:
 - none
 
+Note: When the exception applies, the settled record is rebuilt from its before image: an update reverts to its pre-mutation value and a local create disappears until a subscribed Channel delivers the record. The listed test asserts only the pending count; see [Client Settlement](architecture/client/engine/settlement.md).
+
 ### A4 Checkpoints name only Channels the handler notified
 
 The server derives required checkpoints from the Channels the handler notified during the batch. A handler that notifies no Channel, or leaves the selection ambiguous, is a framework error that aborts the batch; a checkpoint is never satisfied by an unrelated Channel.
@@ -486,6 +488,8 @@ Primary:
 
 Supporting:
 - integration/persistence/server/runtime.test.mjs::loader safely converts PostgreSQL BigInt scalar and list values without widening wire range
+
+Note: The "detected" clause is not implemented. `PushRequest::semantic_hash` is computed and tested in core only; the server deduplicates on `(clientId, batchSequence)` and never compares bodies, and `integration/persistence/server/runtime.test.mjs::push commits business + compacted publication + exact durable receipt together` asserts that a retry with a different body returns the stored receipt. See [Server Push](architecture/server/engine/push.md).
 
 ### C2 Received states tolerate extra fields, not missing ones
 
