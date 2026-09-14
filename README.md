@@ -1,7 +1,7 @@
 # Ahead
 
-[![Verify](https://github.com/steve-z-wang/ahead/actions/workflows/verify.yml/badge.svg?branch=main)](https://github.com/steve-z-wang/ahead/actions/workflows/verify.yml)
-[![Documentation](https://github.com/steve-z-wang/ahead/actions/workflows/docs.yml/badge.svg?branch=main)](https://github.com/steve-z-wang/ahead/actions/workflows/docs.yml)
+[![Verify](https://github.com/zanminwang/ahead/actions/workflows/verify.yml/badge.svg?branch=main)](https://github.com/zanminwang/ahead/actions/workflows/verify.yml)
+[![Documentation](https://github.com/zanminwang/ahead/actions/workflows/docs.yml/badge.svg?branch=main)](https://github.com/zanminwang/ahead/actions/workflows/docs.yml)
 
 Ahead is a schema-driven framework for building local-first apps with your own backend.
 
@@ -18,7 +18,7 @@ Local-first apps read and write data on the device, so everyday interactions don
 
 ![Ahead architecture: local state and background sync](website/content/assets/architecture.svg)
 
-Generated clients currently sync over HTTP. The WebSocket streaming shown in the diagram is [planned for these clients](https://github.com/steve-z-wang/ahead/issues/35).
+Generated clients currently sync over HTTP. The WebSocket streaming shown in the diagram is [planned for these clients](https://github.com/zanminwang/ahead/issues/35).
 
 On your server, **handlers** process writes and **loaders** read records to send to clients. A **channel** groups record changes for clients to subscribe to; `notify` marks which records changed.
 
@@ -34,7 +34,7 @@ Writes update local SQLite immediately, so reads see changes before sync complet
 
 The TypeScript client and backend currently run on Node.js. The clients use native runtimes; browser support is not yet implemented. See [platform validation](website/content/frontend/platforms.md) for tested environments.
 
-Need another language, runtime, or database adapter? [Request support](https://github.com/steve-z-wang/ahead/issues/new). More integrations can be added.
+Need another language, runtime, or database adapter? [Request support](https://github.com/zanminwang/ahead/issues/new). More integrations can be added.
 
 ## Build with Ahead
 

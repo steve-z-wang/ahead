@@ -59,7 +59,7 @@ A server may normalize the title or reject the edit. Rejections are retained in 
 
 A **Stamp** orders content for one record across channels. When a record is notified, the backend allocates a newer stamp. The client applies a newer value and ignores delayed older content, regardless of which channel delivers it. Equal stamps are idempotent; inconsistent content for the same stamp is a diagnostic condition.
 
-A newer deletion withdraws the record across channels. Its tombstone is retained while other channel claims still need to confirm the deletion. Stamps are required on pull changes; they are separate from each channel's cursor. See the [stamp acceptance tests](https://github.com/steve-z-wang/ahead/blob/main/crates/sqlite/tests/stamp_scenarios.rs) for the ordering cases.
+A newer deletion withdraws the record across channels. Its tombstone is retained while other channel claims still need to confirm the deletion. Stamps are required on pull changes; they are separate from each channel's cursor. See the [stamp acceptance tests](https://github.com/zanminwang/ahead/blob/main/crates/sqlite/tests/stamp_scenarios.rs) for the ordering cases.
 
 ## Local reads and sync reads
 
@@ -71,7 +71,7 @@ The backend's loader is the sync read path: after notification identifies change
 
 - A malformed pull change can be skipped while the cursor advances. A cursor is not an unconditional proof that every malformed change was applied successfully.
 - Live wakeups are process-local. Multi-process deployments need an application-provided committed notification mechanism.
-- Generated clients currently use HTTP sync; the backend has WebSocket support, with built-in client integration tracked in [issue #35](https://github.com/steve-z-wang/ahead/issues/35).
+- Generated clients currently use HTTP sync; the backend has WebSocket support, with built-in client integration tracked in [issue #35](https://github.com/zanminwang/ahead/issues/35).
 - Production-scale cache performance requires measurement with your working set.
 
 See [sync and recovery](frontend/sync.md) for application behavior and [local storage](frontend/storage.md) for storage constraints.

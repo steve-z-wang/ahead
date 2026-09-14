@@ -4,7 +4,7 @@ from pathlib import Path
 from urllib.parse import unquote, urljoin, urlsplit
 
 SITE = Path(__file__).resolve().parent / 'site'
-BASE = 'https://steve-z-wang.github.io/ahead/'
+BASE = 'https://zanminwang.github.io/ahead/'
 
 
 class Page(HTMLParser):

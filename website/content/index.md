@@ -38,8 +38,8 @@ Define your records and mutations once. Ahead generates typed client calls and b
 
 The TypeScript client and backend currently run on Node.js. Clients use native Rust bindings; browser support is not implemented. See [platform validation](frontend/platforms.md) for tested environments and mobile setup.
 
-Packages are currently used from source. Follow the tutorial's repository commands rather than installing an unpublished package. Need another language, runtime or database adapter? [Request support](https://github.com/steve-z-wang/ahead/issues/new).
+Packages are currently used from source. Follow the tutorial's repository commands rather than installing an unpublished package. Need another language, runtime or database adapter? [Request support](https://github.com/zanminwang/ahead/issues/new).
 
 ## Project
 
-[GitHub](https://github.com/steve-z-wang/ahead) · [Framework comparison](https://github.com/steve-z-wang/ahead/blob/main/README.md#how-ahead-compares-with-other-sync-frameworks) · [Issues](https://github.com/steve-z-wang/ahead/issues) · [Contribute to the documentation](contributing/documentation.md)
+[GitHub](https://github.com/zanminwang/ahead) · [Framework comparison](https://github.com/zanminwang/ahead/blob/main/README.md#how-ahead-compares-with-other-sync-frameworks) · [Issues](https://github.com/zanminwang/ahead/issues) · [Contribute to the documentation](contributing/documentation.md)

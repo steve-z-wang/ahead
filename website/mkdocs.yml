@@ -1,8 +1,8 @@
 site_name: Ahead
 site_description: Ahead is a schema-driven framework for building local-first apps with your own backend.
-site_url: https://steve-z-wang.github.io/ahead/
-repo_url: https://github.com/steve-z-wang/ahead
-repo_name: steve-z-wang/ahead
+site_url: https://zanminwang.github.io/ahead/
+repo_url: https://github.com/zanminwang/ahead
+repo_name: zanminwang/ahead
 edit_uri: ''
 docs_dir: content
 site_dir: site
@@ -71,7 +71,7 @@ nav:
           - Testing: contributing/testing.md
           - Guarantees and proofs: contributing/guarantees.md
           - Testing strategy: contributing/testing-strategy.md
-  - GitHub: https://github.com/steve-z-wang/ahead
+  - GitHub: https://github.com/zanminwang/ahead
 validation:
   links:
     not_found: warn

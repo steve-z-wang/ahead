@@ -90,7 +90,7 @@ Provide `onError` to record background failures, and `refreshAuth` if your crede
 
 Use `wake()` after an application event that should prompt another scheduling check. Use `resume()` after explicitly pausing. A closed connection cannot resume; create a new one through `client.client.connect` or reopen the owning client.
 
-The current clients use HTTP for push and pull. The server also provides `/sync/live` over WebSocket. Built-in client WebSocket support is tracked in [issue #35](https://github.com/steve-z-wang/ahead/issues/35); do not assume a background `Connection` already uses it.
+The current clients use HTTP for push and pull. The server also provides `/sync/live` over WebSocket. Built-in client WebSocket support is tracked in [issue #35](https://github.com/zanminwang/ahead/issues/35); do not assume a background `Connection` already uses it.
 
 ## Authentication and account changes
 

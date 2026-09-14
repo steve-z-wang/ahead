@@ -118,7 +118,7 @@ The transport forwards the supplied JSON unchanged. Replace the demo URL and tok
 
 TypeScript includes `httpTransport`; Flutter supplies the Dart transport function shown above. For expiring credentials, use `refreshAuth` and read the current token on each request. [Transport contracts](runtime.md#transports) explain error handling.
 
-Subscribing wakes background sync but does not wait for initial data. The current clients use HTTP. Built-in client WebSocket integration is tracked in [issue #35](https://github.com/steve-z-wang/ahead/issues/35).
+Subscribing wakes background sync but does not wait for initial data. The current clients use HTTP. Built-in client WebSocket integration is tracked in [issue #35](https://github.com/zanminwang/ahead/issues/35).
 
 ## Watch and write
 

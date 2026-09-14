@@ -1,6 +1,6 @@
 # Testing strategy
 
-This page describes the planned test organization. The simulation and conformance runners below are proposed work; see [running the current tests](testing.md) for commands available in this checkout. Simulation implementation is tracked in [PR #34](https://github.com/steve-z-wang/ahead/pull/34).
+This page describes the planned test organization. The simulation and conformance runners below are proposed work; see [running the current tests](testing.md) for commands available in this checkout. Simulation implementation is tracked in [PR #34](https://github.com/zanminwang/ahead/pull/34).
 
 [guarantees](guarantees.md) says what the framework promises and where each promise is proven. This page says how the test suite is organized to produce those proofs, and how to add one.
 
@@ -136,5 +136,5 @@ Every layer prints test names on failure: `cargo test` natively, `node --test` a
 
 ## What is not here
 
-- Performance measurements: [performance work](https://github.com/steve-z-wang/ahead/issues/12). The `sim` harness is reused for workloads, but numbers are a diagnostic, not a gate.
+- Performance measurements: [performance work](https://github.com/zanminwang/ahead/issues/12). The `sim` harness is reused for workloads, but numbers are a diagnostic, not a gate.
 - Connection lifecycle (wake, backoff, close): unit tests in `crates/client`, plus one translation test per binding. Not a guarantee in the list because it is a scheduling policy, not a correctness property.

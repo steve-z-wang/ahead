@@ -2,7 +2,7 @@
 
 Your backend implements the write path through handlers and the read/sync path through loaders. The compiler generates their TypeScript interfaces from your schema. Ahead supplies protocol processing; your application supplies business logic, authorization and a database transaction.
 
-Examples use the `Entry` / `Edit` schema from [getting started](../getting-started.md). The complete working implementation is [server.mts](https://github.com/steve-z-wang/ahead/blob/main/examples/rust-round-trip/server.mts).
+Examples use the `Entry` / `Edit` schema from [getting started](../getting-started.md). The complete working implementation is [server.mts](https://github.com/zanminwang/ahead/blob/main/examples/rust-round-trip/server.mts).
 
 ## createBackend
 
@@ -161,7 +161,7 @@ Unexpected exceptions abort the batch transaction. Do not translate every except
 | `POST /sync/pull` | Materialize changed records through loaders |
 | `/sync/live` (WebSocket) | Serve the backend live protocol |
 
-The generated clients currently use the two HTTP routes; built-in client WebSocket integration is [pending](https://github.com/steve-z-wang/ahead/issues/35). Listener errors reject. `await server.close()` releases the listener and its live connections; your application must separately close its database pool. The supported listener owns its server; mounting into an application-owned HTTP server is not currently exposed.
+The generated clients currently use the two HTTP routes; built-in client WebSocket integration is [pending](https://github.com/zanminwang/ahead/issues/35). Listener errors reject. `await server.close()` releases the listener and its live connections; your application must separately close its database pool. The supported listener owns its server; mounting into an application-owned HTTP server is not currently exposed.
 
 ## Background writes
 
@@ -201,6 +201,6 @@ Unlike handler `notify`, external `notify` is asynchronous and must be awaited. 
 
 `loaderHooks` maps model names to `{ prepareForViewer(call): Promise<void> }`. The hook runs before that model's loader in the same request context. Its failure fails the load. Use it only if viewer-specific preparation is needed; a loader already receives user and channel context.
 
-`native?: Native` injects the native bridge when packaging it elsewhere. It implements `validateConfig`, `processPush`, `processPull`, `publish`, `negotiateLive` and `pullLive` with the string/JSON callback contracts in the [SDK source](https://github.com/steve-z-wang/ahead/blob/main/packages/server/index.mts). The default binding comes from this repository's Node addon. This is a packaging seam; the generated handlers and loaders remain the application contract.
+`native?: Native` injects the native bridge when packaging it elsewhere. It implements `validateConfig`, `processPush`, `processPull`, `publish`, `negotiateLive` and `pullLive` with the string/JSON callback contracts in the [SDK source](https://github.com/zanminwang/ahead/blob/main/packages/server/index.mts). The default binding comes from this repository's Node addon. This is a packaging seam; the generated handlers and loaders remain the application contract.
 
 Backend methods marked `@internal` (`push`, `pull`, `negotiateLive`, `pullLive`, `onCommitted`, `notifyCommitted`, `closeLive`) are used by the listener and tests. They are not the supported application-facing HTTP integration surface.

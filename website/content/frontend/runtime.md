@@ -197,7 +197,7 @@ The transport sends the supplied JSON body unchanged and returns response JSON t
 
 Here `backendUrl`, `accessToken` and `renewAccessToken` belong to your application. A TypeScript transport signals expired authentication with an error whose `status` is `401`; Dart throws `AuthenticationExpired()`. The connection can then invoke `refreshAuth`. Other errors go through the background connection's error/retry handling; manual `sync` rejects to its caller. Do not swallow failures or return an error page as a successful protocol response.
 
-Current generated clients use HTTP sync. The backend also serves WebSocket, but a built-in generated-client WebSocket transport is [tracked separately](https://github.com/steve-z-wang/ahead/issues/35). `connect` does not mean a WebSocket is open.
+Current generated clients use HTTP sync. The backend also serves WebSocket, but a built-in generated-client WebSocket transport is [tracked separately](https://github.com/zanminwang/ahead/issues/35). `connect` does not mean a WebSocket is open.
 
 ## Connection controls
 
@@ -291,4 +291,4 @@ These are advanced interfaces for a custom driver. Prefer `sync` or `connect`, w
 | `acknowledge(sequence, receipt)` | Apply a decoded push receipt to the matching batch; returns void |
 | `applyPull(page)` | Apply a decoded pull page and return its application result |
 
-Wire fields are defined in the [protocol source](https://github.com/steve-z-wang/ahead/blob/main/crates/core/src/protocol.rs) and exercised by [shared wire fixtures](https://github.com/steve-z-wang/ahead/blob/main/fixtures). They retain names such as `scope` and `syncId`. Do not manufacture receipts, advance cursors yourself or rewrite frozen requests to recover from a network failure.
+Wire fields are defined in the [protocol source](https://github.com/zanminwang/ahead/blob/main/crates/core/src/protocol.rs) and exercised by [shared wire fixtures](https://github.com/zanminwang/ahead/blob/main/fixtures). They retain names such as `scope` and `syncId`. Do not manufacture receipts, advance cursors yourself or rewrite frozen requests to recover from a network failure.

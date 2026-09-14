@@ -17,7 +17,7 @@ Run all commands below from the repository root. Packages have not been publishe
 ## 1. Start the backend
 
 ```sh
-git clone https://github.com/steve-z-wang/ahead.git
+git clone https://github.com/zanminwang/ahead.git
 cd ahead
 bash examples/rust-round-trip/run.sh
 ```
@@ -104,12 +104,12 @@ Choose a fresh filename for each fresh backend cluster. Do not delete an applica
 
 | File | Role |
 | --- | --- |
-| [models/entry.model](https://github.com/steve-z-wang/ahead/blob/main/examples/rust-round-trip/models/entry.model) | Record schema and local mutation contract |
-| [generated/client.ts](https://github.com/steve-z-wang/ahead/blob/main/examples/rust-round-trip/generated/client.ts) | Generated TypeScript client entry point |
-| [generated/backend.ts](https://github.com/steve-z-wang/ahead/blob/main/examples/rust-round-trip/generated/backend.ts) | Generated typed handlers/loaders and bound `createBackend` |
-| [generated/generated.dart](https://github.com/steve-z-wang/ahead/blob/main/examples/rust-round-trip/generated/generated.dart) | Generated Dart client and model types |
-| [server.mts](https://github.com/steve-z-wang/ahead/blob/main/examples/rust-round-trip/server.mts) | Business handler, loader and example database setup |
-| [client.mts](https://github.com/steve-z-wang/ahead/blob/main/examples/rust-round-trip/client.mts) | Local queries, mutation call, channel subscription and connection controls |
+| [models/entry.model](https://github.com/zanminwang/ahead/blob/main/examples/rust-round-trip/models/entry.model) | Record schema and local mutation contract |
+| [generated/client.ts](https://github.com/zanminwang/ahead/blob/main/examples/rust-round-trip/generated/client.ts) | Generated TypeScript client entry point |
+| [generated/backend.ts](https://github.com/zanminwang/ahead/blob/main/examples/rust-round-trip/generated/backend.ts) | Generated typed handlers/loaders and bound `createBackend` |
+| [generated/generated.dart](https://github.com/zanminwang/ahead/blob/main/examples/rust-round-trip/generated/generated.dart) | Generated Dart client and model types |
+| [server.mts](https://github.com/zanminwang/ahead/blob/main/examples/rust-round-trip/server.mts) | Business handler, loader and example database setup |
+| [client.mts](https://github.com/zanminwang/ahead/blob/main/examples/rust-round-trip/client.mts) | Local queries, mutation call, channel subscription and connection controls |
 
 Next, [define your own schema](schema/define.md), browse the [API reference](api-index.md), or use the [client setup guide](frontend/setup.md).
 

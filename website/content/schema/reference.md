@@ -70,7 +70,7 @@ model Comment {
 }
 ```
 
-A reference names the local fields matching the target identity. `onTargetDelete` accepts `none` (default) or `delete`. Inverse declarations generate navigation without storing another copy of the relationship. Singular inverses require a unique foreign key. Named references/inverses can disambiguate multiple relations; see the [parser tests](https://github.com/steve-z-wang/ahead/blob/main/crates/compiler/tests/compiler.rs) for validated examples.
+A reference names the local fields matching the target identity. `onTargetDelete` accepts `none` (default) or `delete`. Inverse declarations generate navigation without storing another copy of the relationship. Singular inverses require a unique foreign key. Named references/inverses can disambiguate multiple relations; see the [parser tests](https://github.com/zanminwang/ahead/blob/main/crates/compiler/tests/compiler.rs) for validated examples.
 
 ## Mutations
 
@@ -89,7 +89,7 @@ mutation Edit {
 | `entry Entry.delete?` | Optional operation |
 | `entries Entry.delete[]` | List of operations |
 
-Builders emit operations in declared slot order. Slot bindings can connect operations; prerequisites and `@@sequence` specify dependencies. See [advanced declarations](define.md#relations-prerequisites-and-ordering) and [compiler tests](https://github.com/steve-z-wang/ahead/blob/main/crates/compiler/tests/compiler.rs). The generator does not implement your backend business logic or host prerequisite callbacks.
+Builders emit operations in declared slot order. Slot bindings can connect operations; prerequisites and `@@sequence` specify dependencies. See [advanced declarations](define.md#relations-prerequisites-and-ordering) and [compiler tests](https://github.com/zanminwang/ahead/blob/main/crates/compiler/tests/compiler.rs). The generator does not implement your backend business logic or host prerequisite callbacks.
 
 ## History and compatibility
 
