@@ -436,7 +436,7 @@ Primary:
 Supporting:
 - none
 
-Note: The runner proves this with direct writes off. `crates/sim/tests/invariants.rs::random_sequences_with_direct_writes` is `#[ignore]`d until #33; direct writes are excluded from the checked property until that bug is fixed. The runner checks every invariant after every step and also settles every 25 steps (a legal sequence of actions, so shrinking still applies) before checking again, so a client is not only rarely caught at a channel's head mid-run. The count of actual content comparisons `no_pending_means_converged` makes is asserted to a floor of 1,000 across all seeds, so this coverage cannot silently drop.
+Note: The runner proves this with direct writes off. `crates/sim/tests/invariants.rs::random_sequences_with_direct_writes` is `#[ignore]`d until #33; direct writes are excluded from the checked property until that bug is fixed. The runner checks every invariant after every step and also settles every 25 steps (a legal sequence of actions, so shrinking still applies) before checking again, so a client is no longer only rarely caught at a channel's head mid-run. The count of actual content comparisons `no_pending_means_converged` makes is asserted to a floor of 1,000 across all seeds, so this coverage cannot silently drop.
 
 ### R3 Crash at any durable boundary loses nothing
 

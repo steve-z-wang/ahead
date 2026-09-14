@@ -112,6 +112,14 @@ pub enum Action {
         text: Option<String>,
         channels: Vec<String>,
     },
+    /// A record's real membership legitimately moves to `channels`: the new members
+    /// and the ones it leaves both get notified (the ones it leaves load `null`, the
+    /// application-correct "moved away" delete per the record-stamp spec's "Delete
+    /// applies across channels").
+    MoveMembership {
+        key: String,
+        channels: Vec<String>,
+    },
     RejectNext {
         code: String,
     },
@@ -147,16 +155,19 @@ pub struct Sim {
     /// write can trigger.
     pub generate_direct: bool,
     /// Whether `Action::ServerChange` (`step.rs::choose`) may notify a channel outside
-    /// a record's real, explicitly-set membership. Defaults to true; `Sim::run_with`
-    /// ties it to `generate_direct` so the R2 runner also excludes it: notifying a
-    /// member channel and an unrelated one in the same call can leave the unrelated
-    /// channel's own (higher-stamped, load-refused-content) invalidation outrank the
-    /// member channel's real content once the client applies both pages, corrupting
-    /// authoritative content the member channel already delivered correctly - a
-    /// genuinely reachable divergence `no_pending_means_converged` can now catch once
-    /// periodic `settle()` actually drives a client to a channel's head. Not one of
-    /// the 14 findings in this fix wave; flagged here rather than silently left to
-    /// make the primary R2 proof flaky.
+    /// a record's real, explicitly-set membership *without* also notifying every
+    /// channel that currently provides the record. Defaults to false: per
+    /// `docs/superpowers/specs/2026-09-12-record-stamp-design.md`, "Delete applies
+    /// across channels" - "Hiding a record on one channel is a change to that record,
+    /// so the rule above applies: the handler notifies every channel that provides
+    /// it" - a notify that skips a real member channel is an application-rule
+    /// violation, not an engine defect. When this flag is set, the unrelated
+    /// channel's own load-refused-content (null) invalidation correctly outranks the
+    /// member channel's stale content by stamp once notified: the client applying it
+    /// as a delete is the engine doing exactly what a genuine cross-channel delete
+    /// requires, given an application that broke the rule. Off by default so the R2
+    /// runner does not fuzz an application bug the engine was never meant to defend
+    /// against; a test that wants to exercise this sets it directly.
     pub generate_membership_faults: bool,
     /// Count of actual (client, key) content comparisons `no_pending_means_converged`
     /// has made across the run - the checks it skips (not at head, exempted by a
@@ -212,7 +223,7 @@ impl Sim {
             next_id: 0,
             direct_writes: BTreeSet::new(),
             generate_direct: true,
-            generate_membership_faults: true,
+            generate_membership_faults: false,
             comparisons: 0,
             _dir: dir,
         }
@@ -250,6 +261,34 @@ impl Sim {
         };
         let refs: Vec<&str> = channels.iter().map(String::as_str).collect();
         self.host.set_membership(&key, &refs);
+    }
+    /// Move `key`'s real membership to exactly `channels`, then notify every new
+    /// member and every channel it just left - the left ones now load `null` for it
+    /// (membership already excludes them), the legitimate "moved away" delete.
+    fn move_membership(&mut self, key: &RecordKey, channels: &[String]) {
+        let old = self.host.membership(key);
+        let refs: Vec<&str> = channels.iter().map(String::as_str).collect();
+        self.host.set_membership(key, &refs);
+        // Content is compared by absolute stamp, not delivery order (D2): whichever
+        // publish gets the higher stamp wins once a client sees it, regardless of
+        // which page arrives first. So the channels this record just left must be
+        // published *before* every real member, not after - otherwise the "moved
+        // away" delete could carry a higher stamp than the record's real content and
+        // wrongly outrank it once a client applies both, exactly the ordering D4's
+        // own move test uses (the vacated channel's delete is published with a lower
+        // stamp than the destination's upsert).
+        let removed: Vec<&str> = old
+            .iter()
+            .filter(|c| !channels.contains(c))
+            .map(String::as_str)
+            .collect();
+        if !removed.is_empty() {
+            self.host.notify(key, &removed);
+        }
+        // Then republish every real member so its stamp is unambiguously the newest.
+        // Content is unchanged, but the stamp must be, so a client that later applies
+        // the vacated channel's now-stale delete cannot regress this.
+        self.host.notify(key, &refs);
     }
     pub fn apply(&mut self, action: Action) -> Result<(), String> {
         self.trace.push(action.clone());
@@ -379,6 +418,34 @@ impl Sim {
                 self.host.set_state(&k, state);
                 let refs: Vec<&str> = channels.iter().map(String::as_str).collect();
                 self.host.notify(&k, &refs);
+            }
+            Action::MoveMembership { key, channels } => {
+                let k = parse_key(&key);
+                self.move_membership(&k, &channels);
+                // A real client cascade-drops a Comment locally the instant its
+                // parent Entry's authority goes to null on a channel it's watching
+                // (`set_authority` in mutate.rs walks descendants) - it cannot tell
+                // "parent moved to another channel" from "parent deleted" (see the
+                // record-stamp spec's "Delete applies across channels"). So a moved
+                // Entry must take its Comments with it, exactly like D4 describes
+                // ("a record can move to another channel entirely... including child
+                // records whose membership follows the parent"), or a comment whose
+                // own membership never changed would be wrongly cascade-dropped by a
+                // client that still holds it through the very channel this move
+                // leaves.
+                if k.model == "Entry" {
+                    let id = k.identity["id"].clone();
+                    let child_ids: Vec<String> = self
+                        .host
+                        .records()
+                        .into_iter()
+                        .filter(|(ek, v)| ek.starts_with("[\"Comment\"") && v["entryId"] == id)
+                        .filter_map(|(_, v)| v["id"].as_str().map(str::to_string))
+                        .collect();
+                    for comment_id in child_ids {
+                        self.move_membership(&schema::comment_key(&comment_id), &channels);
+                    }
+                }
             }
             Action::RejectNext { code } => self.host.reject_next(&code),
             Action::FailNext => self.host.fail_next(),

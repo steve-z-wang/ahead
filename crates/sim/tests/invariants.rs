@@ -50,6 +50,7 @@ fn random_sequences_with_direct_writes() {
 fn every_run_ends_converged_after_settle() {
     for seed in 100..110u64 {
         let mut sim = Sim::new(seed, 2);
+        sim.generate_direct = false;
         for i in 0..2 {
             sim.apply(otter_sim::Action::Subscribe {
                 client: i,

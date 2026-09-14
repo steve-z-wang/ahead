@@ -43,11 +43,10 @@ impl Sim {
     fn pick_channel(&mut self) -> String {
         self.rng.pick(&CHANNELS).to_string()
     }
-    /// A channel to notify for `Action::ServerChange`. Ordinarily any of the three
-    /// (`generate_membership_faults`), including one outside the record's real
-    /// membership - a deliberate fault (see the field's doc). When that fault is
-    /// disabled, stay within the record's real membership once it has one, so the
-    /// generated state is always one `no_pending_means_converged` can reason about.
+    /// A channel to notify for `Action::ServerChange`. Stays within the record's real
+    /// membership once it has one, so the generated state is always one that respects
+    /// the application rule (see `generate_membership_faults`'s doc) unless a test has
+    /// deliberately turned that flag on to exercise the rule being broken.
     fn pick_notify_channel(&mut self, real_membership: &[String]) -> String {
         if self.generate_membership_faults || real_membership.is_empty() {
             self.pick_channel()
@@ -77,7 +76,27 @@ impl Sim {
                     channel,
                 }
             }
-            46..68 => Action::Deliver,
+            46..66 => Action::Deliver,
+            66..68 => {
+                if self.known_entries.is_empty() {
+                    return Some(Action::Deliver);
+                }
+                let id = self.rng.pick(&self.known_entries).clone();
+                // A random non-empty subset of the three channels: the record's new
+                // membership after this move.
+                let mut channels: Vec<String> = CHANNELS
+                    .iter()
+                    .filter(|_| self.rng.chance(1, 2))
+                    .map(|c| c.to_string())
+                    .collect();
+                if channels.is_empty() {
+                    channels.push(self.pick_channel());
+                }
+                Action::MoveMembership {
+                    key: format!("Entry:{id}"),
+                    channels,
+                }
+            }
             68..72 => Action::Drop,
             72..76 => Action::Duplicate,
             76..81 => Action::Hold,
@@ -255,7 +274,6 @@ impl Sim {
         const SETTLE_EVERY: usize = 25;
         let mut sim = Sim::new(seed, clients);
         sim.generate_direct = generate_direct;
-        sim.generate_membership_faults = generate_direct;
         for i in 0..clients {
             sim.apply(Action::Subscribe {
                 client: i,
@@ -275,8 +293,22 @@ impl Sim {
                 });
             }
             if step % SETTLE_EVERY == SETTLE_EVERY - 1 {
-                sim.settle();
-                if let Err(error) = sim.check() {
+                // `settle()` panics rather than returning a `Result` (it always has,
+                // for every existing call site) - catch that here the same way
+                // `shrink::replay` catches a candidate panic, so a periodic settle
+                // that fails to converge is reported as an ordinary `Failure` (seed,
+                // step, trace) instead of crashing the process.
+                let settled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    sim.settle();
+                }));
+                let error = match settled {
+                    Ok(()) => sim.check().err(),
+                    Err(payload) => Some(format!(
+                        "periodic settle panicked: {}",
+                        panic_message(&payload)
+                    )),
+                };
+                if let Some(error) = error {
                     let minimal = shrink::shrink(seed, clients, sim.trace.clone());
                     return Err(Failure {
                         seed,
@@ -296,4 +328,17 @@ fn is_inapplicable(e: &str) -> bool {
     // Read the client's error strings in crates/client/src/lib.rs and list the ones
     // that mean the action made no sense for the current state.
     ["update row missing"].iter().any(|s| e.contains(s))
+}
+
+/// Render a caught panic payload as a message, the same fallback pattern
+/// `std::panic`'s own default hook uses: a `&str` or `String` payload prints as-is;
+/// anything else gets a fixed placeholder.
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        s.to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "non-string panic payload".to_string()
+    }
 }

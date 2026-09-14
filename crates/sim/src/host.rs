@@ -2,7 +2,7 @@
 //! closely enough that otter_server cannot tell the difference: per-client receipts,
 //! per-channel heads, one invalidation row per (channel, record) carrying the latest
 //! cursor and stamp, and one stamp counter per record.
-use otter_core::RecordKey;
+use otter_core::{PushRequest, RecordKey};
 use otter_server::Host;
 use serde_json::{Map, Value, json};
 use std::{
@@ -51,9 +51,10 @@ struct State {
     accepted: usize,
     rejected: usize,
     failed: usize,
-    /// The (clientId, batchSequence) of the push currently being processed, captured
-    /// from the `claim` op - the `handle` op does not carry either field, only
-    /// `ordinal` (see `crates/server/src/lib.rs::process_push`).
+    /// The (clientId, batchSequence) of the push currently being processed, decoded
+    /// from the raw request bytes in `push()` - the `handle` op itself carries only
+    /// `ordinal` (see `crates/server/src/lib.rs::process_push`), and the server's wire
+    /// contract with its host is not otherwise touched by this bookkeeping.
     current_push: Option<(String, u64)>,
     /// (clientId, batchSequence, ordinal) for every `handle` call, in call order.
     /// `no_mutation_executes_twice` asserts these are pairwise distinct: a retry that
@@ -235,6 +236,13 @@ impl MemHost {
         }
     }
     pub fn push(&self, owner: &str, bytes: &[u8]) -> Result<String, String> {
+        // The `handle` op carries only `ordinal`, not `clientId` or `batchSequence`
+        // (see `process_push` in crates/server) - decode the raw request here, at the
+        // one place that already has the bytes, rather than growing the wire protocol
+        // between the server and its host just for this bookkeeping.
+        if let Ok(request) = PushRequest::decode(bytes) {
+            self.0.lock().unwrap().current_push = Some((request.client_id, request.batch_sequence));
+        }
         let (before, depth, invocations) = {
             let s = self.0.lock().unwrap();
             (
@@ -411,13 +419,6 @@ impl Host for MemHost {
             Ok(match op {
                 "claim" => {
                     let id = r["clientId"].as_str().unwrap().to_string();
-                    // The `handle` op below carries only `ordinal`, not `clientId` or
-                    // `batchSequence` (see process_push) - capture them here so the
-                    // triple can be recorded when a mutation actually reaches the
-                    // handler.
-                    if let Some(batch_sequence) = r["batchSequence"].as_u64() {
-                        s.current_push = Some((id.clone(), batch_sequence));
-                    }
                     s.clients
                         .entry(id)
                         .or_insert_with(|| json!({"clientId":r["clientId"],"owner":r["owner"],"sequence":0,"receipt":null}))
@@ -727,7 +728,7 @@ mod tests {
         assert_eq!(
             host.handler_calls(),
             host.accepted() + host.rejected() + host.failed(),
-            "handler_calls_match_outcomes must hold for a rejection too"
+            "no_mutation_executes_twice must hold for a rejection too"
         );
     }
 

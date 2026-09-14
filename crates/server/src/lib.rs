@@ -301,7 +301,7 @@ pub async fn process_push(
     principal(owner)?;
     let request = PushRequest::decode(bytes).map_err(|e| format!("request.invalid:{e}"))?;
     let locked = host
-        .call(json!({"op":"claim","owner":owner,"clientId":request.client_id,"batchSequence":request.batch_sequence}))
+        .call(json!({"op":"claim","owner":owner,"clientId":request.client_id}))
         .await?;
     if locked["clientId"] != request.client_id {
         return Err("storage client mismatch".into());
