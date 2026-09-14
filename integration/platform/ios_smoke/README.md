@@ -1,3 +1,3 @@
 # Flutter platform checks
 
-See the [documentation](../../../website/content/frontend/platforms.md).
+See the [documentation](../../../docs/frontend/platforms.md).

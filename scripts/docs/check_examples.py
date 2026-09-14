@@ -9,15 +9,15 @@ import subprocess
 import tempfile
 import textwrap
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SOURCES = {
-    'ts': ['website/content/frontend/client-api.md', 'website/content/frontend/runtime.md',
-           'website/content/frontend/setup.md', 'website/content/frontend/sync.md'],
-    'dart': ['website/content/frontend/client-api.md', 'website/content/frontend/runtime.md',
-             'website/content/frontend/setup.md', 'website/content/frontend/sync.md'],
+    'ts': ['docs/frontend/client-api.md', 'docs/frontend/runtime.md',
+           'docs/frontend/setup.md', 'docs/frontend/sync.md'],
+    'dart': ['docs/frontend/client-api.md', 'docs/frontend/runtime.md',
+             'docs/frontend/setup.md', 'docs/frontend/sync.md'],
 }
-BACKEND_SOURCES = ['website/content/backend/api.md', 'website/content/backend/database.md',
-                   'website/content/backend/setup.md']
+BACKEND_SOURCES = ['docs/backend/api.md', 'docs/backend/database.md',
+                   'docs/backend/setup.md']
 
 
 def snippets(language, sources=None):
@@ -97,7 +97,7 @@ declare const notify: Notify;
                         '--module', 'NodeNext', '--moduleResolution', 'NodeNext',
                         '--allowImportingTsExtensions', str(backend)], cwd=ROOT, check=True)
     with tempfile.TemporaryDirectory(prefix='ahead-docs-schema-') as temp:
-        for i, (source, code) in enumerate(snippets('text', ['website/content/schema/define.md'])):
+        for i, (source, code) in enumerate(snippets('text', ['docs/schema/define.md'])):
             directory = Path(temp) / str(i)
             directory.mkdir()
             (directory / 'example.model').write_text(code)
