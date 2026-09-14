@@ -12,7 +12,7 @@ Current code: scheduling in [client/connection.rs](../../../../../crates/client/
 
 - Interface to Rust: `connection` commands per lane (`push`, `live`) with events `start`, `stop`, `pause`, `resume`, `wake`, `success`, `failure`, `next` → `{type: idle|sync|wait, millis?}`; `startSync {pushOnly}` / `next` / `complete` for the push cycle; `downlinkRequest {scope}` → request body; `downlinkPage {page, request?}` → `{disposition, continues}`; `status` for the channel list ([SDKs / Bindings](../../sdks/bindings.md)).
 - Interface to the host: `Client.connect(server, {onError, refreshAuth})` → `{pause, resume, wake, close}`.
-- Dependencies: [Transport](transport.md) for bytes; [Engine / Push](../engine/push.md), [Engine / Pull](../engine/pull.md) through the commands above.
+- Dependencies: [Transport](transport.md) for bytes; [Engine / Push](../engine/push/README.md), [Engine / Pull](../engine/pull.md) through the commands above.
 
 ## 5. Building Block View
 

@@ -27,7 +27,7 @@ Current code: [core/lib.rs](../../../../crates/core/src/lib.rs) (`canonical_json
 
 ## 8. Crosscutting Concepts
 
-- Limits shared by both sides but not negotiated on the wire: at most 20 mutations per push, a 256 KiB push budget, 50 changes per pull page, 1 MiB HTTP body and WebSocket frame on the server, 8 MiB WebSocket frame on the clients. Their owners are [Client Push](../client/engine/push.md), [Server Pull](../server/engine/pull.md) and the two transports.
+- Limits shared by both sides but not negotiated on the wire: at most 20 mutations per push, a 256 KiB push budget, 50 changes per pull page, 1 MiB HTTP body and WebSocket frame on the server, 8 MiB WebSocket frame on the clients. Their owners are [Client Push](../client/engine/push/README.md), [Server Pull](../server/engine/pull.md) and the two transports.
 
 ## 10. Quality Requirements
 

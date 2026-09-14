@@ -20,7 +20,7 @@ Current code: [compiler/lib.rs](../../../../crates/compiler/src/lib.rs) (relatio
 - Inverse resolution: candidates are the target's reference fields typed as this model, filtered by `@inverse` name when given; exactly one must remain (`use a shared relation name`). A singular inverse (`Child?`) requires the reference fields to be the referencing model's identity or one of its `@@unique` sets.
 - Core re-validates descriptors: relation names unique per model, `targetFields` equal the target identity, `onDelete` is `delete` or `none`, field types match.
 - Client cascade: `descendants` walks every relation with `onDelete == "delete"` whose target is the deleted record, over both the main and before tables, with a `seen` set for cycles; results become `effects` on a queued delete, are deleted directly on a direct delete, and are deleted when an authoritative delete arrives ([Local operations](../client/engine/local-operations.md), [Client Pull](../client/engine/pull.md)).
-- Dependency derivation: a queued create of a record referenced by a new operation becomes a lifecycle dependency ([Client Push](../client/engine/push.md)).
+- Dependency derivation: a queued create of a record referenced by a new operation becomes a lifecycle dependency ([Client Push](../client/engine/push/README.md)).
 - Navigation: `related` follows a reference from a loaded row (null when a reference field is null); `referencing` filters the source model by the reference fields.
 
 ## 10. Quality Requirements

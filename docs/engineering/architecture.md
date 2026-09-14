@@ -26,7 +26,10 @@ See the [component documentation index](architecture/README.md) for individual d
   - **[Frontend interface](architecture/client/frontend-interface.md)** — Expose reads, writes, subscriptions and status to SDKs.
   - **[Engine](architecture/client/engine/README.md)** — Local reads and writes, mutations, cursors, rollback and settlement.
     - **[Local operations](architecture/client/engine/local-operations.md)** — Local reads, writes and transactions.
-    - **[Push](architecture/client/engine/push.md)** — Queue mutations, track dependencies and freeze batches.
+    - **[Push](architecture/client/engine/push/README.md)** — Queue mutations, track dependencies and freeze batches.
+      - **[Queue](architecture/client/engine/push/queue.md)** — Persist mutations, operations and their ordering.
+      - **[Dependencies](architecture/client/engine/push/dependencies.md)** — Decide which mutations are eligible to send.
+      - **[Batching](architecture/client/engine/push/batching.md)** — Freeze eligible mutations and preserve their bytes for retries.
     - **[Pull](architecture/client/engine/pull.md)** — Apply server changes and advance cursors.
     - **[Settlement](architecture/client/engine/settlement.md)** — Process decoded receipts and cursors to confirm mutations, roll back rejections and replay pending changes.
   - **[Storage](architecture/client/storage.md)** — Execute Engine-requested SQL and transactions; no sync policy.
@@ -68,6 +71,9 @@ flowchart LR
     CL --> CE["Engine"]
     CE --> CEL["Local operations"]
     CE --> CEP["Push"]
+    CEP --> CEPQ["Queue"]
+    CEP --> CEPD["Dependencies"]
+    CEP --> CEPB["Batching"]
     CE --> CER["Pull"]
     CE --> CES["Settlement"]
     CL --> CS["Storage"]
@@ -116,7 +122,9 @@ Current code locations for the components above. Some responsibilities still sha
 | SDKs / Bindings | [bindings/common](../../bindings/common), [bindings/node](../../bindings/node), [bindings/dart](../../bindings/dart) |
 | Client / Frontend interface | [client/lib.rs](../../crates/client/src/lib.rs); per-transaction handle in [client/engine.rs](../../crates/client/src/engine.rs) |
 | Client / Engine / Local operations | [client/mutate.rs](../../crates/client/src/mutate.rs), [client/query.rs](../../crates/client/src/query.rs), [client/rows.rs](../../crates/client/src/rows.rs) |
-| Client / Engine / Push | [client/queue.rs](../../crates/client/src/queue.rs), [client/push.rs](../../crates/client/src/push.rs); dependency derivation in [client/policies.rs](../../crates/client/src/policies.rs) |
+| Client / Engine / Push / Queue | [client/queue.rs](../../crates/client/src/queue.rs), [client/ddl.rs](../../crates/client/src/ddl.rs) |
+| Client / Engine / Push / Dependencies | [client/policies.rs](../../crates/client/src/policies.rs), [client/queue.rs](../../crates/client/src/queue.rs); eligibility checks in [client/push.rs](../../crates/client/src/push.rs) |
+| Client / Engine / Push / Batching | [client/push.rs](../../crates/client/src/push.rs); push assignment in [client/queue.rs](../../crates/client/src/queue.rs) |
 | Client / Engine / Pull | [client/downlink.rs](../../crates/client/src/downlink.rs), [client/ledger.rs](../../crates/client/src/ledger.rs); incoming-page dispositions in [client/transport.rs](../../crates/client/src/transport.rs) (`receive_downlink`) |
 | Client / Engine / Settlement | [client/push.rs](../../crates/client/src/push.rs) (`settle_push`, `remove_rejected`); replay in [client/mutate.rs](../../crates/client/src/mutate.rs) (`rebuild`) |
 | Client / Storage | [client/store.rs](../../crates/client/src/store.rs), [client/ddl.rs](../../crates/client/src/ddl.rs), [sqlite](../../crates/sqlite/src/lib.rs) |

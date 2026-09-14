@@ -4,7 +4,7 @@ Mutation batches, receipts, rejections and checkpoints.
 
 Current code: [core/protocol.rs](../../../../crates/core/src/protocol.rs) (`PushRequest`, `PushReceipt`, `ChannelCheckpoint`, `Rejection`).
 
-Engine behavior: [Client Push](../client/engine/push.md), [Client Settlement](../client/engine/settlement.md), [Server Push](../server/engine/push.md).
+Engine behavior: [Client Push](../client/engine/push/README.md), [Client Settlement](../client/engine/settlement.md), [Server Push](../server/engine/push.md).
 
 ## 3. Context and Scope
 
