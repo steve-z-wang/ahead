@@ -6,7 +6,7 @@ Validate refuses schemas the runtimes could not execute consistently and schema 
 
 ## 3. Context and Scope
 
-- Input: parsed declarations with the source position of every model, field, mutation, slot, `@@unique`, `@@sequence` and prerequisite; when present, the previous `mutation-history.json` and the previous `schema.json` (the fence).
+- Input: the `Declarations` tree from [Parse](parse.md), which carries the source position of every model, field, mutation, slot, `@@unique`, `@@sequence` and prerequisite field; when present, the previous `mutation-history.json` and the previous `schema.json` (the fence).
 - Output: validated descriptors for [Generate](generate.md) and the reconciled history.
 - Errors: `line:col: message`, where the position is the declaration the rule is about (a field for relation, type and `@requires` errors; a slot for binding and patch-field errors; the `@@sequence` directive for sequence errors; the model for identity and reserved-name errors). Positions are never written into descriptors.
 
@@ -24,7 +24,7 @@ Checks run in this order:
 
 CLI policy: initializing a history refuses to overwrite one and requires every mutation at version 1; a named history file that is missing is an error unless initializing.
 
-Code: passes in `compile` in [compiler/lib.rs](../../../../crates/compiler/src/lib.rs); `reconcile_history` and `check_fence` in [compiler/history.rs](../../../../crates/compiler/src/history.rs).
+Code: `validate` in [compiler/validate.rs](../../../../crates/compiler/src/validate.rs); `reconcile_history` and `check_fence` in [compiler/history.rs](../../../../crates/compiler/src/history.rs).
 
 ## 10. Quality Requirements
 
