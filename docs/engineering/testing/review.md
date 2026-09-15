@@ -27,7 +27,7 @@ Only expectations involving undecided behavior must wait for the owning decision
    - Reconciliation with a populated queue: frozen bytes unchanged after an additive change (P4 and the reconciliation contract).
    - The no-polling consequence: push succeeds while the upgrade is refused, pending does not settle, the lane retries ([Connection](integration/connection.md)).
    - Batching bounds: the 20-mutation cap and the zero byte budget; `drop_mutation` refusing a frozen mutation.
-   - HTTP status mapping: `403`, `409` (gap, overlap, unsupported version with its fields), `404`, `405`, `413`; upgrade refusals and `1011` on drain error.
+   - Upgrade refusals (`401`, `503` while closing). The HTTP status table (`403`, `409` gap/overlap/unsupported version with its fields, `404`, `405`, `413`) and `1011`/`1002` live close codes are now asserted in [runtime.test.mjs](../../../integration/persistence/server/runtime.test.mjs).
    - Core value rules with no assertion: `dateTime` and `float` normalization, enum value validation, list element and nullability rules, push-batch size boundaries.
    - Compiler: Dart negative fixtures. Determinism, multi-file error relocation and `--initialize-mutation-history` refusals are covered in [compiler/tests/cli.rs](../../../crates/compiler/tests/cli.rs).
    - Dart parity: `runPrerequisites`, buffer overflow at the Dart bound.
@@ -40,7 +40,7 @@ Only expectations involving undecided behavior must wait for the owning decision
 
 - Simulation is a method, not a layer: its scenarios are counted as evidence for the guarantee they assert, and the same clause often has a SQLite-harness twin with finer assertions. That duplication is deliberate and cheap; it is not flagged as redundancy.
 - The PostgreSQL suite carries server *component* rules (checkpoint resolution, rejection versus failure, wake sets) because that logic lives in the TypeScript runtime and has no in-process fixture. The tables in [Server tests](components/server.md) list those rows with that caveat rather than moving them.
-- The Node transaction-bridge tests exercise the original spike probe, not `createBackend`. They remain useful boundary evidence for async callbacks inside a Prisma transaction but should not be cited for production server behavior.
+- The Node transaction-bridge tests exercise the probe-only addon build (`--features probe`), not `createBackend`. They remain useful boundary evidence for async callbacks inside a Prisma transaction but should not be cited for production server behavior; [SDK and binding tests](integration/bindings.md) lists which of their clauses are unique.
 - A close-and-reopen is not a process interruption. R3 evidence establishes recovery at step and commit boundaries the harness can reach; a crash between commits inside one action is unreachable by construction, and a kill during a commit relies on SQLite.
 
 ## Tracking implementation

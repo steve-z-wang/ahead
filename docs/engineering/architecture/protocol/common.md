@@ -18,7 +18,7 @@ Wire names are inherited from the reference implementation and must not change: 
 
 **State shapes.** A received state must contain every non-identity field (nullable ones default to `null`), may not contain identity fields, and drops unknown fields, which is what lets an older client accept states from a newer server. Loader output on the server is looser: it may include identity fields and omit nullable ones. A patch names only known non-identity fields and keeps explicit `null`.
 
-**Errors.** Core has one error kind carrying a message; codes appear only at the server's HTTP layer ([Server / Connection / Transport](../server/connection/transport.md)).
+**Errors.** Core has one error kind carrying a message. The server runtime has a structured error `{code, message, details?}` whose codes the HTTP layer maps to statuses ([SDKs / Bindings](../sdks/bindings.md), [Server / Connection / Transport](../server/connection/transport.md)).
 
 **Shared fixture.** [fixtures/protocol/counter-and-checkpoint.json](../../../../fixtures/protocol/counter-and-checkpoint.json) lists boundary cases both sides must agree on.
 
@@ -37,4 +37,4 @@ Tests read, not executed.
 
 ## 11. Risks and Technical Debt
 
-**Technical debt.** Errors cross every boundary as message text; the HTTP status mapping depends on exact strings. Owned by [SDKs / Bindings](../sdks/bindings.md).
+**Accepted limitation.** Client-direction errors cross the bindings as message text; nothing branches on that wording. Owned by [SDKs / Bindings](../sdks/bindings.md).

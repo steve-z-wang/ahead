@@ -46,7 +46,7 @@ impl Host for Fixed {
     fn call(
         &self,
         r: Value,
-    ) -> Pin<Box<dyn Future<Output = ahead_server::Result<Value>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = ahead_server::HostResult<Value>> + Send + '_>> {
         Box::pin(async move {
             Ok(match r["op"].as_str().unwrap() {
                 "head" => json!(5),
@@ -103,7 +103,8 @@ fn pull_rejects_rows_without_a_positive_stamp() {
             &host,
         ))
         .unwrap_err();
-        assert!(err.contains("stamp"), "{bad}: {err}");
+        assert!(err.message.contains("stamp"), "{bad}: {err}");
+        assert_eq!(err.code, ahead_server::code::STORAGE_INVALID);
     }
 }
 
@@ -117,7 +118,7 @@ fn publish_requires_cursor_and_stamp_from_the_host() {
     for bad in [json!(3), json!({"cursor":3}), json!({"cursor":3,"stamp":0})] {
         let host = Fixed::new(json!([]), bad.clone());
         let err = run(ahead_server::publish(&config(), &changes, &channels, &host)).unwrap_err();
-        assert!(!err.is_empty(), "{bad} must be rejected");
+        assert_eq!(err.code, ahead_server::code::HOST_INVALID, "{bad}: {err}");
     }
 }
 
