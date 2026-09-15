@@ -230,6 +230,11 @@ fn semantic_errors_report_the_offending_declaration() {
             3,
             "identity",
         ),
+        (
+            "model A { id UUID @@id(id) }\nmutation Remove {\n entries A.delete[]\n maybe A.delete?\n}",
+            4,
+            "ambiguous slot",
+        ),
     ];
     for (source, line, message) in cases {
         let e = compile(&format!("{source}{pad}")).unwrap_err();
@@ -302,6 +307,24 @@ fn structural_refusals_a_schema_author_is_likely_to_hit() {
             "model A { id UUID @@id(id) }\nmodel B { id UUID @@id(id) }\nmutation First { a A.create }\nmutation Second {\n b B.create\n @@sequence(after: [First(a: b)])\n}",
             "model A { id UUID text String @@id(id) }\nmutation First { a A.create }\nmutation Second {\n a A.update<text>\n @@sequence(after: [First(a: a)])\n}",
             "sequence target model mismatch",
+        ),
+        (
+            "list slot followed by an optional slot of the same model and operation",
+            "model A { id UUID text String @@id(id) }\nmutation Remove {\n entries A.delete[]\n maybe A.delete?\n}",
+            "model A { id UUID text String @@id(id) }\nmutation Remove {\n entries A.delete[]\n maybe A.update?\n}",
+            "ambiguous slot",
+        ),
+        (
+            "optional slot followed by a single slot of the same model and operation",
+            "model A { id UUID text String @@id(id) }\nmutation Remove {\n first A.delete?\n second A.delete\n}",
+            "model A { id UUID text String @@id(id) }\nmutation Remove {\n first A.delete\n second A.delete?\n}",
+            "ambiguous slot",
+        ),
+        (
+            "same model and operation separated only by an optional slot",
+            "model A { id UUID text String @@id(id) }\nmodel B { id UUID @@id(id) }\nmutation Remove {\n first A.delete[]\n other B.create?\n second A.delete?\n}",
+            "model A { id UUID text String @@id(id) }\nmodel B { id UUID @@id(id) }\nmutation Remove {\n first A.delete[]\n other B.create\n second A.delete?\n}",
+            "ambiguous slot",
         ),
     ];
     for (rule, invalid, valid, message) in cases {
