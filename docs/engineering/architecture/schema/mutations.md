@@ -1,44 +1,52 @@
 # Mutations
 
-Operation groups, argument bindings, versions and sequencing.
-
-Current code: [compiler/lib.rs](../../../../crates/compiler/src/lib.rs) (`"mutation" =>` arm and the binding, patch-field and sequence passes); version history in [compiler/history.rs](../../../../crates/compiler/src/history.rs); server decoding in [server/lib.rs](../../../../crates/server/src/lib.rs) (`Config`, `decode`); client policies in [client/policies.rs](../../../../crates/client/src/policies.rs).
-
 ## 1. Introduction and Goals
 
-- Name every server-visible write, fix the shape of its operations so both runtimes decode it the same way, and version it so old queued mutations keep executing after the schema moves on.
+A mutation is a named, server-visible write. The schema fixes the shape of its operations so both runtimes decode it identically, and gives it a version so that mutations queued under an older schema keep executing after the schema moves on. Without the version, a client that was offline during a deploy would push operations the server can no longer interpret.
 
 ## 3. Context and Scope
 
-- Input: `mutation Name { slot Model.op<fields>(relation: parentSlot)[] … @@version(n) @@sequence(after: [Other(targetSlot: slot.path)]) }`.
-- Output: `mutations: [{name, version, slots, sequence}]`; each slot is `{name, model, operation, cardinality, allowedPatchFields?, bindings?}`. The same list is copied into `schema.clientPolicies` for the client; the CLI replaces both with every retained version ([Compiler / Generate](../compiler/generate.md)).
-- Wire form of an instance: `{name, version, operations:[{model, op, identity, values?}]}` ([Protocol / Push](../protocol/push.md)).
-- Consumers: generated mutation builders and `Handlers` interfaces; the server decodes operations into slot arguments; the client derives sequence dependencies.
+A mutation is declared as a set of *slots*, each binding a name to one operation on one model:
+
+```
+mutation AddComment {
+  book    Book.create
+  comment Comment.create(book: book)[]     // list slot, bound to the parent slot
+  @@version(2)
+  @@sequence(after: [Rename(book: comment.book)])
+}
+```
+
+The compiled descriptor `{name, version, slots, sequence}` goes to the client as `schema.clientPolicies` and to the server as every retained version with an input snapshot ([Compiler / Generate](../compiler/generate.md)). On the wire an instance is `{name, version, operations:[{model, op, identity, values?}]}` ([Protocol / Push](../protocol/push.md)). Generated builders produce that shape; the server's decoder consumes it; the client's dependency derivation reads the policies.
 
 ## 5. Building Block View
 
-- Slots: `op` is `create`, `update` or `delete`; `<a,b>` restricts an update's patch fields (only with `update`); an update without `<…>` may patch every non-identity field; cardinality is `single`, `optional` (`?`) or `list` (`[]`).
-- Bindings: `(relation: parentSlot)` requires `relation` on the slot model, a parent slot of the relation's target model with `single` cardinality; the compiled binding is `{slot, fields}` with the relation's local fields.
-- Version: default `1`, positive, at most 2^53−1, declared once.
-- Sequence: `@@sequence(after: [Target(targetSlot: sourceSlot.relation.path)])`; the compiler checks the target mutation and slot exist and that the path, followed through relations from the source slot's model, ends at the target slot's model.
-- History ([compiler/history.rs](../../../../crates/compiler/src/history.rs)): `reconcile_history` snapshots each mutation's input models, enums, requirements and sequence per version; a version may not decrease; a retained mutation may not be removed; changing the input at the same version is refused unless compatible (patch fields may grow, enum values may grow, existing fields identical, no new non-nullable field on a model a `create` slot targets, requirements and sequence unchanged).
-- Server decoding ([server/lib.rs](../../../../crates/server/src/lib.rs) `decode`): operations are matched to slots in order by `(model, op)`; a `list` slot consumes every consecutive match; identity keeps only identity fields; `create` fills omitted nullable fields with `null`; `update` refuses known fields outside `allowedPatchFields` with `<machine_name>.not_allowed`; leftover or missing operations are `mutation.invalid`; bindings are checked so the child's foreign key equals the parent's identity (`<machine_name>.invalid`).
-- Client policies ([client/policies.rs](../../../../crates/client/src/policies.rs)): slots are matched the same way to resolve `sequence` paths against queued mutations of the named predecessor.
+**Slots.** `op` is `create`, `update` or `delete`. An update may list the fields it is allowed to patch, `Entry.update<title, note>`; without a list it may patch every non-identity field. A slot is single by default, optional with `?`, or a list with `[]`.
+
+**Bindings.** `(relation: parentSlot)` ties a create slot to a single parent slot of the relation's target model. The server checks that each child's foreign key equals the parent's identity, so a client cannot attach a child to a parent it did not create in the same mutation.
+
+**Version and sequence.** `@@version(n)` defaults to 1. `@@sequence(after: [Target(targetSlot: sourceSlot.path)])` declares that an instance waits for earlier queued instances of `Target` whose slot holds the record the path resolves to; how that becomes a dependency is described in [Dependencies](../client/engine/push/dependencies.md).
+
+**Decoding on the server.** Operations are matched to slots in order by `(model, op)`; a list slot consumes every consecutive match. Failures have stable codes: an unknown mutation, a wrong shape, a missing required create field or an empty patch is `mutation.invalid`; a known field outside the allowed patch fields is `<name>.not_allowed`; a binding mismatch is `<name>.invalid` ([Server Push](../server/engine/push.md)).
+
+**History.** Each version's input (the models and enums its slots touch, its requirements and its sequence) is snapshotted. A version may not decrease and a retained mutation may not disappear. Changing the input at the same version is refused unless the change is compatible: patch fields and enum values may grow, existing fields must be identical, and a model a `create` slot targets may not gain a non-nullable field, because old clients would send creates without it ([Compiler / Validate](../compiler/validate.md)).
+
+Code: parsing and checks in [compiler/lib.rs](../../../../crates/compiler/src/lib.rs); history in [compiler/history.rs](../../../../crates/compiler/src/history.rs); server decoding in [server/lib.rs](../../../../crates/server/src/lib.rs) (`decode`); client policies in [client/policies.rs](../../../../crates/client/src/policies.rs).
 
 ## 6. Runtime View
 
-- A schema change that alters a mutation's input requires `@@version(n+1)`; the CLI keeps the previous snapshot so the server keeps a `nameVn` handler and the client keeps a policy for queued instances of the old version.
-- A batch naming a known mutation with an unregistered version aborts before any handler runs ([Server Push](../server/engine/push.md), guarantee C4).
+Changing a mutation's input requires `@@version(n+1)`. The compiler keeps the previous snapshot, the server keeps a `nameVn` handler for it, and the client keeps its policy, so instances queued before the upgrade still decode. A batch that names a known mutation with an unregistered version is refused before any handler runs (guarantee C4).
 
 ## 10. Quality Requirements
 
-- Compile-time checks: [compiler/tests/compiler.rs](../../../../crates/compiler/tests/compiler.rs) `schema_and_mutations`, `relationships_bindings_and_dependency_metadata`, `rejects_dependency_typos`.
-- History: [compiler/tests/history.rs](../../../../crates/compiler/tests/history.rs) `versions_retain_original_inputs`, `nullable_addition_compatible_and_fence_blocks_removal`; CLI retention: [compiler/tests/cli.rs](../../../../crates/compiler/tests/cli.rs) `cli_retains_history_and_does_not_overwrite_on_break`.
-- Server decoding: [server/tests/runtime.rs](../../../../crates/server/tests/runtime.rs) `ordered_slot_decodes_known_fields_and_ignores_new_fields`, `known_disallowed_patch_is_explicit_refusal`, `create_binding_mismatch_refuses_the_whole_act`, `historical_known_field_outside_capability_is_refused`.
+- **Slot shapes, bindings and sequences that do not resolve are refused at compile time.** Evidence: [compiler/tests/compiler.rs](../../../../crates/compiler/tests/compiler.rs) `schema_and_mutations`, `relationships_bindings_and_dependency_metadata`, `rejects_dependency_typos`.
+- **An incompatible input change at the same version is refused, a compatible one accepted, and old inputs are retained.** Evidence: [compiler/tests/history.rs](../../../../crates/compiler/tests/history.rs); [compiler/tests/cli.rs](../../../../crates/compiler/tests/cli.rs) `cli_retains_history_and_does_not_overwrite_on_break`.
+- **The server decodes known fields, ignores unknown ones, and refuses disallowed patches and binding mismatches with stable codes.** Evidence: [server/tests/runtime.rs](../../../../crates/server/tests/runtime.rs).
+
+Tests read, not executed.
 
 ## 11. Risks and Technical Debt
 
-- **Potential risk: adjacent slots with the same model and operation decode greedily.** Matching is positional by `(model, op)`; a `list` slot consumes every following matching operation, so in `RemoveEntries { entries Entry.delete[] maybe Entry.delete? }` the `maybe` slot can never receive an operation. The compiler does not warn. Evidence: [server/lib.rs](../../../../crates/server/src/lib.rs) `decode` loop; [client/policies.rs](../../../../crates/client/src/policies.rs) `slots`; the shape is in [fixtures/compiler/example.model](../../../../fixtures/compiler/example.model). Whether to refuse or reorder such declarations needs deciding.
-- **Confirmed limitation: `Model.update<>` compiles but can never succeed.** An update slot with no patch fields produces a `Pick<Patch, never>` input and an empty patch, which the server refuses as `mutation.invalid` (`data.is_empty()`). Evidence: [server/lib.rs](../../../../crates/server/src/lib.rs) `decode`; [compiler/tests/compiler.rs](../../../../crates/compiler/tests/compiler.rs) compiles `Parent.update<>`.
-- **Confirmed limitation: version pinning covers input shape only.** History compares slots, inputs, requirements and sequence; handler semantics are the application's responsibility, and the fence (`check_fence`) protects only model and field names ([Compiler / Validate](../compiler/validate.md)).
-- Server-side rejection codes are machine strings derived from the mutation name; there is no registry of codes a client can rely on beyond `mutation.invalid`, `<name>.not_allowed`, `<name>.invalid` and the client-side `dependency.rejected` and `dropped` ([Protocol / Push](../protocol/push.md)).
+**Potential risk: adjacent slots with the same model and operation decode greedily.** *Condition:* a list slot is followed by another slot of the same model and operation, as in `RemoveEntries { entries Entry.delete[] maybe Entry.delete? }`. *Consequence:* the list slot takes every matching operation and the second slot can never receive one; the compiler does not warn. *Evidence:* `decode` in [server/lib.rs](../../../../crates/server/src/lib.rs); the shape appears in [fixtures/compiler/example.model](../../../../fixtures/compiler/example.model). **To confirm:** whether such declarations should be refused.
+
+**Problem: `Model.update<>` compiles but never succeeds.** Its generated input is an empty patch, which the server refuses as `mutation.invalid`. *Evidence:* `data.is_empty()` in `decode`; [compiler/tests/compiler.rs](../../../../crates/compiler/tests/compiler.rs) compiles `Parent.update<>`.
