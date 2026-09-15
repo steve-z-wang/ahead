@@ -46,7 +46,7 @@ Paths below are relative to the repository root. New names are implementation ta
 
 **Produces:** generated `User`, `Todo`, `AddTodo`, `SetTodoDone`, `GeneratedClient`, `GeneratedTransaction`, and typed backend handlers. Later tasks must use actual emitted types.
 
-- [ ] Check worktree and save these planning documents in a documentation commit before rebasing. Fetch current main and rebase the isolated branch; preserve unrelated edits. Read changes to client host commands and #58's live-session implementation before adapting them.
+- [x] Check worktree and save these planning documents in a documentation commit before rebasing. Fetch current main and rebase the isolated branch; preserve unrelated edits. Read changes to client host commands and #58's live-session implementation before adapting them.
 
 ```sh
 git status --short --branch
@@ -54,15 +54,15 @@ git log -1 --oneline
 git diff --name-status a837cf8..HEAD
 ```
 
-- [ ] Copy the exact `model User` / `model Todo` schema block from the spec into `examples/todo/models/todo.model`. Generate both targets using the repository compiler; do not edit generated outputs.
+- [x] Copy the exact `model User` / `model Todo` schema block from the spec into `examples/todo/models/todo.model`. Generate both targets using the repository compiler; do not edit generated outputs.
 
 ```sh
 cargo run -p ahead-compiler --locked -- compile examples/todo/models examples/todo/generated/node --backend-runtime ../../../../packages/server/index.mts --client-runtime ../../../../packages/client-js/index.mts
 cargo run -p ahead-compiler --locked -- compile examples/todo/models examples/todo/generated/mobile --backend-runtime ../../../../packages/server/index.mts --client-runtime ../../../../packages/client-react-native/index.ts
 ```
 
-- [ ] Put these commands in `generate.sh` with `set -euo pipefail` and a repository-root `cd`. Confirm both `schema.json` descriptors match; runtime import strings may differ in generated source. Typecheck backend inputs before writing handlers. Confirm the wire create separates identity from values, while the generated backend `AddTodoInput.todo` is the complete Todo record. Updates use `patch` server-side / `values` client-side.
-- [ ] Run the existing binding and compiler baseline; record failures before changing runtime code.
+- [x] Put these commands in `generate.sh` with `set -euo pipefail` and a repository-root `cd`. Confirm both `schema.json` descriptors match; runtime import strings may differ in generated source. Typecheck backend inputs before writing handlers. Confirm the wire create separates identity from values, while the generated backend `AddTodoInput.todo` is the complete Todo record. Updates use `patch` server-side / `values` client-side.
+- [x] Run the existing binding and compiler baseline; record failures before changing runtime code.
 
 ```sh
 cargo test -p ahead-binding -p ahead-compiler --locked
@@ -78,7 +78,7 @@ Expected: existing tests pass and both generation commands exit zero. This prove
 
 **Produces:** `createExample()` with `db`, `backend`, `schema`, `initialize(): Promise<void>`, `listen(port: number)`, and `close(): Promise<void>`, preserving the old harness's lifecycle shape. `seed(tx, backend)` creates stable demo rows and awaits publication inside the transaction. `todo-run.sh` starts/cleans a disposable PostgreSQL cluster and runs the To-do tests.
 
-- [ ] Define the two Prisma models, keeping infrastructure tables managed by the existing persistence adapter:
+- [x] Define the two Prisma models, keeping infrastructure tables managed by the existing persistence adapter:
 
 ```prisma
 model User {
@@ -97,7 +97,7 @@ model Todo {
 
 Use the current example's PostgreSQL datasource and pinned Prisma packages. Seed `alice`, `bob`, and task IDs `seed-1`, `seed-2`, `seed-3` with the three titles from the spec. Seed with upsert/create-if-missing; ordinary startup must not reset edits. Reset tooling must target a dedicated demo database and the explicitly selected simulator containers.
 
-- [ ] Add failing real-backend tests using this generated mutation shape:
+- [x] Add failing real-backend tests using this generated mutation shape:
 
 ```ts
 await alice.transaction(tx => tx.mutate.addTodo({
@@ -110,7 +110,7 @@ await alice.transaction(tx => tx.mutate.setTodoDone({
 
 Assert after settlement: PostgreSQL and Bob both contain one `test-task`, title `Buy milk`, done `true`, creator `alice`; both queues are drained. Use bounded eventual assertions and watch callbacks following the existing E2E harness, not fixed sleeps as evidence.
 
-- [ ] Implement handlers against their emitted types. The validation core is:
+- [x] Implement handlers against their emitted types. The validation core is:
 
 ```ts
 function titleForInsert(title: string): string {
@@ -126,23 +126,23 @@ function validateCreate(userId: string, values: { createdById: string; done: boo
 
 Insert through `tx.todo.create`; translate only a proven task-primary-key conflict into `todo.id_conflict`. For completion, update only `done` and translate a missing row to `todo.missing`. Use `notify({ channel: "todo:demo", records: [input.todo] })` in each handler. The loader returns rows in requested ID order, including null for missing rows.
 
-- [ ] Restrict the development authentication callback to tokens `alice` and `bob`. Validate loader user/channel scope, and reject creator spoofing in the handler. Do not present this allowlist as production login.
-- [ ] Add tests for whitespace rejection, invalid creator, initial done=true, unknown identity, missing task, same-ID distinct create, duplicate frozen-request retry, offline add-then-done, and two opposing completion operations accepted in each controlled commit order. Include a second client adding a different task while the first is offline. Verify rollback and persisted receipts through PostgreSQL.
-- [ ] Run `bash integration/e2e/todo-run.sh`. Expected: all named scenarios pass through real Rust clients, real HTTP/WebSocket, and PostgreSQL. Commit the backend and automated scenario harness.
+- [x] Restrict the development authentication callback to tokens `alice` and `bob`. Validate loader user/channel scope, and reject creator spoofing in the handler. Do not present this allowlist as production login.
+- [x] Add tests for whitespace rejection, invalid creator, initial done=true, unknown identity, missing task, same-ID distinct create, duplicate frozen-request retry, offline add-then-done, and two opposing completion operations accepted in each controlled commit order. Include a second client adding a different task while the first is offline. Verify rollback and persisted receipts through PostgreSQL.
+- [x] Run `bash integration/e2e/todo-run.sh`. Expected: all named scenarios pass through real Rust clients, real HTTP/WebSocket, and PostgreSQL. Commit the backend and automated scenario harness.
 
 ## Task 3: Consume the verified React Native integration
 
 **Prerequisite:** [#100](https://github.com/zanminwang/ahead/issues/100) must deliver its supported API and iOS runtime evidence first. Its implementation is tracked in the [separate SDK plan](2026-09-15-react-native-support.md).
 
-- [ ] Confirm #100's verified revision, generated runtime import path, native module installation steps, and supported API surface.
-- [ ] Scaffold the To-do Expo app using that integration's documented dependency versions and build configuration.
-- [ ] Install/reuse the native module and client package. Do not implement a second carrier, transport, or generic runtime in this demo.
+- [x] Confirm #100's verified revision, generated runtime import path, native module installation steps, and supported API surface.
+- [x] Scaffold the To-do Expo app using that integration's documented dependency versions and build configuration.
+- [x] Install/reuse the native module and client package. Do not implement a second carrier, transport, or generic runtime in this demo.
 
 ## Task 4: Verify demo integration with the supported SDK
 
-- [ ] Generate the Todo mobile client against #100's runtime entry point and typecheck/bundle the app.
+- [x] Generate the Todo mobile client against #100's runtime entry point and typecheck/bundle the app.
 - [ ] Run a local open/query/close through the installed SDK and verify the generated mutation imports resolve.
-- [ ] If a missing SDK behavior prevents integration, report it against #100; do not silently expand this demo into SDK development.
+- [x] If a missing SDK behavior prevents integration, report it against #100; do not silently expand this demo into SDK development.
 
 ## Task 5: Implement the minimal screen on the real client
 
@@ -162,9 +162,9 @@ export interface TodoSession {
 }
 ```
 
-- [ ] Validate launch configuration for backend URL and user `alice` or `bob`; default Alice for a single simulator and document Bob configuration. Open a stable database path, subscribe to `todo:demo`, and watch both the selected User and Todo records. Never regenerate the database/client identity on component rerenders.
-- [ ] Implement `TodoSession` using generated transaction methods. Generate the ID once per user submission with the selected Expo-compatible UUID API. Use the exact add/setDone call shapes from Task 2; return only after local commit. Sort emitted rows by code-unit ID order, independent of locale. Dispose watches and connection on teardown; foregrounding wakes the existing connection rather than creating a second one.
-- [ ] Build the spec's single screen with React Native primitives: avatar/name header, To-do heading, scrollable checkbox rows, persistent add input/plus button. The handler contract is:
+- [x] Validate launch configuration for backend URL and user `alice` or `bob`; default Alice for a single simulator and document Bob configuration. Open a stable database path, subscribe to `todo:demo`, and watch both the selected User and Todo records. Never regenerate the database/client identity on component rerenders.
+- [x] Implement `TodoSession` using generated transaction methods. Generate the ID once per user submission with the selected Expo-compatible UUID API. Use the exact add/setDone call shapes from Task 2; return only after local commit. Sort emitted rows by code-unit ID order, independent of locale. Dispose watches and connection on teardown; foregrounding wakes the existing connection rather than creating a second one.
+- [x] Build the spec's single screen with React Native primitives: avatar/name header, To-do heading, scrollable checkbox rows, persistent add input/plus button. The handler contract is:
 
 ```ts
 async function submit() {
@@ -183,7 +183,7 @@ async function submit() {
 ```
 
 Bind the checkbox to `session.setDone(todo.id, !todo.done)`. Use an accessible checkbox role/state and native keyboard submission. Keep task state sourced from local watch callbacks. Avoid component snapshot tests that merely mirror JSX; verify empty/long titles, keyboard overlap, and touch targets in the running app.
-- [ ] Wire initial load, cached offline start, local commit error, and persisted rejection feedback. Use actual engine status/rejections; do not treat every transport error as a failed task write or display internal machine codes to the user. Keep technical logs in the harness.
+- [x] Wire initial load, cached offline start, local commit error, and persisted rejection feedback. Use actual engine status/rejections; do not treat every transport error as a failed task write or display internal machine codes to the user. Keep technical logs in the harness.
 - [ ] Run the app with Alice and Bob against the same backend. Add on Alice, complete on Bob; observe updates in both. Check that no assignment/reply/delete controls exist. Commit the screen and domain adapter.
 
 ## Task 6: Prove two-phone offline recovery and document the runnable demo
@@ -211,7 +211,7 @@ bash integration/platform/run_todo_ios_smoke.sh "$ALICE_SIMULATOR_UDID" "$BOB_SI
 ```
 
 Document backend URL selection, seed/reset isolation, identity configuration, required Xcode/Rust targets, native rebuild versus JS refresh, and embedded-JS test build. Record actual tool versions, revision, commands, results, and limits. This plan does not claim those commands have already been implemented or run.
-- [ ] Explain the two tables and two generated operations in the README, followed by the backend notification and frontend watch. Link engine-owned metadata docs. Commit the runtime evidence and runnable guide after this gate passes.
+- [x] Explain the two tables and two generated operations in the README, followed by the backend notification and frontend watch. Link engine-owned metadata docs. Commit the runtime evidence and runnable guide after this gate passes.
 
 ## Task 7: Retire the old public example without deleting its regression value
 
@@ -221,16 +221,16 @@ Document backend URL selection, seed/reset isolation, identity configuration, re
 
 **Produces:** `examples/todo` as the runnable public example, preserved fixture coverage, no broken old paths.
 
-- [ ] Inventory consumers before moving anything:
+- [x] Inventory consumers before moving anything:
 
 ```sh
 rg -n 'rust-round-trip|Entry|Edit' examples integration/e2e scripts website
 ```
 
 Classify Entry/Edit references: retain generic API examples that need their richer fields, but migrate onboarding commands and To-do quickstart to the new app. Do not blanket-replace model names.
-- [ ] Move the old files into the integration fixture. Adjust backend/client package imports to the new depth, regenerate fixture clients with correct runtime imports, and update JS/Dart test fixture paths. Update fixture-local npm lockfile metadata only if needed. Keep all original behavioral assertions.
-- [ ] Update `scripts/test.sh`, both E2E runners, root typecheck inclusion and snippet checking. Let focused Entry snippets compile against the relocated fixture and To-do quickstart snippets against the new generated client. Remove the old public directory only once those consumers resolve.
-- [ ] Update getting-started/schema/backend/frontend guides, platform matrix and API index with actual supported mobile APIs and setup. Link the mobile example from `marketing/videos/README.md`; leave video production issues separate. Add no browser capability claim.
+- [x] Move the old files into the integration fixture. Adjust backend/client package imports to the new depth, regenerate fixture clients with correct runtime imports, and update JS/Dart test fixture paths. Update fixture-local npm lockfile metadata only if needed. Keep all original behavioral assertions.
+- [x] Update `scripts/test.sh`, both E2E runners, root typecheck inclusion and snippet checking. Let focused Entry snippets compile against the relocated fixture and To-do quickstart snippets against the new generated client. Remove the old public directory only once those consumers resolve.
+- [x] Update getting-started/schema/backend/frontend guides, platform matrix and API index with actual supported mobile APIs and setup. Link the mobile example from `marketing/videos/README.md`; leave video production issues separate. Add no browser capability claim.
 - [ ] Run the affected host gates, then the complete host gate once:
 
 ```sh
