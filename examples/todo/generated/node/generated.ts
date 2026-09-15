@@ -85,27 +85,27 @@ export function SetTodoDone(args:SetTodoDoneArgs) { const operations:object[] = 
  for (const value of [args.todo]) {
  operations.push({ model:'Todo', op:'update', identity:encodeTodoIdentity(value.identity), values:encodeTodoPatch(value.values) }); }
  return {name:'SetTodoDone',version:1,operations}; }
-export class UserModel { readonly port:ReadPort; constructor(port:ReadPort) { this.port=port; }
+export class UserModel<P extends ReadPort=ReadPort> { readonly port:P; constructor(port:P) { this.port=port; }
  async get(identity:UserIdentity):Promise<User|null> { const row=await this.port.read('User',encodeUserIdentity(identity)); return row===null ? null : decodeUser(row); }
  async query(options:{where?:Partial<User>;orderBy?:{field:'id' | 'name';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<User[]> { return (await this.port.querySpec('User',{filter:encodeUserWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeUser); }
 }
-export class UserLiveModel extends UserModel { declare readonly port:LivePort; constructor(port:LivePort) { super(port); }
+export class UserLiveModel extends UserModel<LivePort> {
  watch(options:{where?:Partial<User>}, listener:(rows:User[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watch('User',encodeUserWhere(options.where??{}),(rows)=>listener(rows.map(decodeUser)),onError); }
 }
-export class UserTxModel extends UserModel { declare readonly port:WritePort; constructor(port:WritePort) { super(port); }
+export class UserTxModel extends UserModel<WritePort> {
  create(value:User):Promise<void> { return this.port.direct({model:'User',op:'create',identity:encodeUserIdentity(value),values:encodeUserPatch(value)}); }
  update(identity:UserIdentity, patch:UserPatch):Promise<void> { return this.port.direct({model:'User',op:'update',identity:encodeUserIdentity(identity),values:encodeUserPatch(patch)}); }
  delete(identity:UserIdentity):Promise<void> { return this.port.direct({model:'User',op:'delete',identity:encodeUserIdentity(identity)}); }
 }
-export class TodoModel { readonly port:ReadPort; constructor(port:ReadPort) { this.port=port; }
+export class TodoModel<P extends ReadPort=ReadPort> { readonly port:P; constructor(port:P) { this.port=port; }
  async get(identity:TodoIdentity):Promise<Todo|null> { const row=await this.port.read('Todo',encodeTodoIdentity(identity)); return row===null ? null : decodeTodo(row); }
  async query(options:{where?:Partial<Todo>;orderBy?:{field:'id' | 'title' | 'done' | 'createdById';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<Todo[]> { return (await this.port.querySpec('Todo',{filter:encodeTodoWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeTodo); }
  async createdBy(identity:TodoIdentity):Promise<User|null> { const row=await this.port.related('Todo',encodeTodoIdentity(identity),'createdBy'); return row===null?null:decodeUser(row); }
 }
-export class TodoLiveModel extends TodoModel { declare readonly port:LivePort; constructor(port:LivePort) { super(port); }
+export class TodoLiveModel extends TodoModel<LivePort> {
  watch(options:{where?:Partial<Todo>}, listener:(rows:Todo[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watch('Todo',encodeTodoWhere(options.where??{}),(rows)=>listener(rows.map(decodeTodo)),onError); }
 }
-export class TodoTxModel extends TodoModel { declare readonly port:WritePort; constructor(port:WritePort) { super(port); }
+export class TodoTxModel extends TodoModel<WritePort> {
  create(value:Todo):Promise<void> { return this.port.direct({model:'Todo',op:'create',identity:encodeTodoIdentity(value),values:encodeTodoPatch(value)}); }
  update(identity:TodoIdentity, patch:TodoPatch):Promise<void> { return this.port.direct({model:'Todo',op:'update',identity:encodeTodoIdentity(identity),values:encodeTodoPatch(patch)}); }
  delete(identity:TodoIdentity):Promise<void> { return this.port.direct({model:'Todo',op:'delete',identity:encodeTodoIdentity(identity)}); }
