@@ -3,7 +3,7 @@
 use crate::Sim;
 use ahead_core::PushReceipt;
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 type Check = fn(&mut Sim) -> Result<(), String>;
 
@@ -18,6 +18,14 @@ const CHECKS: &[(&str, Check)] = &[
     ),
     ("record rows have a claim", record_rows_have_a_claim),
     ("receipts match server", receipts_match_server),
+    (
+        "batches wait for their checkpoints",
+        batches_wait_for_their_checkpoints,
+    ),
+    (
+        "batches settle in sequence order",
+        batches_settle_in_sequence_order,
+    ),
 ];
 
 pub fn check(sim: &mut Sim) -> Result<(), String> {
@@ -257,6 +265,109 @@ fn receipts_match_server(sim: &mut Sim) -> Result<(), String> {
     Ok(())
 }
 
+/// The sequences of the batches still in this client's queue.
+fn queued_pushes(sim: &mut Sim, i: usize) -> Result<BTreeSet<u64>, String> {
+    Ok(sim
+        .client(i)
+        .read_sql(
+            "SELECT DISTINCT push FROM ahead_mutation WHERE push IS NOT NULL",
+            &[],
+        )
+        .map_err(|e| e.to_string())?
+        .iter()
+        .filter_map(|r| r["push"].as_u64())
+        .collect())
+}
+
+/// Whether the receipt for `sequence` rejected every mutation the batch carried.
+/// Such a batch leaves the queue through `remove_rejected`, not settlement, so the
+/// ordering and checkpoint rules do not apply to it.
+fn fully_rejected(sim: &Sim, i: usize, sequence: u64) -> bool {
+    let Some(ordinals) = sim.clients[i].pushes.get(&sequence) else {
+        return false;
+    };
+    let Some(receipt) = sim.clients[i].receipts.get(&sequence) else {
+        return false;
+    };
+    ordinals
+        .iter()
+        .all(|o| receipt.rejections.iter().any(|r| r.ordinal == *o))
+}
+
+/// A3: accepted optimism is removed only once every checkpoint the client could
+/// await has been reached. A frozen batch that is no longer queued must have a
+/// receipt, and for every checkpoint that receipt named on a channel the client was
+/// subscribed to (and still is, in the same subscription generation) the local
+/// cursor must have reached it. Checkpoints on channels the client was not
+/// subscribed to when the receipt arrived are not awaited (A3's second sentence);
+/// an unsubscribe settles what waited on that channel (D6), so a channel whose
+/// generation changed since is exempt.
+fn batches_wait_for_their_checkpoints(sim: &mut Sim) -> Result<(), String> {
+    for i in up(sim) {
+        let queued = queued_pushes(sim, i)?;
+        let subscriptions: BTreeMap<String, u64> = sim
+            .client(i)
+            .subscriptions()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .collect();
+        for sequence in sim.clients[i].pushes.keys().copied().collect::<Vec<_>>() {
+            if queued.contains(&sequence) || fully_rejected(sim, i, sequence) {
+                continue;
+            }
+            if !sim.clients[i].receipts.contains_key(&sequence) {
+                return Err(format!(
+                    "client {i} batch {sequence} left the queue without a receipt"
+                ));
+            }
+            let awaited = sim.clients[i]
+                .awaited
+                .get(&sequence)
+                .cloned()
+                .unwrap_or_default();
+            for (channel, cursor, generation) in awaited {
+                let current = sim.clients[i]
+                    .generations
+                    .get(&channel)
+                    .copied()
+                    .unwrap_or(0);
+                let Some(local) = subscriptions.get(&channel) else {
+                    continue;
+                };
+                if current == generation && *local < cursor {
+                    return Err(format!(
+                        "client {i} batch {sequence} settled while {channel} is at cursor {local}, checkpoint {cursor}"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A5: batches settle in sequence order. While any batch is still queued, no batch
+/// with a higher sequence may have settled; the only way a later batch leaves the
+/// queue first is by having every mutation rejected.
+fn batches_settle_in_sequence_order(sim: &mut Sim) -> Result<(), String> {
+    for i in up(sim) {
+        let queued = queued_pushes(sim, i)?;
+        let Some(earliest) = queued.iter().next().copied() else {
+            continue;
+        };
+        for sequence in sim.clients[i].pushes.keys().copied().collect::<Vec<_>>() {
+            if sequence <= earliest || queued.contains(&sequence) {
+                continue;
+            }
+            if !fully_rejected(sim, i, sequence) {
+                return Err(format!(
+                    "client {i} batch {sequence} settled while batch {earliest} is still pending"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{Action, MutationSpec, Sim};
@@ -313,5 +424,133 @@ mod tests {
         );
         let err = sim.check().unwrap_err();
         assert!(err.contains("converged"), "{err}");
+    }
+
+    /// Run `sql` against a crashed client's file behind the engine's back, then
+    /// restart it: the way these tests forge a state the engine never produces.
+    fn corrupt(sim: &mut Sim, client: usize, sql: &str) {
+        use ahead_client::store::ClientStore;
+        sim.apply(Action::Crash { client }).unwrap();
+        let mut store = ahead_sqlite::SqliteStore::open(&sim.clients[client].path).unwrap();
+        store.execute(sql, &[]).unwrap();
+        drop(store);
+        sim.apply(Action::Restart { client }).unwrap();
+    }
+
+    fn frozen_batch(sim: &mut Sim, id: &str) {
+        sim.apply(Action::Enqueue {
+            client: 0,
+            mutation: MutationSpec::CreateEntry {
+                id: id.into(),
+                text: "hi".into(),
+            },
+        })
+        .unwrap();
+        sim.apply(Action::Freeze { client: 0 }).unwrap();
+    }
+
+    #[test]
+    fn a_batch_settled_before_its_checkpoint_is_reported() {
+        let mut sim = Sim::new(5, 1);
+        sim.apply(Action::Subscribe {
+            client: 0,
+            channel: "a".into(),
+        })
+        .unwrap();
+        frozen_batch(&mut sim, "e1");
+        sim.apply(Action::Deliver).unwrap(); // push reaches the server
+        sim.apply(Action::Deliver).unwrap(); // receipt names a checkpoint on `a`
+        sim.check().unwrap();
+        assert_eq!(
+            sim.clients[0].awaited[&1].len(),
+            1,
+            "the receipt named channel a"
+        );
+        // Forge an early settlement: the mutation is gone but a's cursor is still 0.
+        corrupt(&mut sim, 0, "DELETE FROM ahead_mutation");
+        let err = sim.check().unwrap_err();
+        assert!(
+            err.contains("batches wait for their checkpoints")
+                && err.contains("batch 1 settled while a is at cursor 0"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_batch_gone_without_a_receipt_is_reported() {
+        let mut sim = Sim::new(6, 1);
+        sim.apply(Action::Subscribe {
+            client: 0,
+            channel: "a".into(),
+        })
+        .unwrap();
+        frozen_batch(&mut sim, "e1");
+        sim.check().unwrap();
+        corrupt(&mut sim, 0, "DELETE FROM ahead_mutation");
+        let err = sim.check().unwrap_err();
+        assert!(
+            err.contains("batch 1 left the queue without a receipt"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_later_batch_settling_first_is_reported() {
+        let mut sim = Sim::new(7, 1);
+        sim.apply(Action::Subscribe {
+            client: 0,
+            channel: "a".into(),
+        })
+        .unwrap();
+        frozen_batch(&mut sim, "e1");
+        sim.apply(Action::Deliver).unwrap();
+        sim.apply(Action::Deliver).unwrap(); // batch 1 acknowledged, waiting for its page
+        frozen_batch(&mut sim, "e2");
+        sim.apply(Action::Deliver).unwrap();
+        sim.apply(Action::Deliver).unwrap(); // batch 2 acknowledged behind it
+        sim.check().unwrap();
+        assert_eq!(
+            sim.clients[0].pushes.keys().copied().collect::<Vec<_>>(),
+            [1, 2]
+        );
+        corrupt(&mut sim, 0, "DELETE FROM ahead_mutation WHERE push = 2");
+        let err = sim.check().unwrap_err();
+        assert!(
+            err.contains("batches settle in sequence order")
+                && err.contains("batch 2 settled while batch 1 is still pending"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn an_unsubscribe_settling_a_waiting_batch_is_not_a_violation() {
+        let mut sim = Sim::new(8, 1);
+        sim.apply(Action::Subscribe {
+            client: 0,
+            channel: "a".into(),
+        })
+        .unwrap();
+        frozen_batch(&mut sim, "e1");
+        sim.apply(Action::Deliver).unwrap();
+        sim.apply(Action::Deliver).unwrap();
+        assert_eq!(sim.client(0).pending_count().unwrap(), 1);
+        sim.apply(Action::Unsubscribe {
+            client: 0,
+            channel: "a".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            sim.client(0).pending_count().unwrap(),
+            0,
+            "D6 settles the batch"
+        );
+        sim.check().unwrap();
+        sim.apply(Action::Subscribe {
+            client: 0,
+            channel: "a".into(),
+        })
+        .unwrap();
+        // The cursor restarted at 0, below the old checkpoint, in a new generation.
+        sim.check().unwrap();
     }
 }

@@ -28,7 +28,7 @@ Only expectations involving undecided behavior must wait for the owning decision
    - Compiler: Dart negative fixtures. Determinism, multi-file error relocation and `--initialize-mutation-history` refusals are covered in [compiler/tests/cli.rs](../../../crates/compiler/tests/cli.rs).
    - Serialization-failure retry in the Prisma runner.
 4. **Test hygiene.** The two P3 tests are renamed to what they assert (`lifecycle_dependency_waits_for_parent_ack`, `schema_sequence_relationship_freezes_dependent_with_its_predecessor`); consider splitting the single Dart client test that bundles seven clauses. Do not move tests between directories for tidiness: the SQLite-harness tests are component evidence where they are, and the query-file controller test is fine where it is.
-5. **Optional invariants.** A3 and A5 have no random-run predicate; both are expressible from queue and checkpoint tables and would extend R2's reach.
+5. **Optional invariants.** A3 and A5 now have random-run predicates (`batches wait for their checkpoints`, `batches settle in sequence order`); see [Invariants](simulation/invariants.md) for what each exempts.
 
 ## Classification notes
 
