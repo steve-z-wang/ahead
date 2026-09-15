@@ -29,7 +29,7 @@
 - Consumes: `ahead_server::decode_arguments(config: &Value, body: &Value) -> Result<Value>` and the `config()` helper already in `runtime.rs` (mutation `edit`, slot `task`, `allowedPatchFields: ["title"]`, model `Task` with fields `id`, `title`, `note`).
 - Produces: nothing new; behavior only.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `crates/server/tests/runtime.rs`:
 
@@ -63,12 +63,12 @@ fn update_values_must_still_be_an_object() {
 }
 ```
 
-- [ ] **Step 2: Run them to verify the first two fail**
+- [x] **Step 2: Run them to verify the first two fail**
 
 Run: `cargo test -p ahead-server --test runtime no_op_update`
 Expected: `empty_patch_decodes_as_a_no_op_update` and `a_patch_of_only_unknown_fields_decodes_as_a_no_op_update` FAIL with `called Result::unwrap() on an Err value` whose code is `mutation.invalid`. Run `cargo test -p ahead-server --test runtime update_values_must_still_be_an_object` and expect PASS (it pins existing behavior).
 
-- [ ] **Step 3: Remove the empty-patch refusal**
+- [x] **Step 3: Remove the empty-patch refusal**
 
 In `crates/server/src/lib.rs`, inside `decode`, delete these three lines:
 
@@ -80,12 +80,12 @@ In `crates/server/src/lib.rs`, inside `decode`, delete these three lines:
 
 so the block ends with `argument["patch"] = Value::Object(data);`.
 
-- [ ] **Step 4: Run the server tests**
+- [x] **Step 4: Run the server tests**
 
 Run: `cargo test -p ahead-server`
 Expected: all PASS, including the three new tests. If any existing test asserted `mutation.invalid` for an empty patch, it now fails: read it, and if it only pins the old refusal, change its expectation to the decoded `patch: {}`; if it tests something else, report it instead of forcing it green.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cargo fmt --all
@@ -105,7 +105,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 **Interfaces:**
 - Consumes: the `compile(source: &str) -> Result<Value, String>` helper at the top of `compiler.rs`; the compiled value's `v["mutations"][i]["slots"][j]["allowedPatchFields"]`.
 
-- [ ] **Step 1: Add the assertion**
+- [x] **Step 1: Add the assertion**
 
 In `relationships_bindings_and_dependency_metadata`, after the existing `assert_eq!(v["prerequisites"][0]["name"], "Uploaded");`, add:
 
@@ -118,12 +118,12 @@ In `relationships_bindings_and_dependency_metadata`, after the existing `assert_
     );
 ```
 
-- [ ] **Step 2: Run the compiler tests**
+- [x] **Step 2: Run the compiler tests**
 
 Run: `cargo test -p ahead-compiler --test compiler relationships_bindings_and_dependency_metadata`
 Expected: PASS. If the index or key name differs (for example the descriptor key is not `allowedPatchFields`), print `v["mutations"]` once with `println!("{}", v["mutations"])`, fix the assertion to the real key, and remove the print.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 cargo fmt --all
@@ -142,7 +142,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Modify: `docs/engineering/testing/components/schema.md` (the "Slot decoding" row)
 - Modify: `docs/engineering/testing/review.md` (item 2, the `Model.update<>` sentence)
 
-- [ ] **Step 1: Edit `mutations.md` §5**
+- [x] **Step 1: Edit `mutations.md` §5**
 
 Replace, in the "Decoding on the server" paragraph:
 
@@ -156,7 +156,7 @@ with:
 an unknown mutation, a wrong shape or a missing required create field is `mutation.invalid`; an empty patch decodes to `patch: {}` and the update is a no-op that still stamps, reads back and may publish its record;
 ```
 
-- [ ] **Step 2: Add the decision to §9**
+- [x] **Step 2: Add the decision to §9**
 
 Append to "## 9. Architecture Decisions" (after the deprecation paragraph):
 
@@ -164,11 +164,11 @@ Append to "## 9. Architecture Decisions" (after the deprecation paragraph):
 **An empty update patch is a no-op, not a refusal (decided 2026-09-15, [#49](https://github.com/zanminwang/ahead/issues/49)).** `Model.update<>` is a valid declaration: its allowed list is empty, the generated input has no settable field, and the server decodes the operation to `{identity, patch: {}}`. The record remains a target of the mutation: the handler runs, a stamp is allocated, the loader reads it back into the receipt, and a publication distributes it. No layer special-cases the empty patch. Evidence: [server/tests/runtime.rs](../../../../crates/server/tests/runtime.rs) `empty_patch_decodes_as_a_no_op_update`, `a_patch_of_only_unknown_fields_decodes_as_a_no_op_update`; [compiler/tests/compiler.rs](../../../../crates/compiler/tests/compiler.rs) `relationships_bindings_and_dependency_metadata`.
 ```
 
-- [ ] **Step 3: Remove the §11 entry**
+- [x] **Step 3: Remove the §11 entry**
 
 Delete the paragraph starting `**Problem: \`Model.update<>\` compiles but never succeeds.**` from "## 11. Risks and Technical Debt". Keep the adjacent-slot paragraph (it belongs to #54).
 
-- [ ] **Step 4: Update the testing docs**
+- [x] **Step 4: Update the testing docs**
 
 In `docs/engineering/testing/components/schema.md`, in the "Slot decoding" row, replace the sentence
 
@@ -194,12 +194,12 @@ with
 An empty update patch is a decided no-op with its regression in `server/tests/runtime.rs` ([#49](https://github.com/zanminwang/ahead/issues/49)).
 ```
 
-- [ ] **Step 5: Check the links**
+- [x] **Step 5: Check the links**
 
 Run: `grep -rn "update<>\|empty patch" docs website/docs --include='*.md'`
 Expected: only the §9 decision, the test-doc sentence, and this spec/plan mention them. Fix any leftover claim that an empty patch is refused.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add docs/engineering/architecture/schema/mutations.md docs/engineering/testing/components/schema.md docs/engineering/testing/review.md
@@ -212,7 +212,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ### Task 4: Verify and open the pull request
 
-- [ ] **Step 1: Full Rust check**
+- [x] **Step 1: Full Rust check**
 
 Run: `cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings && cargo test --workspace --locked`
 Expected: all PASS. Record the exact pass/fail counts for the PR body.

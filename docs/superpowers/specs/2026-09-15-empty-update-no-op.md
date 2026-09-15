@@ -32,6 +32,6 @@ Consequences:
 
 ## 4. Done when
 
-- [ ] `cargo test -p ahead-server` has a test decoding an update whose `values` is `{}` to `{ identity, patch: {} }`, and one where every supplied field is unknown decodes to `patch: {}`.
-- [ ] `cargo test -p ahead-compiler` asserts `Parent.update<>` compiles with `allowedPatchFields: []`.
-- [ ] `docs/engineering/architecture/schema/mutations.md` §5, §9 and §11 match the decision; `docs/engineering/testing/components/schema.md` and `docs/engineering/testing/review.md` no longer call this a defect.
+- [x] `cargo test -p ahead-server` has a test decoding an update whose `values` is `{}` to `{ identity, patch: {} }`, and one where every supplied field is unknown decodes to `patch: {}`.
+- [x] `cargo test -p ahead-compiler` asserts `Parent.update<>` compiles with `allowedPatchFields: []`.
+- [x] `docs/engineering/architecture/schema/mutations.md` §5, §9 and §11 match the decision; `docs/engineering/testing/components/schema.md` and `docs/engineering/testing/review.md` no longer call this a defect.
