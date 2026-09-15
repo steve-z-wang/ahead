@@ -1,5 +1,5 @@
 //! Pull copies the invalidation row's stamp; publish accepts `{cursor, stamp}`.
-use ahead_server::{Config, Host};
+use ahead_server::{Config, Host, host::HostRequest};
 use serde_json::{Value, json};
 use std::{
     future::Future,
@@ -27,11 +27,12 @@ fn config() -> Config {
     }))
     .unwrap()
 }
-/// `scan` returns the given rows; `publish` returns the given value.
+/// `scan` returns the given rows; `publish` returns the given value. Both stay
+/// raw `Value`s: these tests feed the engine answers the contract refuses.
 struct Fixed {
     scan: Value,
     publish: Value,
-    published: Mutex<Vec<Value>>,
+    published: Mutex<Vec<HostRequest>>,
 }
 impl Fixed {
     fn new(scan: Value, publish: Value) -> Self {
@@ -48,15 +49,17 @@ impl Host for Fixed {
         r: Value,
     ) -> Pin<Box<dyn Future<Output = ahead_server::HostResult<Value>> + Send + '_>> {
         Box::pin(async move {
-            Ok(match r["op"].as_str().unwrap() {
-                "head" => json!(5),
-                "scan" => self.scan.clone(),
-                "load" => json!([{"id":"e","text":"t"}]),
-                "publish" => {
-                    self.published.lock().unwrap().push(r.clone());
+            let request: HostRequest = serde_json::from_value(r)
+                .map_err(|error| format!("unsupported host request: {error}"))?;
+            Ok(match &request {
+                HostRequest::Head { .. } => json!(5),
+                HostRequest::Scan { .. } => self.scan.clone(),
+                HostRequest::Load { .. } => json!([{"id":"e","text":"t"}]),
+                HostRequest::Publish { .. } => {
+                    self.published.lock().unwrap().push(request.clone());
                     self.publish.clone()
                 }
-                other => return Err(format!("unsupported {other}")),
+                other => return Err(format!("unsupported {}", other.label())),
             })
         })
     }
