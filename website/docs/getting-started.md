@@ -88,7 +88,7 @@ The edit is visible locally and `status` shows pending work. The backend remains
 online
 ```
 
-The backend normalizes the text to `offline draft`; pending work settles after the required server progress arrives. To observe persistence, pause, edit, `quit`, then reopen the same client while keeping the backend running. The queued edit survives reopening and sync resumes automatically.
+The backend normalizes the text to `offline draft`; the receipt carries that result and the pending work completes as soon as it arrives. To observe persistence, pause, edit, `quit`, then reopen the same client while keeping the backend running. The queued edit survives reopening and sync resumes automatically.
 
 ## 5. See a rejection
 

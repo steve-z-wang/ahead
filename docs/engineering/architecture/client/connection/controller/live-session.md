@@ -25,7 +25,7 @@ Actions, returned in order by every command:
 | `open {epoch, subscribe}` | Open the socket and send the subscribe frame once it is open. Frames are `message` events of this epoch; the socket's end is `closed`. |
 | `request {epoch, channel, body}` | `POST /sync/pull`; the response is `catchUp`, a failure is `closed`. |
 | `close {epoch, reason?}` | Close the socket of this epoch and abandon its request. A `reason` is a protocol violation to report as an error. |
-| `wake {lane: "push"}` | A page applied and may have settled a batch: wake the push lane. |
+| `wake {lane: "push"}` | A page applied: wake the push lane so it re-evaluates what is eligible to send. |
 | `wait {millis}` | Nothing to do until the timer fires; then report `next`. |
 
 ## 5. Building Block View

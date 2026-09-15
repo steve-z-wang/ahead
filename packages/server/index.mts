@@ -192,27 +192,50 @@ export interface RecordRef {
   model: string;
   identity: object;
 }
+/** The external notification: a business change made outside a handler, reported to one channel. */
 export type NotifyArgs = {
   channel: string;
   records: readonly (RecordRef | object)[];
 };
-export type Notify = (args: NotifyArgs) => void;
+/**
+ * One publication a handler asks for. `records` absent publishes the
+ * mutation's final change set, additions made after the call included;
+ * present, it names exactly what to publish (an empty array publishes
+ * nothing). Publishing an unchanged record distributes its current stamp
+ * and never advances it.
+ */
+export type PublishArgs = {
+  channel: string;
+  records?: readonly (RecordRef | object)[];
+};
+export type Publish = (args: PublishArgs) => void;
+/**
+ * The records one mutation changed. It starts with every record the uploaded
+ * operations target; `add` reports a record the handler changed beyond those.
+ * The framework stamps every member, reads it back through the loaders and
+ * returns the authority in the receipt; publication is separate and opt-in.
+ */
+export interface Changes {
+  readonly records: readonly RecordRef[];
+  /** A slot argument or `{ model, identity }`; duplicates of one record are kept once. */
+  add(record: RecordRef | object): void;
+}
 export interface HandlerCall<Tx, Input> {
   input: Input;
   tx: Tx;
   userId: string;
-  notify: Notify;
+  changes: Changes;
+  publish: Publish;
 }
+/** Loads name no channel: the same identity, version and stamp describe the same content on every delivery path. */
 export interface LoaderCall<Tx, Identity> {
   ids: readonly Identity[];
   tx: Tx;
   userId: string;
-  /** The channel whose Pull requested these rows; loaders may scope visibility by it. */
-  channel: string;
 }
 export type Handler<Tx, Input = any> = (
   call: HandlerCall<Tx, Input>,
-) => Promise<void | { channel: string }>;
+) => Promise<void>;
 export type Loader<Tx, Identity = any, Row = object> = (
   call: LoaderCall<Tx, Identity>,
 ) => Promise<readonly (Row | null)[]>;
@@ -267,7 +290,7 @@ function versioned<F>(
   return table;
 }
 export const RECORD: unique symbol = Symbol("ahead.record");
-function toRef(value: unknown): RecordRef {
+function toRef(value: unknown, caller: string): RecordRef {
   if (value !== null && typeof value === "object") {
     const tagged = (value as { [RECORD]?: RecordRef })[RECORD];
     if (tagged) return tagged;
@@ -276,8 +299,21 @@ function toRef(value: unknown): RecordRef {
       return { model, identity };
   }
   throw new Error(
-    "notify: record must be a slot argument or { model, identity }",
+    `${caller}: record must be a slot argument or { model, identity }`,
   );
+}
+/** JSON with object keys sorted at every depth: one text per identity, whatever its key order. */
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value !== null && typeof value === "object")
+    return `{${Object.keys(value)
+      .sort()
+      .map(
+        (key) =>
+          `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`,
+      )
+      .join(",")}}`;
+  return JSON.stringify(value) ?? "null";
 }
 function tag<T extends object>(value: T, ref: RecordRef): T {
   Object.defineProperty(value, RECORD, { value: ref, enumerable: false });
@@ -286,8 +322,6 @@ function tag<T extends object>(value: T, ref: RecordRef): T {
 function lowerFirst(name: string): string {
   return name.charAt(0).toLowerCase() + name.slice(1);
 }
-/** A framework programming error (no/ambiguous checkpoint), never a per-mutation rejection: must abort the batch and never reach `translateRejection`. */
-class CheckpointError extends Error {}
 export interface BackendOptions<T> {
   config: object;
   database: Database<T>;
@@ -300,7 +334,7 @@ export interface BackendOptions<T> {
   >;
   translateRejection?: (error: unknown) => string | null | undefined;
   native?: Native;
-  /** Called for server-side failures that clients only see as `{ code: "server" }`: authenticate throws, persistence faults, checkpoint errors, live drain failures. */
+  /** Called for server-side failures that clients only see as `{ code: "server" }`: authenticate throws, persistence faults, loader defects, live drain failures. */
   onError?: (error: unknown) => void;
 }
 /** JSON cannot represent nonfinite values or undefined array items. Never turn either into null. */
@@ -462,6 +496,15 @@ export function createBackend<T>(options: BackendOptions<T>) {
     });
   const sessions = new Map<T, Session>();
   const wakes = new WakeHub();
+  /** The rejection code an application error stands for, or the error itself when it stands for none. */
+  const refusal = (error: unknown): { rejection: string } => {
+    const code =
+      error instanceof MutationRejected
+        ? error.code
+        : options.translateRejection?.(error);
+    if (code == null) throw error;
+    return { rejection: new MutationRejected(code).code };
+  };
   const host = (
     tx: T,
     session: Session,
@@ -500,57 +543,52 @@ export function createBackend<T>(options: BackendOptions<T>) {
                 ? (raw as any[]).map((item) => shape(slot, item))
                 : shape(slot, raw);
           }
-          const notified = new Set<string>();
-          const pending: { channel: string; refs: RecordRef[] }[] = [];
-          const notify: Notify = ({ channel, records }) => {
+          // The change set starts with every record the operations target,
+          // in slot order; `add` keeps one entry per (model, identity).
+          const records: RecordRef[] = [];
+          const seen = new Set<string>();
+          const add = (ref: RecordRef) => {
+            const key = `${ref.model}\u0000${canonical(ref.identity)}`;
+            if (seen.has(key)) return;
+            seen.add(key);
+            records.push(ref);
+          };
+          for (const slot of entry.slots) {
+            const raw = req.arguments[slot.name] as any;
+            for (const item of slot.cardinality === "list" ? raw : [raw])
+              if (item !== null && item !== undefined)
+                add({ model: slot.model, identity: item.identity });
+          }
+          const changes: Changes = {
+            records,
+            add: (record) => add(toRef(record, "changes.add")),
+          };
+          const publications: { channel: string; records?: RecordRef[] }[] = [];
+          const publish: Publish = ({ channel, records }) => {
             if (typeof channel !== "string" || channel === "")
-              throw new Error("notify: channel must be a non-empty string");
+              throw new Error("publish: channel must be a non-empty string");
+            if (records === undefined) {
+              publications.push({ channel });
+              return;
+            }
             if (!Array.isArray(records))
-              throw new Error("notify: records must be an array");
-            const refs = records.map(toRef);
-            notified.add(channel);
-            pending.push({ channel, refs });
+              throw new Error("publish: records must be an array");
+            publications.push({
+              channel,
+              records: records.map((record) => toRef(record, "publish")),
+            });
           };
           try {
-            const returned = await entry.handler({
+            await entry.handler({
               input,
               tx,
               userId: req.owner,
-              notify,
+              changes,
+              publish,
             });
-            for (const item of pending)
-              await publish(tx, item.refs, [item.channel]);
-            if (
-              returned &&
-              typeof returned === "object" &&
-              typeof (returned as { channel?: unknown }).channel === "string"
-            ) {
-              const channel = (returned as { channel: string }).channel;
-              if (channel === "")
-                throw new CheckpointError(
-                  `handler.invalid_checkpoint:${req.name}`,
-                );
-              if (!notified.has(channel))
-                throw new CheckpointError(
-                  `handler.unnotified_checkpoint:${req.name}`,
-                );
-              result = { channel };
-            } else if (notified.size === 1)
-              result = { channel: [...notified][0] };
-            else if (notified.size === 0)
-              throw new CheckpointError(`handler.no_channel:${req.name}`);
-            else
-              throw new CheckpointError(
-                `handler.ambiguous_checkpoint:${req.name}`,
-              );
+            result = { changes: [...records], publications };
           } catch (error) {
-            if (error instanceof CheckpointError) throw error;
-            const code =
-              error instanceof MutationRejected
-                ? error.code
-                : options.translateRejection?.(error);
-            if (code == null) throw error;
-            result = { rejection: new MutationRejected(code).code };
+            result = refusal(error);
           }
         } else if (req.op === "load") {
           // Dispatch is by model name and contract version; a version that
@@ -562,17 +600,28 @@ export function createBackend<T>(options: BackendOptions<T>) {
             ids: req.identities as any[],
             tx,
             userId: req.owner,
-            channel: req.channel,
           };
-          await options.loaderHooks?.[lowerFirst(req.model)]?.prepareForViewer(
-            call,
-          );
-          result = await loader(call);
-          if (
-            !Array.isArray(result) ||
-            result.some((value) => value === undefined)
+          // A read refusal (`MutationRejected` or a translated error) is
+          // answered as data: the engine records it as the mutation's
+          // rejection in a push and refuses the page in a pull. Any other
+          // error is a defect and aborts the delivery.
+          let refused: { rejection: string } | undefined;
+          let rows: unknown;
+          try {
+            await options.loaderHooks?.[
+              lowerFirst(req.model)
+            ]?.prepareForViewer(call);
+            rows = await loader(call);
+          } catch (error) {
+            refused = refusal(error);
+          }
+          if (refused) result = refused;
+          else if (
+            !Array.isArray(rows) ||
+            rows.some((value) => value === undefined)
           )
             throw new Error("invalid loader: undefined or non-array result");
+          else result = rows;
         } else {
           // Everything the persistence owns, plus anything this build does not
           // know: an operation added to the contract without an arm here is a
@@ -585,6 +634,8 @@ export function createBackend<T>(options: BackendOptions<T>) {
             case "savepoint":
             case "rollback":
             case "release":
+            case "advanceStamp":
+            case "ensureStamp":
             case "publish":
               break;
             default: {
@@ -593,6 +644,9 @@ export function createBackend<T>(options: BackendOptions<T>) {
             }
           }
           result = await storage.call(req);
+          // Every publication that survives its savepoint wakes the channel's
+          // subscribers after commit; `rollback` restores the set it snapshot.
+          if (req.op === "publish") session.touched.add(req.channel);
         }
         return callbackJson(result);
       });
@@ -621,9 +675,13 @@ export function createBackend<T>(options: BackendOptions<T>) {
     const session = new Session();
     sessions.set(tx, session);
     return {
-      /** Unlike the handler's `notify`, this returns a promise the caller must await before the transaction commits. */
+      /** Reports a business change made outside a handler: every record gets a new stamp and the channel an invalidation. Unlike a handler's `publish`, this returns a promise the caller must await before the transaction commits. */
       notify: ({ channel, records }: NotifyArgs) =>
-        publish(tx, records.map(toRef), [channel]),
+        publish(
+          tx,
+          records.map((record) => toRef(record, "notify")),
+          [channel],
+        ),
       assertCommittable: () => session.assertCommittable(),
       afterCommit: () => {
         const scopes = [...session.touched];
@@ -703,9 +761,13 @@ export function createBackend<T>(options: BackendOptions<T>) {
       wakes.subscribe(scope, wake),
     notifyCommitted: (scopes: readonly string[]) => wakes.notify(scopes),
     closeLive: () => wakes.clear(),
-    /** Unlike the handler's `notify`, this returns a promise the caller must await before the transaction commits. */
+    /** Reports a business change made outside a handler: every record gets a new stamp and the channel an invalidation. Unlike a handler's `publish`, this returns a promise the caller must await before the transaction commits. */
     notify: (tx: T, args: NotifyArgs) =>
-      publish(tx, args.records.map(toRef), [args.channel]),
+      publish(
+        tx,
+        args.records.map((record) => toRef(record, "notify")),
+        [args.channel],
+      ),
     bindTransaction,
   };
   const authenticate = async (request: IncomingMessage) => {

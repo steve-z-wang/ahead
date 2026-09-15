@@ -168,7 +168,7 @@ fn startup_validates_the_retained_model_contracts() {
 mod refusals {
     use ahead_server::{
         Host, HostResult, code,
-        host::{self, Acknowledged, Handled, Head, HostRequest},
+        host::{self, Acknowledged, Handled, Head, HostRequest, Loaded, Stamped},
     };
     use serde_json::{Value, json};
     use std::{
@@ -208,10 +208,19 @@ mod refusals {
                     HostRequest::Handle { .. } => {
                         self.handled.lock().unwrap().push(request.clone());
                         serde_json::to_value(Handled::Settled {
-                            channel: "a".into(),
+                            changes: vec![],
+                            publications: vec![],
                         })
                         .unwrap()
                     }
+                    HostRequest::AdvanceStamp { .. } => serde_json::to_value(Stamped(1)).unwrap(),
+                    HostRequest::Load { identities, .. } => serde_json::to_value(Loaded::Rows(
+                        identities
+                            .iter()
+                            .map(|_| Some(json!({"id":"a","title":"t","note":null})))
+                            .collect(),
+                    ))
+                    .unwrap(),
                     HostRequest::Head { .. } => serde_json::to_value(Head(0)).unwrap(),
                     HostRequest::Savepoint { .. }
                     | HostRequest::Rollback { .. }
@@ -236,7 +245,7 @@ mod refusals {
         if let Some(v) = version {
             mutation["version"] = json!(v);
         }
-        json!({"clientId":"c","batchSequence":sequence,"mutations":[mutation]})
+        json!({"clientId":"c","batchSequence":sequence,"models":{"Task":1},"mutations":[mutation]})
             .to_string()
             .into_bytes()
     }
@@ -285,7 +294,11 @@ mod refusals {
             &host,
         ))
         .unwrap();
-        assert!(accepted.contains("requiredCheckpoints"));
+        let receipt = ahead_core::PushReceipt::decode(accepted.as_bytes()).unwrap();
+        assert!(receipt.answers("c", 1));
+        assert_eq!(receipt.records.len(), 1, "the changed record is read back");
+        assert_eq!(receipt.records[0].stamp, 1);
+        assert_eq!(receipt.records[0].state, json!({"title":"t","note":null}));
         assert_eq!(host.handled.lock().unwrap().len(), 1);
     }
 

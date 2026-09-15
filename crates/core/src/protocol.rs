@@ -49,6 +49,10 @@ pub struct PushRequest {
     pub client_id: String,
     pub batch_sequence: u64,
     pub mutations: Vec<RawMutation>,
+    /// The read contracts the receipt's authority is served at, as in
+    /// [`PullRequest::models`]. Frozen with the batch: a retry declares what
+    /// the original request declared.
+    pub models: BTreeMap<String, u64>,
     pub raw: Value,
 }
 impl PushRequest {
@@ -56,6 +60,7 @@ impl PushRequest {
         let raw: Value = serde_json::from_slice(bytes)?;
         let client_id = nonblank(&raw["clientId"])?;
         let batch_sequence = read_counter(&raw["batchSequence"], true)?;
+        let models = read_models(&raw["models"])?;
         let acts = raw["mutations"]
             .as_array()
             .ok_or_else(|| invalid("mutations must be array"))?;
@@ -84,6 +89,7 @@ impl PushRequest {
             client_id,
             batch_sequence,
             mutations,
+            models,
             raw,
         })
     }
@@ -99,52 +105,95 @@ fn nonblank(value: &Value) -> Result<String> {
         .ok_or_else(|| invalid("expected nonblank string"))
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ChannelCheckpoint {
-    #[serde(rename = "scope")]
-    pub channel: String,
-    #[serde(rename = "syncId")]
-    pub cursor: u64,
-}
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rejection {
     pub ordinal: u64,
     pub code: String,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// One record's authoritative content at one stamp, as a receipt carries it.
+/// Identity is canonical; `state` is a normalized record state or `null` for a
+/// deletion. It names no channel and no cursor: authority is ordered by stamp
+/// alone ([Protocol / Push](../../../docs/engineering/architecture/protocol/push.md)).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AuthorityRecord {
+    pub model: String,
+    pub identity: Value,
+    pub stamp: u64,
+    pub state: Value,
+}
+impl AuthorityRecord {
+    fn validate(&self) -> Result<()> {
+        if self.model.is_empty() {
+            return Err(invalid("record model must not be empty"));
+        }
+        if !self.identity.is_object() {
+            return Err(invalid("record identity must be an object"));
+        }
+        if self.stamp == 0 || counter(self.stamp).is_err() {
+            return Err(invalid("record stamp must be a positive counter"));
+        }
+        if !self.state.is_null() && !self.state.is_object() {
+            return Err(invalid("record state must be an object or null"));
+        }
+        Ok(())
+    }
+    /// The key two records of one receipt or page must not share.
+    fn key(&self) -> Result<String> {
+        Ok(format!(
+            "{}\u{0}{}",
+            self.model,
+            canonical_json(&self.identity)?
+        ))
+    }
+}
+impl From<RecordChange> for AuthorityRecord {
+    /// A channel change is the same authority with a delivery cursor; the
+    /// conversion discards only the cursor.
+    fn from(change: RecordChange) -> Self {
+        Self {
+            model: change.model,
+            identity: change.identity,
+            stamp: change.stamp,
+            state: change.state,
+        }
+    }
+}
+/// The answer to a push: the batch it answers, which of its mutations were
+/// refused, and the authoritative content of every record a successful
+/// mutation changed, once per record with its final stamp. Every mutation not
+/// listed in `rejections` succeeded. The identity fields are required: a
+/// receipt from before this format cannot decode as successful empty authority.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PushReceipt {
-    #[serde(rename = "requiredCheckpoints", default)]
-    pub required_checkpoints: Vec<ChannelCheckpoint>,
-    #[serde(rename = "requiredScope")]
-    pub required_channel: String,
-    #[serde(rename = "requiredSyncId")]
-    pub required_cursor: u64,
+    #[serde(rename = "clientId")]
+    pub client_id: String,
+    #[serde(rename = "batchSequence")]
+    pub batch_sequence: u64,
     pub rejections: Vec<Rejection>,
+    pub records: Vec<AuthorityRecord>,
 }
 impl PushReceipt {
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         let value: Value = serde_json::from_slice(bytes)?;
-        let missing = value.get("requiredCheckpoints").is_none();
-        let mut result: Self = serde_json::from_value(value)?;
-        if missing {
-            result.required_checkpoints.push(ChannelCheckpoint {
-                channel: result.required_channel.clone(),
-                cursor: result.required_cursor,
-            });
+        if !value.is_object() {
+            return Err(invalid("receipt must be an object"));
         }
+        for field in ["clientId", "batchSequence", "rejections", "records"] {
+            if value.get(field).is_none() {
+                return Err(invalid(format!("receipt {field} missing")));
+            }
+        }
+        let batch_sequence = read_counter(&value["batchSequence"], true)?;
+        let mut result: Self = serde_json::from_value(value)?;
+        result.batch_sequence = batch_sequence;
         result.validate()?;
         Ok(result)
     }
     fn validate(&self) -> Result<()> {
-        counter(self.required_cursor)?;
-        if self.required_checkpoints.is_empty() && self.rejections.is_empty() {
-            return Err(invalid("empty checkpoint set"));
+        if self.client_id.trim().is_empty() {
+            return Err(invalid("receipt clientId must not be blank"));
         }
-        let mut channels = BTreeSet::new();
-        for cp in &self.required_checkpoints {
-            counter(cp.cursor)?;
-            if !channels.insert(&cp.channel) {
-                return Err(invalid("duplicate checkpoint channel"));
-            }
+        if self.batch_sequence == 0 || counter(self.batch_sequence).is_err() {
+            return Err(invalid("receipt batchSequence must be a positive counter"));
         }
         let mut seen = BTreeSet::new();
         for r in &self.rejections {
@@ -153,11 +202,22 @@ impl PushReceipt {
                 return Err(invalid("invalid rejection"));
             }
         }
+        let mut keys = BTreeSet::new();
+        for record in &self.records {
+            record.validate()?;
+            if !keys.insert(record.key()?) {
+                return Err(invalid("duplicate receipt record"));
+            }
+        }
         Ok(())
     }
     pub fn encode(&self) -> Result<Vec<u8>> {
         self.validate()?;
         Ok(canonical_json(&serde_json::to_value(self)?)?.into_bytes())
+    }
+    /// Whether the receipt answers this batch of this client.
+    pub fn answers(&self, client_id: &str, batch_sequence: u64) -> bool {
+        self.client_id == client_id && self.batch_sequence == batch_sequence
     }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

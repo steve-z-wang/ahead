@@ -33,6 +33,8 @@ const fakePersistence=seen=>({
    case 'saveReceipt':case 'savepoint':case 'rollback':case 'release':return null;
    case 'head':return response('head','cursor');
    case 'scan':return response('scan','rows');
+   case 'advanceStamp':return response('advanceStamp','stamped');
+   case 'ensureStamp':return response('ensureStamp','stamped');
    case 'publish':return response('publish','published');
    default:throw new Error(`fake persistence reached ${request.op}`);
   }
@@ -51,7 +53,7 @@ async function replay(requests,{reject=false}={}){
    validateConfig:c=>native.validateConfig(c),
    processPush:async(_config,_owner,_request,callback)=>{
     for(const request of requests)answers.push([request.op,JSON.parse(await callback(JSON.stringify(request)))]);
-    return '{"requiredScope":"shared","requiredSyncId":1,"rejections":[]}';
+    return '{"batchSequence":1,"clientId":"alice","records":[],"rejections":[]}';
    },
    processPull:async()=>'{}',
    publish:async()=>'[]',
@@ -60,12 +62,16 @@ async function replay(requests,{reject=false}={}){
   },
   database:{transaction:body=>body({}),persistence:()=>fakePersistence(seen)},
   authenticate:()=>'alice',
-  handlers:{async edit({input,notify}){
+  // The seeded change set (the update slot's t-1) plus one addition, published
+  // by default to one channel and explicitly to another: the fixture's settlement.
+  handlers:{async edit({input,changes,publish}){
    handled.push(input);
-   notify({channel:'shared',records:[input.task]});
+   changes.add({model:'Task',identity:{id:'t-2'}});
+   publish({channel:'shared'});
+   publish({channel:'other',records:[input.task]});
    if(reject)throw new MutationRejected('task.refused');
   }},
-  loaders:{async task({ids,channel}){loaded.push({ids,channel});return response('load','rows');}},
+  loaders:{async task(call){loaded.push(call);return response('load','rows');}},
  });
  await backend.push('alice','{}');
  return {answers,seen,handled,loaded};
@@ -83,15 +89,18 @@ test('every fixture request replays through the TypeScript host to the fixture a
  const expected={
   claim:response('claim','claimed'),saveReceipt:null,head:response('head','cursor'),
   scan:response('scan','rows'),savepoint:null,rollback:null,release:null,
-  handle:response('handle','settled'),load:response('load','rows'),publish:response('publish','published'),
+  handle:response('handle','settled'),load:response('load','rows'),
+  advanceStamp:response('advanceStamp','stamped'),ensureStamp:response('ensureStamp','stamped'),publish:response('publish','published'),
  };
+ assert.equal(Object.keys(expected).length,HOST_OPERATIONS.length,'every operation has an expected answer');
  for(const [op,answer] of answers)assert.deepEqual(answer,expected[op],`${op} answer`);
  // handle and load reach application code; everything else reaches persistence,
  // savepoint/rollback/release included - they are bookkept *and* forwarded.
  assert.deepEqual(seen.map(r=>r.op),HOST_OPERATIONS.filter(op=>op!=='handle'&&op!=='load'));
  assert.equal(handled.length,1);
  assert.deepEqual(handled[0].task.patch,entry('handle').request.arguments.task.patch);
- assert.deepEqual(loaded,[{ids:entry('load').request.identities,channel:entry('load').request.channel}]);
+ assert.equal(loaded.length,1);assert.deepEqual(loaded[0].ids,entry('load').request.identities);assert.equal(loaded[0].userId,entry('load').request.owner);
+ assert.equal('channel' in loaded[0],false,'loads name no channel');
 });
 
 test('the same handle request settles as the fixture rejection when the handler refuses',async()=>{

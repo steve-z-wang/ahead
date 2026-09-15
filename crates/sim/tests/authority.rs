@@ -1,4 +1,5 @@
-//! Guarantees A1–A5 on the simulation.
+//! Authority on the simulation: a push completes from its receipt, channel pages and
+//! receipts carry the same stamps, and neither can regress the other.
 use ahead_sim::{Action, MutationSpec, Sim, schema::entry_key};
 
 fn setup(seed: u64) -> Sim {
@@ -20,42 +21,36 @@ fn setup(seed: u64) -> Sim {
     sim
 }
 
-/// A1: the value the server stored replaces the optimistic value; a later pending
-/// edit replays on top.
+fn edit(sim: &mut Sim, client: usize, text: &str) {
+    sim.apply(Action::Enqueue {
+        client,
+        mutation: MutationSpec::Edit {
+            id: "e1".into(),
+            text: text.into(),
+        },
+    })
+    .unwrap();
+}
+
+/// The value the server stored replaces the optimistic value through the receipt
+/// alone; a later pending edit replays on top of that base.
 #[test]
 fn a1_server_value_overrides_optimism_and_later_edits_replay() {
     let mut sim = setup(31);
-    sim.apply(Action::Enqueue {
-        client: 0,
-        mutation: MutationSpec::Edit {
-            id: "e1".into(),
-            text: "mine".into(),
-        },
-    })
-    .unwrap();
+    edit(&mut sim, 0, "mine");
     // The server "normalizes" by storing something else for the same mutation.
+    sim.host.uppercase_next();
     sim.apply(Action::Freeze { client: 0 }).unwrap();
-    sim.apply(Action::Deliver).unwrap();
-    sim.host.set_state(
-        &entry_key("e1"),
-        Some(serde_json::json!({"id":"e1","text":"MINE","note":null})),
-    );
-    sim.apply(Action::Enqueue {
-        client: 0,
-        mutation: MutationSpec::Edit {
-            id: "e1".into(),
-            text: "later".into(),
-        },
-    })
-    .unwrap();
+    sim.apply(Action::Deliver).unwrap(); // executed: the server holds "MINE"
+    assert_eq!(sim.host.state(&entry_key("e1")).unwrap()["text"], "MINE");
+    edit(&mut sim, 0, "later");
     assert_eq!(sim.read_text(0, &entry_key("e1")).as_deref(), Some("later"));
-    sim.apply(Action::Deliver).unwrap(); // receipt for batch 2
-    sim.apply(Action::Pull {
-        client: 0,
-        channel: "a".into(),
-    })
-    .unwrap();
-    sim.drain();
+    sim.apply(Action::Deliver).unwrap(); // receipt for batch 2 completes it
+    assert_eq!(
+        sim.client(0).pending_count().unwrap(),
+        1,
+        "only the later edit"
+    );
     assert_eq!(
         sim.read_text(0, &entry_key("e1")).as_deref(),
         Some("later"),
@@ -67,9 +62,12 @@ fn a1_server_value_overrides_optimism_and_later_edits_replay() {
         .unwrap();
     assert_eq!(
         base[0]["text"], "MINE",
-        "the base beneath it is the server's value"
+        "the base beneath it is the server's value, from the receipt"
     );
+    assert_eq!(sim.client(0).record_stamp(&entry_key("e1")).unwrap(), 2);
     sim.settle();
+    assert_eq!(sim.read_text(0, &entry_key("e1")).as_deref(), Some("later"));
+    assert_eq!(sim.conflicts, 0);
     sim.check().unwrap();
 }
 
@@ -98,22 +96,16 @@ fn a2_pages_apply_only_in_cursor_order() {
     sim.check().unwrap();
 }
 
-/// A3: the ACK alone leaves the mutation pending; the page for the required
-/// checkpoint settles it, in either order.
+/// The receipt and the channel page for the same change carry the same stamp and
+/// content. Whichever arrives first, the receipt completes the batch, the page moves
+/// the cursor, nothing conflicts and the row is the server's.
 #[test]
-fn a3_ack_alone_does_not_settle() {
+fn reordered_receipt_and_page_agree_in_either_order() {
     for page_first in [false, true] {
         let mut sim = setup(33);
-        sim.apply(Action::Enqueue {
-            client: 0,
-            mutation: MutationSpec::Edit {
-                id: "e1".into(),
-                text: "x".into(),
-            },
-        })
-        .unwrap();
+        edit(&mut sim, 0, "x");
         sim.apply(Action::Freeze { client: 0 }).unwrap();
-        sim.apply(Action::Deliver).unwrap(); // receipt queued
+        sim.apply(Action::Deliver).unwrap(); // executed, receipt queued
         sim.apply(Action::Pull {
             client: 0,
             channel: "a".into(),
@@ -126,22 +118,67 @@ fn a3_ack_alone_does_not_settle() {
         }
         sim.apply(Action::Deliver).unwrap();
         let pending_after_first = sim.client(0).pending_count().unwrap();
+        if page_first {
+            assert_eq!(pending_after_first, 1, "a page never completes a push");
+            assert_eq!(sim.client(0).cursor("a").unwrap(), 2);
+        } else {
+            assert_eq!(pending_after_first, 0, "the receipt completes it alone");
+            assert_eq!(sim.client(0).cursor("a").unwrap(), 1);
+        }
         sim.apply(Action::Deliver).unwrap();
         assert_eq!(sim.client(0).pending_count().unwrap(), 0);
-        if !page_first {
-            assert_eq!(pending_after_first, 1, "ACK alone did not settle");
-        } else {
-            assert_eq!(pending_after_first, 1, "page alone did not settle either");
-        }
+        assert_eq!(sim.client(0).cursor("a").unwrap(), 2);
+        assert_eq!(sim.read_text(0, &entry_key("e1")).as_deref(), Some("x"));
+        assert_eq!(sim.client(0).record_stamp(&entry_key("e1")).unwrap(), 2);
+        assert_eq!(sim.host.stamp(&entry_key("e1")), 2);
+        assert_eq!(sim.conflicts, 0, "page_first {page_first}");
         sim.check().unwrap();
     }
 }
 
-/// A4: a handler that notifies no channel is a server error; the batch aborts and
-/// the client retries the same bytes.
+/// HTTP-only completion: a client that follows no channel at all still completes
+/// its push from the receipt, with the server's row and the server's stamp.
 #[test]
-fn a4_handler_without_a_channel_aborts_the_batch() {
+fn a_push_completes_from_its_receipt_with_zero_subscriptions() {
     let mut sim = Sim::new(34, 1);
+    sim.apply(Action::Enqueue {
+        client: 0,
+        mutation: MutationSpec::CreateEntry {
+            id: "e9".into(),
+            text: "nowhere".into(),
+        },
+    })
+    .unwrap();
+    assert!(sim.client(0).subscriptions().unwrap().is_empty());
+    sim.host.uppercase_next();
+    sim.apply(Action::Freeze { client: 0 }).unwrap();
+    sim.apply(Action::Deliver).unwrap(); // push
+    sim.apply(Action::Deliver).unwrap(); // receipt
+    assert_eq!(sim.client(0).pending_count().unwrap(), 0);
+    assert_eq!(sim.client(0).last_completed_push().unwrap(), 1);
+    assert_eq!(
+        sim.read_text(0, &entry_key("e9")).as_deref(),
+        Some("NOWHERE"),
+        "the row is the server's, not the optimism"
+    );
+    assert_eq!(sim.host.state(&entry_key("e9")).unwrap()["text"], "NOWHERE");
+    assert_eq!(
+        sim.client(0).record_stamp(&entry_key("e9")).unwrap(),
+        sim.host.stamp(&entry_key("e9"))
+    );
+    assert_eq!(sim.client(0).before_image_count().unwrap(), 0);
+    assert!(
+        sim.client(0).freeze().unwrap().is_none(),
+        "nothing is re-sent"
+    );
+    sim.check().unwrap();
+}
+
+/// A handler that publishes nowhere (a record with no channel membership) is a
+/// legal outcome: the change is stamped, read back and returned; no channel moves.
+#[test]
+fn a_change_published_to_no_channel_still_completes() {
+    let mut sim = Sim::new(35, 1);
     sim.apply(Action::Subscribe {
         client: 0,
         channel: "a".into(),
@@ -152,31 +189,15 @@ fn a4_handler_without_a_channel_aborts_the_batch() {
         client: 0,
         mutation: MutationSpec::CreateEntry {
             id: "e9".into(),
-            text: "nowhere".into(),
+            text: "quiet".into(),
         },
     })
     .unwrap();
-    sim.apply(Action::Freeze { client: 0 }).unwrap();
-    let frozen = sim
-        .client(0)
-        .freeze()
-        .unwrap()
-        .expect("still frozen, unacknowledged");
-    sim.apply(Action::Deliver).unwrap();
-    assert!(matches!(
-        sim.net.pop(),
-        Some(ahead_sim::net::Message::PushFailed { .. })
-    ));
-    assert!(
-        sim.host.state(&entry_key("e9")).is_none(),
-        "aborted batch left nothing"
-    );
-    assert_eq!(sim.client(0).pending_count().unwrap(), 1);
-    assert_eq!(
-        sim.client(0).freeze().unwrap().unwrap(),
-        frozen,
-        "the client retries the same bytes"
-    );
+    sim.settle();
+    assert_eq!(sim.client(0).pending_count().unwrap(), 0);
+    assert_eq!(sim.read_text(0, &entry_key("e9")).as_deref(), Some("quiet"));
+    assert_eq!(sim.host.head("a"), 0, "no channel was told");
+    assert_eq!(sim.client(0).record_stamp(&entry_key("e9")).unwrap(), 1);
     sim.check().unwrap();
 }
 
@@ -238,90 +259,20 @@ fn a2_page_from_a_previous_subscription_is_stale_not_a_gap() {
         "the client must drop the stale page rather than error"
     );
     assert_eq!(sim.client(0).cursor("a").unwrap(), 0);
-}
-
-/// A5: batch 2's checkpoint is reached before batch 1's; nothing settles until batch
-/// 1's does, then both settle.
-#[test]
-fn a5_batches_settle_in_accepted_prefix_order() {
-    let mut sim = Sim::new(35, 1);
-    sim.apply(Action::Subscribe {
-        client: 0,
-        channel: "slow".into(),
-    })
-    .unwrap();
-    sim.apply(Action::Subscribe {
-        client: 0,
-        channel: "fast".into(),
-    })
-    .unwrap();
-    sim.host.set_membership(&entry_key("s"), &["slow"]);
-    sim.host.set_membership(&entry_key("f"), &["fast"]);
-    sim.apply(Action::Enqueue {
-        client: 0,
-        mutation: MutationSpec::CreateEntry {
-            id: "s".into(),
-            text: "1".into(),
-        },
-    })
-    .unwrap();
-    sim.apply(Action::Freeze { client: 0 }).unwrap();
-    sim.apply(Action::Enqueue {
-        client: 0,
-        mutation: MutationSpec::CreateEntry {
-            id: "f".into(),
-            text: "2".into(),
-        },
-    })
-    .unwrap();
-    sim.apply(Action::Deliver).unwrap(); // batch 1 executed, receipt 1 queued
-    // freeze() is idempotent on an in-flight (unacknowledged) push: with receipt 1
-    // still sitting in the network, not yet delivered to the client, push 1's
-    // checkpoints are still empty, so freeze() here would just retry push 1, not
-    // open batch 2. Deliver the receipt first so push 1 is acknowledged (its
-    // checkpoint recorded, even though not yet met) before batch 2 is frozen.
-    sim.apply(Action::Deliver).unwrap(); // receipt 1 delivered and acknowledged
-    sim.apply(Action::Freeze { client: 0 }).unwrap(); // batch 2 opened
-    sim.apply(Action::Deliver).unwrap(); // batch 2 executed, receipt 2 queued
-    sim.apply(Action::Deliver).unwrap(); // receipt 2 delivered and acknowledged
-    sim.apply(Action::Pull {
-        client: 0,
-        channel: "fast".into(),
-    })
-    .unwrap();
-    sim.drain();
-    let fast_cursor = sim.clients[0].receipts[&2]
-        .required_checkpoints
-        .iter()
-        .find(|cp| cp.channel == "fast")
-        .expect("batch 2's receipt requires a fast checkpoint")
-        .cursor;
     assert_eq!(
-        sim.client(0).cursor("fast").unwrap(),
-        fast_cursor,
-        "batch 2's checkpoint is genuinely reached before batch 1's"
+        sim.read_text(0, &entry_key("e2")).as_deref(),
+        Some("2"),
+        "the rows delivered before the cycle are retained"
     );
-    assert_eq!(
-        sim.client(0).pending_count().unwrap(),
-        2,
-        "batch 2 is ready but waits for batch 1"
-    );
-    sim.apply(Action::Pull {
-        client: 0,
-        channel: "slow".into(),
-    })
-    .unwrap();
-    sim.drain();
-    assert_eq!(sim.client(0).pending_count().unwrap(), 0);
     sim.check().unwrap();
 }
 
-/// A5 on the immediate path (issue #53): batch 2's receipt names only a channel the
-/// client does not follow, so it has nothing to await; it must still wait for batch 1,
-/// which is waiting on a `slow` cursor.
+/// Completion never waits for a channel: two batches on channels the client does
+/// not pull (one it follows, one it does not) both complete on their receipts, in
+/// sequence, while every cursor stays where it was.
 #[test]
-fn a5_immediately_settleable_batch_waits_for_the_earlier_batch() {
-    let mut sim = Sim::new(53, 1);
+fn batches_complete_on_their_receipts_without_any_page() {
+    let mut sim = Sim::new(37, 1);
     sim.apply(Action::Subscribe {
         client: 0,
         channel: "slow".into(),
@@ -338,8 +289,16 @@ fn a5_immediately_settleable_batch_waits_for_the_earlier_batch() {
     })
     .unwrap();
     sim.apply(Action::Freeze { client: 0 }).unwrap();
-    sim.apply(Action::Deliver).unwrap(); // batch 1 executed, receipt 1 queued
-    sim.apply(Action::Deliver).unwrap(); // receipt 1 acknowledged, waits on slow
+    sim.apply(Action::Deliver).unwrap(); // batch 1 executed
+    sim.apply(Action::Deliver).unwrap(); // receipt 1 completes it
+    assert_eq!(sim.client(0).pending_count().unwrap(), 0);
+    assert_eq!(sim.client(0).last_completed_push().unwrap(), 1);
+    assert_eq!(
+        sim.client(0).cursor("slow").unwrap(),
+        0,
+        "no page was pulled"
+    );
+    assert_eq!(sim.host.head("slow"), 1);
     sim.apply(Action::Enqueue {
         client: 0,
         mutation: MutationSpec::CreateEntry {
@@ -349,27 +308,93 @@ fn a5_immediately_settleable_batch_waits_for_the_earlier_batch() {
     })
     .unwrap();
     sim.apply(Action::Freeze { client: 0 }).unwrap();
-    sim.apply(Action::Deliver).unwrap(); // batch 2 executed, receipt 2 queued
-    sim.apply(Action::Deliver).unwrap(); // receipt 2: only an `other` checkpoint
-    assert!(
-        sim.clients[0].receipts[&2]
-            .required_checkpoints
-            .iter()
-            .all(|cp| cp.channel == "other"),
-        "batch 2's receipt names nothing the client can await"
+    sim.apply(Action::Deliver).unwrap(); // batch 2 executed
+    sim.apply(Action::Deliver).unwrap(); // receipt 2 completes it
+    assert_eq!(sim.client(0).pending_count().unwrap(), 0);
+    assert_eq!(sim.client(0).last_completed_push().unwrap(), 2);
+    assert_eq!(sim.read_text(0, &entry_key("n")).as_deref(), Some("2"));
+    assert_eq!(sim.client(0).record_stamp(&entry_key("n")).unwrap(), 1);
+    sim.check().unwrap();
+    sim.settle();
+    assert_eq!(sim.client(0).cursor("slow").unwrap(), 1);
+    assert_eq!(sim.conflicts, 0);
+    sim.check().unwrap();
+}
+
+/// Deletion through a receipt: the deleting client's row goes and its stamp is
+/// retained; a subscribed peer receives the same deletion at the same stamp through
+/// the channel.
+#[test]
+fn deletion_completes_from_the_receipt_and_reaches_a_peer_at_the_same_stamp() {
+    let mut sim = Sim::new(38, 2);
+    for i in 0..2 {
+        sim.apply(Action::Subscribe {
+            client: i,
+            channel: "a".into(),
+        })
+        .unwrap();
+    }
+    sim.apply(Action::Enqueue {
+        client: 0,
+        mutation: MutationSpec::CreateEntry {
+            id: "e1".into(),
+            text: "doomed".into(),
+        },
+    })
+    .unwrap();
+    sim.settle();
+    assert_eq!(
+        sim.read_text(1, &entry_key("e1")).as_deref(),
+        Some("doomed")
+    );
+    sim.apply(Action::Enqueue {
+        client: 0,
+        mutation: MutationSpec::DeleteEntry { id: "e1".into() },
+    })
+    .unwrap();
+    sim.apply(Action::Freeze { client: 0 }).unwrap();
+    sim.apply(Action::Deliver).unwrap();
+    sim.apply(Action::Deliver).unwrap(); // the receipt carries the null state
+    assert_eq!(sim.client(0).pending_count().unwrap(), 0);
+    assert_eq!(sim.read_text(0, &entry_key("e1")), None);
+    let stamp = sim.host.stamp(&entry_key("e1"));
+    assert_eq!(stamp, 2);
+    assert_eq!(
+        sim.client(0).record_stamp(&entry_key("e1")).unwrap(),
+        stamp,
+        "the deletion's stamp is retained as evidence"
     );
     assert_eq!(
-        sim.client(0).pending_count().unwrap(),
-        2,
-        "batch 2 has nothing to await but must wait for batch 1"
+        sim.read_text(1, &entry_key("e1")).as_deref(),
+        Some("doomed")
     );
-    sim.check().unwrap();
     sim.apply(Action::Pull {
-        client: 0,
-        channel: "slow".into(),
+        client: 1,
+        channel: "a".into(),
     })
     .unwrap();
     sim.drain();
-    assert_eq!(sim.client(0).pending_count().unwrap(), 0);
+    assert_eq!(sim.read_text(1, &entry_key("e1")), None);
+    assert_eq!(sim.client(1).record_stamp(&entry_key("e1")).unwrap(), stamp);
+    assert_eq!(sim.conflicts, 0);
+    sim.check().unwrap();
+}
+
+/// Restart keeps retained rows: a record delivered by a channel the client has
+/// since left survives a crash, stamp included.
+#[test]
+fn restart_keeps_rows_retained_after_unsubscribe() {
+    let mut sim = setup(39);
+    sim.apply(Action::Unsubscribe {
+        client: 0,
+        channel: "a".into(),
+    })
+    .unwrap();
+    sim.apply(Action::Crash { client: 0 }).unwrap();
+    sim.apply(Action::Restart { client: 0 }).unwrap();
+    assert!(sim.client(0).subscriptions().unwrap().is_empty());
+    assert_eq!(sim.read_text(0, &entry_key("e1")).as_deref(), Some("base"));
+    assert_eq!(sim.client(0).record_stamp(&entry_key("e1")).unwrap(), 1);
+    assert_eq!(sim.client(0).last_completed_push().unwrap(), 1);
     sim.check().unwrap();
 }

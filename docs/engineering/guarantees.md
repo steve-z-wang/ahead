@@ -27,26 +27,24 @@ Applications use individual operations as they would ordinary API calls. This ap
 | P3 | Unready prerequisites block their mutations. Lifecycle dependents wait for predecessor acceptance; sequence dependents may follow their predecessor in the same batch. Independent ready work can proceed. |
 | P4 | Frozen request bytes remain unchanged across retries, restart and supported schema reconciliation. |
 | P5 | Explicit rejection removes the mutation's optimism, rejects its lifecycle dependents, and retains a readable rejection until dismissed. Other pending edits replay on the remaining base. |
-| P6 | A failure attributable to one mutation rolls back its savepoint, including its business changes and publications, without rolling back unrelated successful mutations. If infrastructure failure makes the enclosing transaction unusable, the delivery rolls back atomically with its receipt and can be retried; this is not rejection of all mutations. |
+| P6 | A failure attributable to one mutation rolls back its savepoint, including its business changes, stamp allocations, loader readback and publications, without rolling back unrelated successful mutations. If infrastructure failure makes the enclosing transaction unusable, the delivery rolls back atomically with its receipt and can be retried; this is not rejection of all mutations. |
 | P7 | A mutation-level rejection, including an unsupported mutation version, is recorded for that mutation in the receipt and retained as a client rejection (P5). It does not reject unrelated mutations merely because they share a batch. Declared lifecycle dependencies still apply; independent valid mutations can proceed. |
 
-P6/P7 describe the target isolation requirement. Currently unsupported mutation versions and unexpected handler/publication failures abort the whole batch; operation-scoped failure classification and isolation need implementation. See [Server / Push](architecture/server/engine/push.md#9-architecture-decisions) and [#95](https://github.com/zanminwang/ahead/issues/95).
+P6 is implemented for handler rejections and loader refusals: both roll back the mutation's savepoint and become its rejection. P7 is still a target for unsupported mutation versions and unexpected handler errors, which abort the whole batch; see [Server / Push](architecture/server/engine/push.md#9-architecture-decisions) and [#95](https://github.com/zanminwang/ahead/issues/95).
 
 ## A. Authority and settlement
 
-Channel cursors order delivery within a subscription. Record stamps order authoritative content across channels.
+Channel cursors order delivery within a subscription. Record stamps order authoritative content across every path that delivers it: a push receipt and a channel page carry the same kind of authority, compared the same way.
 
 | ID | Required behavior |
 | --- | --- |
 | A1 | Delivered server values replace settled optimism; later pending edits replay over the authoritative base. |
 | A2 | Within a subscription, the cursor never decreases. Covered pages do nothing; overlapping pages apply only their unseen suffix. A page starting beyond the local cursor cannot skip the gap. A page answering a pull issued under an earlier subscription of the channel is stale, not a gap: it is dropped and the cursor stays where the resubscribe put it. |
-| A3 | Accepted optimism waits for all required checkpoints on subscribed channels, whether pages or the receipt arrive first. Checkpoints outside the subscriptions are not awaited. |
-| A4 | Required checkpoints come from channels notified by the handler. Missing or ambiguous selection fails the affected mutation without rejecting unrelated mutations; a mutation cannot be accepted without its required publication evidence. |
-| A5 | Accepted batches settle in sequence order; a later ready batch must not pass an earlier waiting batch, including a batch whose receipt named nothing the client can await. |
+| A3 | A successful push completes from its receipt alone. The receipt carries the authoritative content and stamp of every record the accepted operations targeted, read back by the framework in the handler's transaction; the client applies that authority, removes the completed operations and replays what remains in one local transaction. No channel is awaited, before or after, and a subscription is never required to complete a mutation. |
+| A4 | Receipt authority is applied by the same stamp rule as page authority (D2): a newer stamp lands, an older one is ignored, an equal one with equal content rewrites nothing. Whichever arrives first, the receipt and the page for the same change leave the same state, and neither is skipped because the other already landed: a receipt whose authority the page already delivered still completes the batch, and a page whose authority the receipt already delivered still advances the cursor. |
+| A5 | A receipt that cannot be applied, because it answers another client or batch, omits the authority of an accepted operation, or carries authority the client cannot decode, changes nothing: the frozen batch stays for retry. A receipt for a batch already completed changes nothing either. Completion is durable and survives restart without re-sending or re-applying. |
 
-A4 is also a target change: missing or ambiguous checkpoint selection currently aborts the batch; see [Server / Push](architecture/server/engine/push.md#9-architecture-decisions).
-
-A3 deliberately does not preserve optimistic wire operations outside the subscribed channels. Settlement rebuilds from the available base plus remaining pending edits: without new authority, an update can revert and a create can disappear until a subscribed channel delivers the result. Acceptance confirms execution, not final record contents; see [Settlement](architecture/client/engine/settlement.md#9-architecture-decisions).
+A3–A5 replace the earlier checkpoint contract, under which accepted optimism waited for channel positions named by the receipt and settled in batch order ([#52](https://github.com/zanminwang/ahead/issues/52), superseded by [#55](https://github.com/zanminwang/ahead/issues/55)). Only one batch is in flight at a time, so completion order is send order without a separate rule. See [Settlement](architecture/client/engine/settlement.md).
 
 ## D. Distribution
 
@@ -56,13 +54,13 @@ Convergence assumes valid backend records, correct publication, and eventual del
 | --- | --- |
 | D1 | Clients subscribed to the same channel converge on its authoritative records once changes stop and receipts and pages have been delivered. |
 | D2 | A newer record stamp replaces authority; older content cannot regress it. Equal stamps with equal content are idempotent; conflicting equal-stamp content does not replace the stored value. |
-| D3 | Each channel publication allocates a record stamp. Channel cursors advance independently of record stamps. |
-| D4 | Moves between channels preserve the latest content and correct claims despite delayed source or destination pages, including declared child membership. |
-| D5 | A newer deletion removes the content while retaining outstanding claims; an older deletion cannot erase newer content. Releasing one channel's claim preserves others. |
-| D6 | Unsubscribe releases that channel's claims and removes records no remaining channel claims, subject to pending local edits. A loader's null record is a deletion. |
-| D7 | A failure attributable to a loader read, including an unsupported model version, is reported to the application for the affected read. A loader may throw; no durable loader-failure queue is required. Unrelated reads can proceed even within the same page or channel. Failed reads do not erase local data, become deletions or count as successfully synchronized authority or satisfied checkpoints. |
+| D3 | A record's stamp advances once per successful change, whether or not the change is published, and never merely to distribute a version: publishing allocates channel cursors, not stamps. Every channel a version is published to carries that one stamp. The first publication of a record with no stamp establishes one; later publications of an unchanged record reuse it. Channel cursors advance independently of record stamps. |
+| D4 | The same record identity, model read version and stamp describe the same authoritative content on every delivery path: a receipt, a pull page and the live stream. Loaders name no channel; channels select which records are delivered, never alternate contents. A change to a record that several channels provide reaches each of them at the same stamp, and a delayed page from any of them cannot regress a newer version. |
+| D5 | A newer deletion removes the content; an older deletion cannot erase newer content. The stamp of a deleted record is retained as evidence, so older content delivered later cannot resurrect it. A parent's authoritative deletion cascades to its declared descendants locally without rewriting their stamp evidence. |
+| D6 | A channel is a delivery path, not an owner of local records. Unsubscribing stops that channel's delivery and resets its cursor; it removes no content, stamp, before image or pending operation. Retained data remains readable, is not promised to stay fresh without an update source, and is still updated by any other path that delivers a newer version. A loader's null record is a deletion. |
+| D7 | A failure attributable to a loader read, including an unsupported model version, is reported to the application for the affected read. A loader may throw; no durable loader-failure queue is required. Unrelated reads can proceed even within the same page or channel. Failed reads do not erase local data, become deletions or count as successfully synchronized authority. |
 
-D7 is an agreed target, not current behavior. Error reporting and retry granularity must preserve cursor and settlement correctness; see [Server / Pull](architecture/server/engine/pull.md#9-architecture-decisions).
+D7 is an agreed target, not current behavior, for pages: a refused or failed read still fails the whole page. Inside a push a loader refusal is that mutation's rejection (P6). See [Server / Pull](architecture/server/engine/pull.md#9-architecture-decisions).
 
 ## R. Resilience
 

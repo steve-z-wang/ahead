@@ -5,6 +5,7 @@ import type {
   HostRequest,
   Invalidation,
   Published,
+  Stamped,
 } from "../server/host-contract.mts";
 
 /** A capability over the caller's Prisma interactive transaction, never an owned connection. */
@@ -76,31 +77,76 @@ export class PrismaPersistence {
         return head;
       }
       case "scan": {
+        // The invalidation keeps its own cursor (delivery progress); the stamp
+        // is the record's current one, read in this same snapshot the loader
+        // reads. A record with no metadata is a storage defect: the join is
+        // kept outer so that it is reported, never dropped as a missing row.
         const rows = await tx.$queryRawUnsafe<any[]>(
-          "SELECT channel, cursor, model, identity_key, identity, stamp FROM ahead_invalidation WHERE channel=$1 AND cursor>$2 ORDER BY cursor LIMIT $3",
+          "SELECT i.channel, i.cursor, i.model, i.identity_key, i.identity, r.stamp FROM ahead_invalidation i LEFT JOIN ahead_record r ON r.model=i.model AND r.identity_key=i.identity_key WHERE i.channel=$1 AND i.cursor>$2 ORDER BY i.cursor LIMIT $3",
           r.channel,
           BigInt(r.after),
           r.limit,
         );
-        const scanned: Invalidation[] = rows.map((row) => ({
-          channel: row.channel,
-          cursor: safe(row.cursor),
-          model: row.model,
-          identityKey: row.identity_key,
-          identity: row.identity,
-          stamp: safe(row.stamp),
-        }));
+        const scanned: Invalidation[] = rows.map((row) => {
+          if (row.stamp === null || row.stamp === undefined)
+            throw new Error(
+              `Record metadata missing for ${row.model} ${row.identity_key} on channel ${row.channel}`,
+            );
+          return {
+            channel: row.channel,
+            cursor: safe(row.cursor),
+            model: row.model,
+            identityKey: row.identity_key,
+            identity: row.identity,
+            stamp: safe(row.stamp),
+          };
+        });
         return scanned;
       }
-      case "publish": {
-        // The record row is locked first, so concurrent notifies of one record
-        // serialise here and never allocate the same stamp.
-        const stamped = await tx.$queryRawUnsafe<any[]>(
+      case "advanceStamp": {
+        // The record row is locked by the upsert, so concurrent changes of one
+        // record serialise here and never allocate the same stamp.
+        const rows = await tx.$queryRawUnsafe<any[]>(
           "INSERT INTO ahead_record(model,identity_key,stamp) VALUES($1,$2,1) ON CONFLICT(model,identity_key) DO UPDATE SET stamp=ahead_record.stamp+1 RETURNING stamp",
           r.model,
           r.identityKey,
         );
-        const stamp = safe(stamped[0].stamp);
+        const stamped: Stamped = safe(rows[0].stamp);
+        return stamped;
+      }
+      case "ensureStamp": {
+        // Initialise at 1 only when the record has no stamp; an existing one
+        // is kept as it is. The no-op update (rather than DO NOTHING plus a
+        // SELECT) makes the row visible to this statement even under
+        // REPEATABLE READ when another transaction initialised it after our
+        // snapshot: that case surfaces as a serialization failure the runner
+        // retries, instead of a SELECT that cannot see the committed row.
+        const rows = await tx.$queryRawUnsafe<any[]>(
+          "INSERT INTO ahead_record(model,identity_key,stamp) VALUES($1,$2,1) ON CONFLICT(model,identity_key) DO UPDATE SET stamp=ahead_record.stamp RETURNING stamp",
+          r.model,
+          r.identityKey,
+        );
+        const stamped: Stamped = safe(rows[0].stamp);
+        return stamped;
+      }
+      case "publish": {
+        // Distribution allocates only the channel cursor. The record row is
+        // locked and must carry the stamp the request names: a stale one is
+        // a defect of the caller's ordering, never silently re-stamped.
+        const locked = await tx.$queryRawUnsafe<any[]>(
+          "SELECT stamp FROM ahead_record WHERE model=$1 AND identity_key=$2 FOR UPDATE",
+          r.model,
+          r.identityKey,
+        );
+        if (locked.length !== 1)
+          throw new Error(
+            `Record metadata missing for ${r.model} ${r.identityKey}: publish needs its stamp first`,
+          );
+        const stamp = safe(locked[0].stamp);
+        if (stamp !== r.stamp)
+          throw new Error(
+            `Publication names stamp ${r.stamp} but ${r.model} ${r.identityKey} is at stamp ${stamp}`,
+          );
         const rows = await tx.$queryRawUnsafe<any[]>(
           "INSERT INTO ahead_channel(channel,head) VALUES($1,1) ON CONFLICT(channel) DO UPDATE SET head=ahead_channel.head+1 RETURNING head",
           r.channel,

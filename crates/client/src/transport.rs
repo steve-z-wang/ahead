@@ -41,7 +41,7 @@ impl SyncCycle {
             return Ok(None);
         }
         // Subscribed channels only: a pull on any other channel would be discarded by
-        // `apply_page`, and a checkpoint the client cannot await settles on arrival.
+        // `apply_page`.
         let channels = client.desired_channels()?;
         if let Some(channel) = channels.iter().find(|c| !self.completed.contains(*c)) {
             let action = TransportAction {

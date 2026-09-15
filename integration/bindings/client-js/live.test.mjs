@@ -61,7 +61,22 @@ async function openClient() {
  const client = await runtime.Client.open({path:join(dir,'client.sqlite'),schema});
  return {client, async close() { await client.close(); await rm(dir,{recursive:true,force:true}); }};
 }
-const page = (text, cursor=0) => ({scope:'scope',fromCursor:cursor,toCursor:cursor+1,changes:[{syncId:cursor+1,model:'Entry',identity:{id:'live'},stamp:cursor+1,state:{text,note:null}}]});
+// `stamp` defaults to the cursor; a page for a record the client already holds at that
+// stamp must carry a newer one, because retained content is compared by stamp alone.
+const page = (text, cursor=0, stamp=cursor+1) => ({scope:'scope',fromCursor:cursor,toCursor:cursor+1,changes:[{syncId:cursor+1,model:'Entry',identity:{id:'live'},stamp,state:{text,note:null}}]});
+// A fake push receipt in the wire shape the client accepts: it answers the batch it
+// was asked (clientId and batchSequence echoed) and carries the authoritative state
+// of every record the batch's wire operations target, once per record, at a stamp
+// the fake server hands out monotonically. The "server" normalizes text by trimming
+// it, so a test can tell the receipt's content from the client's prediction.
+function receiptFor(body, stamps) {
+ const records=new Map();
+ for (const mutation of body.mutations) for (const op of mutation.operations ?? []) {
+  const state=op.op==='delete'?null:{text:String(op.values?.text ?? '').trim(),note:op.values?.note ?? null};
+  records.set(`${op.model}\0${JSON.stringify(op.identity)}`,{model:op.model,identity:op.identity,stamp:++stamps.next,state});
+ }
+ return {clientId:body.clientId,batchSequence:body.batchSequence,rejections:[],records:[...records.values()]};
+}
 async function until(predicate) {
  const deadline=Date.now()+5000;
  while(Date.now()<deadline) { if(await predicate()) return; await new Promise(r=>setTimeout(r,5)); }
@@ -87,9 +102,11 @@ test('client replaces subscriptions from saved cursors and guards queued obsolet
   const removed=client.unsubscribe('scope');const restored=client.subscribe('scope');
   gate.resolve();await tx;await removed;await restored;
   await until(()=>handshakes.length>=2);
-  assert.equal(await client.read('Entry',{id:'live'}), null);
+  assert.equal((await client.read('Entry',{id:'live'})).text,'first','unsubscribing retains the downloaded record; the queued obsolete page is dropped, not applied');
   await until(()=>pulls.length>=2);assert.equal(pulls.at(-1).fromCursor,0);
-  sockets.at(-1).send(JSON.stringify(page('fresh',0)));
+  // The resubscribed channel restarts at cursor 0, but the record is retained at
+  // stamp 1: the fresh page needs a newer stamp to replace it.
+  sockets.at(-1).send(JSON.stringify(page('fresh',0,3)));
   await until(async()=>(await client.read('Entry',{id:'live'}))?.text==='fresh');
   await connection.pause();await until(()=>server.clients.size===0);
   await connection.resume();await until(()=>handshakes.length>=3);
@@ -165,10 +182,10 @@ test('unified connection acknowledges listeners then catches up through HTTP bef
 });
 
 async function syncFixture(onPull) {
- const requests=[];const sockets=[];
+ const requests=[];const sockets=[];const stamps={next:0};
  const server=createServer(async(req,res)=>{
   const chunks=[];for await(const c of req)chunks.push(c);const body=JSON.parse(Buffer.concat(chunks));requests.push({url:req.url,body});
-  if(req.url==='/sync/mutations')res.end(JSON.stringify({requiredScope:'scope',requiredSyncId:1,requiredCheckpoints:[{scope:'scope',syncId:1}],rejections:[]}));
+  if(req.url==='/sync/mutations')res.end(JSON.stringify(receiptFor(body,stamps)));
   else await onPull(body,res,requests.filter(r=>r.url==='/sync/pull').length);
  });
  const ws=new WebSocketServer({server});ws.on('connection',s=>{sockets.push(s);s.on('message',m=>s.send(JSON.stringify({type:'subscribed',scopes:JSON.parse(m).scopes,rejections:[]})));});
@@ -229,8 +246,10 @@ test('a reusable server config isolates cancellation and no-channel clients only
  try{
   const ca=await a.client.connect(network.config);await b.client.subscribe('scope');const cb=await b.client.connect(network.config);
   await until(async()=>(await b.client.read('Entry',{id:'live'}))?.text==='shared');assert.equal(network.sockets.length,1);
-  await a.client.mutate({name:'Create',operations:[{model:'Entry',op:'create',identity:{id:'local'},values:{text:'push without channels',note:null}}]});
+  await a.client.mutate({name:'Create',operations:[{model:'Entry',op:'create',identity:{id:'local'},values:{text:'  push without channels  ',note:null}}]});
   await until(async()=>(await a.client.status()).pending===0);assert.equal(network.requests.filter(r=>r.url==='/sync/mutations').length,1);assert.equal(network.sockets.length,1);
+  assert.equal((await a.client.read('Entry',{id:'local'})).text,'push without channels','the receipt alone completes the batch and the row shows the server-returned state; no channel is involved');
+  assert.deepEqual(network.requests.find(r=>r.url==='/sync/mutations').body.models,{Entry:1},'the push declares the read contracts its receipt is served at');
   await ca.close();network.sockets[0].send(JSON.stringify(page('still connected',1)));
   await until(async()=>(await b.client.read('Entry',{id:'live'}))?.text==='still connected');await cb.close();
  }finally{await a.close();await b.close();await network.close();}
@@ -266,38 +285,42 @@ test('bounded receive overflow preserves in-flight HTTP progress and recovers th
  }finally{gate.resolve();await fixture.close();await network.close();}
 });
 
-test('push succeeds while the WebSocket upgrade is refused; nothing settles until the upgrade is allowed and HTTP catch-up runs',async()=>{
+test('push completes from its receipt while the WebSocket upgrade is refused; HTTP catch-up runs only once the upgrade is allowed',async()=>{
  const fixture=await openClient();const {client}=fixture;const errors=[];
- let allowUpgrades=false,upgradeAttempts=0,pushes=0,pulls=0;
+ let allowUpgrades=false,upgradeAttempts=0,pushes=0,pulls=0;const stamps={next:0};
  const server=createServer(async(req,res)=>{const chunks=[];for await(const c of req)chunks.push(c);const body=JSON.parse(Buffer.concat(chunks));
-  if(req.url==='/sync/mutations'){pushes++;res.end(JSON.stringify({requiredScope:'scope',requiredSyncId:1,requiredCheckpoints:[{scope:'scope',syncId:1}],rejections:[]}));return;}
-  pulls++;res.end(JSON.stringify(page('from catch-up',body.fromCursor)));});
+  if(req.url==='/sync/mutations'){pushes++;res.end(JSON.stringify(receiptFor(body,stamps)));return;}
+  // The catch-up page carries a stamp newer than the receipt's, so it is authority that updates the row.
+  pulls++;const caught=page('from catch-up',body.fromCursor);res.end(JSON.stringify({...caught,changes:[{...caught.changes[0],stamp:stamps.next+1}]}));});
  const ws=new WebSocketServer({noServer:true});
  server.on('upgrade',(req,socket,head)=>{upgradeAttempts++;if(!allowUpgrades){socket.end('HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n');return;}ws.handleUpgrade(req,socket,head,s=>{s.on('message',m=>s.send(JSON.stringify({type:'subscribed',scopes:JSON.parse(m).scopes,rejections:[]})));});});
  await new Promise(r=>server.listen(0,'127.0.0.1',r));
  try{
   await client.transaction(tx=>tx.direct({model:'Entry',op:'create',identity:{id:'live'},values:{text:'local'}}));
   await client.subscribe('scope');
-  await client.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'live'},values:{text:'edited offline'}}]});
+  await client.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'live'},values:{text:'  edited offline  '}}]});
+  assert.equal((await client.read('Entry',{id:'live'})).text,'  edited offline  ','the local prediction is visible before the push');
   await client.connect({url:`http://127.0.0.1:${server.address().port}`,token:'secret'},{onError:e=>errors.push(e)});
   await until(()=>pushes===1&&upgradeAttempts>=2);
   assert.equal(pulls,0,'no HTTP catch-up runs without an acknowledged WebSocket: there is no polling fallback');
-  assert.equal((await client.status()).pending,1,'the accepted mutation waits for a checkpoint no page has delivered');
-  assert.equal((await client.read('Entry',{id:'live'})).text,'edited offline');
+  await until(async()=>(await client.status()).pending===0);
+  assert.equal(pulls,0,'the batch completed from its receipt alone: no page was delivered');
+  assert.equal((await client.read('Entry',{id:'live'})).text,'edited offline','the row shows the server-returned state as soon as the response is applied');
   assert.ok(errors.some(e=>/live failed: 503/.test(String(e.message))),`upgrade refusals reach onError: ${errors.map(e=>e.message)}`);
   allowUpgrades=true;
-  await until(async()=>(await client.status()).pending===0);
+  await until(async()=>(await client.read('Entry',{id:'live'})).text==='from catch-up');
   assert.equal(pushes,1,'the receipt was not re-requested');
   assert.ok(pulls>=1,'catch-up ran over HTTP once the upgrade was acknowledged');
-  assert.equal((await client.read('Entry',{id:'live'})).text,'from catch-up');
+  assert.equal((await client.status()).pending,0);
  }finally{await fixture.close();for(const s of ws.clients)s.terminate();await new Promise(r=>ws.close(r));await new Promise(r=>server.close(r));}
 });
 test('a 401 on both lanes at once shares one refreshAuth; both lanes recover with the new token',async()=>{
  const fixture=await openClient();const {client}=fixture;const errors=[];
- let token='expired',refreshes=0,unauthorized=0,pushes=0,accepted=0,release;const gate=new Promise(r=>{release=r;});
+ let token='expired',refreshes=0,unauthorized=0,pushes=0,accepted=0,release;const gate=new Promise(r=>{release=r;});const stamps={next:0};
  const server=createServer(async(req,res)=>{const chunks=[];for await(const c of req)chunks.push(c);const body=JSON.parse(Buffer.concat(chunks));
   if(req.headers.authorization!=='Bearer valid'){unauthorized++;res.statusCode=401;res.end();return;}
-  if(req.url==='/sync/mutations'){pushes++;res.end(JSON.stringify({requiredScope:'other',requiredSyncId:1,requiredCheckpoints:[{scope:'other',syncId:1}],rejections:[]}));return;}
+  // The receipt names no channel: the push completes on its own, whatever the live lane is doing.
+  if(req.url==='/sync/mutations'){pushes++;res.end(JSON.stringify(receiptFor(body,stamps)));return;}
   res.end(JSON.stringify({scope:'scope',fromCursor:body.fromCursor,toCursor:body.fromCursor,changes:[]}));});
  const ws=new WebSocketServer({noServer:true});
  server.on('upgrade',(req,socket,head)=>{if(req.headers.authorization!=='Bearer valid'){unauthorized++;socket.end('HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n');return;}ws.handleUpgrade(req,socket,head,s=>{accepted++;s.on('message',m=>s.send(JSON.stringify({type:'subscribed',scopes:JSON.parse(m).scopes,rejections:[]})));});});
@@ -314,6 +337,7 @@ test('a 401 on both lanes at once shares one refreshAuth; both lanes recover wit
   release();
   await until(()=>accepted>=1&&pushes>=1);
   await until(async()=>(await client.status()).pending===0);
+  assert.equal((await client.read('Entry',{id:'live'})).text,'edited offline','the receipt completed the batch without any page');
   assert.equal(refreshes,1,'no further refresh once the token is valid');
   assert.equal(unauthorized,2);
  }finally{await fixture.close();for(const s of ws.clients)s.terminate();await new Promise(r=>ws.close(r));await new Promise(r=>server.close(r));}

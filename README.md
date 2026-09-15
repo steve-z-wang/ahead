@@ -35,7 +35,7 @@ Local-first apps read and write data on the device, so everyday interactions don
 
 Clients push mutations over HTTP. On connection, they catch up from saved progress over HTTP, then receive ongoing record updates over WebSocket. Ahead manages this as one connection.
 
-On your server, **handlers** process writes and **loaders** read records to send to clients. A **channel** groups record changes for clients to subscribe to; `notify` marks which records changed.
+On your server, **handlers** process writes and **loaders** read records to send to clients. After a handler runs, Ahead reads the changed records back through your loaders and returns them to the client in the receipt. A **channel** groups record changes for other clients to subscribe to; `publish` sends a mutation's changes there.
 
 Writes update local SQLite immediately, so reads see changes before sync completes. Changes to local data update query subscriptions (`watch`). If the backend rejects a mutation, its local changes roll back.
 
@@ -118,11 +118,12 @@ This example uses Prisma with PostgreSQL and the [included database adapter](web
 ```ts
 // Handle a write using your database transaction.
 const handlers: Handlers<Tx> = {
-  async addTodo({ input, tx, notify }) {
+  async addTodo({ input, tx, publish }) {
     await tx.todo.create({ data: input.todo });
 
-    // Mark these records as changed in the "todos" channel.
-    notify({ channel: "todos", records: [input.todo] });
+    // The new todo is read back for the caller's receipt regardless;
+    // publishing distributes it to subscribers of the "todos" channel.
+    publish({ channel: "todos" });
   },
 };
 

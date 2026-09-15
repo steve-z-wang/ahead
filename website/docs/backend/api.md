@@ -44,9 +44,9 @@ The Rust runtime processes the sync protocol and nothing else. The rules below a
 
 | Rule | Who owns it | What the runtime does |
 | --- | --- | --- |
-| Authorization | Handlers decide what `userId` may write; loaders decide what `userId` may see on `channel` and return `null` for the rest. | Authenticates the request and passes `userId` and `channel` through. There is no channel-level policy. |
+| Authorization | Handlers decide what `userId` may write; loaders decide what `userId` may see and return `null` for the rest, whatever channel asked. | Authenticates the request and passes `userId` through. There is no channel-level policy. |
 | Unique constraints and identities | Your database schema. `@@unique` and `@@id` are enforced on the client only; the client's local database refuses a violating write, but nothing checks the server. | Decodes identities and patches by shape. A duplicate that your database allows is stored. |
-| Child deletion | Your handler. `onTargetDelete: delete` is a client-side cascade: the client deletes the children locally, and those deletes never reach the server. A handler that deletes a parent must delete its children itself and notify each channel that delivered them. | Delivers the parent's delete when the handler notifies it. |
+| Child deletion | Your handler. `onTargetDelete: delete` is a client-side cascade: the client deletes the children locally, and those deletes never reach the server. A handler that deletes a parent must delete its children itself, report them with `changes.add` and publish them to each channel that delivered them. | Reads the parent back as deleted and delivers it; a child the handler did not report stays on other clients until a channel delivers it. |
 | Client identity | Each signed-in user gets their own local client database. A client id is bound to the first user that pushed with it; a push from another user with the same client id answers `403 client.owner_mismatch`, and there is no reassignment. | Stores the owner with the client row. |
 | Backend language | TypeScript on Node, through the generated `createBackend`. The Dart package is a client SDK; there is no Dart or Rust-hosted backend. | Runs the same Rust engine inside the Node addon. |
 | Prerequisite expressions | `@requires(Name(field: self))` is the only supported form: every argument is `self`, the value of the annotated field. The runner that satisfies prerequisites is client code. | Never sees prerequisites; they gate when the client sends a mutation, not what the backend receives. |
@@ -55,13 +55,15 @@ These are accepted limits of the current runtime, not planned features. See [dep
 
 ## Handlers
 
+A handler writes to your database. Ahead then reads every record the mutation changed back through your loader, in the same transaction, and returns that content to the client in the receipt. The simplest handler performs the write and nothing else:
+
 ```ts
 // handlers.ts
 import type { Prisma } from '@prisma/client';
 import { MutationRejected, type Handlers } from './generated/backend.ts';
 
 export const handlers: Handlers<Prisma.TransactionClient> = {
-  async edit({ input, tx, userId, notify }) {
+  async edit({ input, tx, userId }) {
     // In your application, check userId's write permission here.
     const { identity, patch } = input.entry;
     if (patch.text === 'reject') throw new MutationRejected('entry.denied');
@@ -72,12 +74,32 @@ export const handlers: Handlers<Prisma.TransactionClient> = {
         ...(typeof patch.text === 'string' ? { text: patch.text.trim() } : {}),
       },
     });
-    notify({ channel: 'book:demo', records: [input.entry] });
   },
 };
 ```
 
-This reproduces the demo's normalization and rejection behavior. It is not an application permission policy; the demo trusts its development user.
+The client that sent the mutation receives the trimmed text from the receipt, with or without a subscription. Other clients learn of the change only if the handler publishes it to a channel they subscribe to:
+
+```ts
+// handlers.ts
+import type { Prisma } from '@prisma/client';
+import { Entry, MutationRejected, type Handlers } from './generated/backend.ts';
+
+export const handlers: Handlers<Prisma.TransactionClient> = {
+  async edit({ input, tx, userId, changes, publish }) {
+    const { identity, patch } = input.entry;
+    if (patch.text === 'reject') throw new MutationRejected('entry.denied');
+    await tx.entry.update({ where: identity, data: patch });
+    // A write to a record the uploaded operations did not name: report it.
+    await tx.entry.update({ where: { id: 'entry-2' }, data: { text: 'also touched' } });
+    changes.add(Entry({ id: 'entry-2' }));
+    // Distribute this mutation's changes to the channel's subscribers.
+    publish({ channel: 'book:demo' });
+  },
+};
+```
+
+These reproduce the demo's normalization and rejection behavior. They are not an application permission policy; the demo trusts its development user.
 
 `HandlerCall<Tx, Input>` contains:
 
@@ -86,9 +108,12 @@ This reproduces the demo's normalization and rejection behavior. It is not an ap
 | `input` | Generated mutation input, such as `EditInput`; update slots have `identity` and `patch` |
 | `tx` | Your database transaction object |
 | `userId` | Authenticated caller; use it for business authorization |
-| `notify` | Synchronous function for declaring changed records and channels |
+| `changes` | The records this mutation changed: `changes.records` starts as the records the uploaded operations target; `changes.add(record)` reports one more |
+| `publish` | Synchronous function for publishing changed records to a channel; see [Publishing](#publishing) |
 
-A handler returns `Promise<void | { channel: string }>`. Returning void selects the only notified channel as its receipt checkpoint. If several channels were notified, return one of those channels explicitly. No notification causes `handler.no_channel`; several channels without a selection cause `handler.ambiguous_checkpoint`. These are programming errors that abort the batch.
+A handler returns `Promise<void>`; its return value is ignored. When it returns, Ahead allocates a new **stamp** for every record in `changes`, whether or not the values differ from before, reads each of them back through the loader of the model version the client declared, and puts the results in the receipt. A record the handler changed without reporting it is not stamped, not read back and not in the receipt: use `changes.add` for every write beyond the uploaded operations, a related row you update or a child you delete included. Reporting is not publishing; nothing reaches other clients until the handler calls `publish`.
+
+A loader is channel-independent: the row it returns for a record is the row every client receives for it, in the receipt, in a catch-up page and on the live stream, at the same stamp. What a loader may vary by is `userId`.
 
 One mutation can have several slots and perform several business writes. Ahead runs it in a savepoint inside the batch transaction. The schema describes the local operation and typed input; it does not require the backend to replay the same database operations. The backend can normalize values or use different tables.
 
@@ -111,9 +136,9 @@ import type { Prisma } from '@prisma/client';
 import type { Loaders } from './generated/backend.ts';
 
 export const loaders: Loaders<Prisma.TransactionClient> = {
-  async entry({ ids, tx, userId, channel }) {
+  async entry({ ids, tx, userId }) {
     // Replace this demo policy with your application's authorization rules.
-    if (userId !== 'demo-user' || channel !== 'book:demo') {
+    if (userId !== 'demo-user') {
       return ids.map(() => null);
     }
     return Promise.all(ids.map(identity => tx.entry.findUnique({ where: identity })));
@@ -128,7 +153,8 @@ export const loaders: Loaders<Prisma.TransactionClient> = {
 | `ids` | Read-only list of typed record identities |
 | `tx` | Your transaction, shared with sync persistence for this request |
 | `userId` | Caller whose visibility must be checked |
-| `channel` | Channel whose synchronization requested these records |
+
+A loader is not told which channel, if any, asked: it serves the receipt of the client's own mutation, catch-up pages and the live stream alike, so the same identity, model version and stamp always describe the same content.
 
 A loader returns `Promise<readonly (Record | null)[]>`. Return exactly one item per identity, in the same order. Do not filter out missing rows or return a differently ordered database result directly.
 
@@ -147,36 +173,45 @@ What each item may be:
 
 | Item | Meaning | Result |
 | --- | --- | --- |
-| A row object | The record's current state for this user on this channel | Delivered with the stamp stored by the record's publication |
-| `null` | The record does not exist, or this user must not see it on this channel | Delivered as a deletion. A newer stamp clears the authoritative row even if another channel still claims it; pending local operations are replayed on that state. |
+| A row object | The record's current state for this user | Delivered with the record's current stamp |
+| `null` | The record does not exist, or this user must not see it | Delivered as a deletion. A newer stamp clears the authoritative row, whichever channel delivered it; the client keeps the stamp so older content cannot bring the record back; pending local operations are replayed on that state. |
+| a thrown `MutationRejected` (or an error `translateRejection` maps to a code) | A refused read | In a push, the mutation whose result is being read back is rejected with that code and rolled back; in a pull, the page fails with `loader.refused` and `onError`, and the client's cursor does not move |
 | `undefined`, a missing entry, a non-array result | A defect | The pull fails with `500 server` and `onError`; the client's cursor does not move |
 
 A row object must match the generated model type exactly. Include every non-identity field: a nullable field that is absent reads as `null`, but an absent non-nullable field is a defect. The identity fields may be present. Any other property, such as an extra database column or a relation object, is a defect. Map your rows to the model type rather than returning a wider database row.
 
-Loaders run during synchronization, not when the app calls local `get`, `query` or `watch`. A malformed result or thrown error fails the request; the backend does not silently skip the failed loader result and advance its cursor.
+Loaders run during synchronization and during a push's readback, not when the app calls local `get`, `query` or `watch`. A malformed result or thrown error fails the request; the backend does not silently skip the failed loader result and advance its cursor.
 
-## Notifications
+## Publishing
 
-`notify({ channel, records })` declares changed identities. It does not broadcast the supplied object's field values. A later loader call determines the current content visible to the subscriber.
+`publish({ channel })` distributes the mutation's final change set, records added with `changes.add` after the call included, to `channel`. `publish({ channel, records })` distributes exactly `records` instead: a subset, or records the mutation did not change (an empty array publishes nothing). Publishing does not broadcast the supplied object's field values; subscribers receive what the loader returns.
 
 ```ts
-import { Entry } from './generated/backend.ts';
+import type { Prisma } from '@prisma/client';
+import { Entry, type Handlers } from './generated/backend.ts';
 
-notify({ channel: 'book:demo', records: [Entry({ id: 'entry-1' })] });
+export const handlers: Handlers<Prisma.TransactionClient> = {
+  async edit({ input, tx, publish }) {
+    await tx.entry.update({ where: input.entry.identity, data: input.entry.patch });
+    publish({ channel: 'book:demo' });
+    publish({ channel: 'book:archive', records: [Entry({ id: 'entry-1' })] });
+  },
+};
 ```
 
 | Interface | Shape |
 | --- | --- |
 | `RecordRef` | `{ model: string, identity: object }` |
-| `NotifyArgs` | `{ channel: string, records: readonly (RecordRef | object)[] }` |
+| `PublishArgs` | `{ channel: string, records?: readonly (RecordRef | object)[] }` |
+| `Changes` | `{ records: readonly RecordRef[], add(record: RecordRef | object): void }` |
 | Generated model reference function | `Entry(identity: EntryIdentity): RecordRef` |
-| Handler `notify` | `(args: NotifyArgs) => void` |
+| Handler `publish` | `(args: PublishArgs) => void` |
 
-The channel must be nonblank. Decoded handler slots such as `input.entry` carry record-reference metadata and can be passed directly. Spreading or cloning a slot can lose this metadata; use the generated model reference function when constructing a reference yourself. The low-level `RECORD` symbol marks these decoded references; applications normally do not need to manipulate it.
+The channel must be nonblank. Decoded handler slots such as `input.entry` carry record-reference metadata and can be passed to `changes.add` and `publish` directly. Spreading or cloning a slot can lose this metadata; use the generated model reference function when constructing a reference yourself. The low-level `RECORD` symbol marks these decoded references; applications normally do not need to manipulate it.
 
-Notify every channel that distributes the changed record, including when its loader should now return null. Ahead does not infer changes from arbitrary writes to your database. Multiple calls are allowed, but a successful handler must notify at least one channel.
+Publish to every channel that distributes a changed record, including when its loader should now return null. Ahead does not infer publications from writes to your database. Several calls are allowed; none is required, and a handler that publishes nothing still succeeds with its records in the receipt.
 
-Each notification allocates a per-record **stamp** and a channel **cursor**. Stamps prevent older content from another channel from overwriting newer content. When channels return different views of one identity, notification order therefore matters. Channels are not isolated copies of the same record. See [concepts](../concepts.md).
+A change allocates one **stamp** per record; publishing allocates a **cursor** in each channel and carries that same stamp to all of them. Publishing an unchanged record reuses its current stamp (a record that has never been stamped gets its first one). Stamps prevent older content delivered later, on any channel, from overwriting newer content. See [concepts](../concepts.md).
 
 ## Authentication
 
@@ -193,9 +228,9 @@ Each notification allocates a per-record **stamp** and a channel **cursor**. Sta
 | `onError(error)` | Log server failures that are returned to the client as a generic server error |
 | `EngineError` | A failure from the native engine: `code` (stable), `message` (readable, may change), `details` (fields the code promises) |
 
-Codes must match `^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$`, such as `entry.denied`. An invalid code is itself an error. A recognized business rejection rolls back that mutation's business writes and notifications and is included in the receipt. The client rolls back its optimistic change and retains a rejection entry. A network error is not a business rejection and must not cause a duplicate business action.
+Codes must match `^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$`, such as `entry.denied`. An invalid code is itself an error. A recognized business rejection rolls back that mutation's business writes, stamps and publications and is included in the receipt. A loader that throws one while a push reads the mutation's results back rejects that mutation the same way. The client rolls back its optimistic change and retains a rejection entry. A network error is not a business rejection and must not cause a duplicate business action.
 
-Unexpected exceptions abort the batch transaction. Do not translate every exception into a rejection: a database outage or programming error should remain a retryable request failure. `onError` receives failures including authentication exceptions, persistence faults, checkpoint errors and live-drain failures.
+Unexpected exceptions abort the batch transaction. Do not translate every exception into a rejection: a database outage or programming error should remain a retryable request failure. `onError` receives failures including authentication exceptions, persistence faults, publication errors and live-drain failures.
 
 Protocol refusals are answered with a status and a JSON body chosen by the engine error's `code`. Rewording a message never changes a status.
 
@@ -205,7 +240,9 @@ Protocol refusals are answered with a status and a JSON body chosen by the engin
 | `client.owner_mismatch` | 403 | The client identity belongs to another user |
 | `gap`, `overlap` | 409 | The batch sequence is not the next one and not a retry of the last |
 | `mutation_version_unsupported` | 409 | A mutation version this backend does not serve; the body adds `ordinal`, `name` and `version` |
-| `model_version_unsupported` | 409 | A model read contract this backend does not serve: the client declared an unknown model or an unretained version (body adds `model` and `version`), or a page holds a model the client did not declare (body adds `model`). On the WebSocket the handshake closes with `1002` and this code as the reason. |
+| `model_version_unsupported` | 409 | A model read contract this backend does not serve: the client declared an unknown model or an unretained version (body adds `model` and `version`), or a page holds a model the client did not declare (body adds `model`). On the WebSocket the handshake closes with `1002` and this code as the reason. Inside a push, a handler changing a model the client did not declare rejects that mutation with this code instead. |
+| `loader.refused` | 500 `{ code: "server" }` | A loader refused a read while a page was being served; the `EngineError` with the model and code goes to `onError`. In a push the same refusal is the mutation's rejection, not a request failure. |
+| `handler.invalid` | 500 `{ code: "server" }` | The handler's settlement could not be used: an invalid rejection code, or a change or publication naming a record without a model or an object identity |
 | anything else | 500 `{ code: "server" }` | A server-side failure; the `EngineError` or thrown error goes to `onError` |
 
 ## Listener
@@ -224,7 +261,7 @@ Generated clients use all three routes automatically from one `server` configura
 
 ## Background writes
 
-Writes outside handlers also need notification. `await backend.notify(tx, args)` stores a one-shot notification inside your existing transaction. This alone does not signal a later commit to live sessions.
+Writes outside handlers have no readback and no receipt; they reach clients only through channels. `await backend.notify(tx, args)` advances the stamp of every record in `args.records` and publishes them to `args.channel` inside your existing transaction. This alone does not signal a later commit to live sessions.
 
 For commit-aware wakeups, use a bound session:
 
@@ -249,16 +286,16 @@ Here `database` is the same `Database<Tx>` adapter passed to `createBackend`, an
 
 | Bound-session method | Contract |
 | --- | --- |
-| `notify(args)` | Await persistence of notification in the supplied transaction |
+| `notify(args)` | Await the stamps and the publication in the supplied transaction; `args` is `NotifyArgs`, `{ channel: string, records: readonly (RecordRef | object)[] }` |
 | `assertCommittable()` | Await/check pending work; failure must abort the transaction |
 | `afterCommit()` | Capture a zero-argument wakeup callback; call it only after the database commits |
 | `close()` | Release the bound session, including on rollback |
 
-Unlike handler `notify`, external `notify` is asynchronous and must be awaited. Never invoke the commit callback if the transaction fails. Wakeups are process-local; distributed wake delivery needs additional application infrastructure.
+Unlike a handler's `publish`, external `notify` is asynchronous, must be awaited, and allocates a new stamp per record on every call, because it is the only place the change is reported. Never invoke the commit callback if the transaction fails. Wakeups are process-local; distributed wake delivery needs additional application infrastructure.
 
 ## Extension points
 
-`loaderHooks` maps model names to `{ prepareForViewer(call): Promise<void> }`. The hook runs before that model's loader in the same request context. Its failure fails the load. Use it only if viewer-specific preparation is needed; a loader already receives user and channel context.
+`loaderHooks` maps model names to `{ prepareForViewer(call): Promise<void> }`. The hook runs before that model's loader in the same request context. Its failure fails the load. Use it only if viewer-specific preparation is needed; a loader already receives the user.
 
 `native?: Native` injects the native bridge when packaging it elsewhere. It implements `validateConfig`, `processPush`, `processPull`, `publish`, `negotiateLive` and `pullLive` with the string/JSON callback contracts in the [SDK source](https://github.com/zanminwang/ahead/blob/main/packages/server/index.mts). The default binding comes from this repository's Node addon. This is a packaging seam; the generated handlers and loaders remain the application contract.
 

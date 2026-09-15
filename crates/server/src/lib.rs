@@ -2,14 +2,15 @@
 pub mod error;
 pub mod host;
 pub mod live;
+mod readback;
 use ahead_core::{
-    ChannelCheckpoint, PullPage, PullRequest, PushReceipt, PushRequest, RecordChange, Rejection,
-    Schema, limits, read_counter,
+    PullPage, PullRequest, PushReceipt, PushRequest, RecordChange, RecordKey, Rejection, Schema,
+    limits, read_counter,
 };
 pub use error::{Error, code};
-use host::{
-    Acknowledged, Claimed, Handled, Head, HostExt, HostRequest, Invalidation, Loaded, Published,
-};
+use host::Stamped;
+use host::{Acknowledged, Claimed, Handled, Head, HostExt, HostRequest, Invalidation, Loaded};
+use readback::{Changes, Outcome};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::{
@@ -288,9 +289,11 @@ fn invalid<T>(r: ahead_core::Result<T>) -> Result<T> {
     r.map_err(|_| Error::code("mutation.invalid"))
 }
 pub fn decode_arguments(config: &Value, body: &Value) -> Result<Value> {
-    decode(&Config::decode(config.clone())?, body)
+    decode(&Config::decode(config.clone())?, body).map(|(args, _)| args)
 }
-fn decode(c: &Config, body: &Value) -> Result<Value> {
+/// The decoded slot arguments and the records the uploaded operations target,
+/// in operation order: the seed of the mutation's change set.
+fn decode(c: &Config, body: &Value) -> Result<(Value, Vec<RecordKey>)> {
     let d = c.descriptor(body)?;
     let schema = d.input.as_ref().unwrap_or(&c.schema);
     let ops = body["operations"]
@@ -298,6 +301,7 @@ fn decode(c: &Config, body: &Value) -> Result<Value> {
         .ok_or_else(|| Error::code("mutation.invalid"))?;
     let mut at = 0;
     let mut args = Map::new();
+    let mut targets = vec![];
     for slot in &d.slots {
         let mut values = vec![];
         while at < ops.len() && ops[at]["model"] == slot.model && ops[at]["op"] == slot.operation {
@@ -315,6 +319,7 @@ fn decode(c: &Config, body: &Value) -> Result<Value> {
             );
             let key = invalid(schema.record_key(&slot.model, &identity))?;
             let mut argument = json!({"identity":key.identity});
+            targets.push(key.clone());
             if slot.operation != "delete" {
                 let source = op["values"]
                     .as_object()
@@ -419,7 +424,7 @@ fn decode(c: &Config, body: &Value) -> Result<Value> {
             }
         }
     }
-    Ok(Value::Object(args))
+    Ok((Value::Object(args), targets))
 }
 fn machine_name(name: &str) -> String {
     let mut s = String::new();
@@ -463,6 +468,11 @@ async fn head(host: &impl Host, channel: &str) -> Result<u64> {
         .await?;
     Ok(cursor)
 }
+/// Process one push: every mutation runs in its own savepoint, its changed
+/// records are stamped and read back by the loaders in that savepoint, and
+/// the receipt carries the final authority of every record a successful
+/// mutation changed. The receipt is stored before the outer transaction
+/// commits, so a retry answers from storage without running a handler.
 pub async fn process_push(
     config: &Config,
     owner: &str,
@@ -471,6 +481,7 @@ pub async fn process_push(
 ) -> Result<String> {
     principal(owner)?;
     let request = PushRequest::decode(bytes).map_err(request_invalid)?;
+    config.check_declared(&request.models)?;
     let locked: Claimed = host
         .call_typed(HostRequest::Claim {
             owner: owner.into(),
@@ -511,7 +522,8 @@ pub async fn process_push(
         }
     }
     let mut rejections = vec![];
-    let mut channels = BTreeSet::new();
+    // The last successful authority per record, in canonical key order.
+    let mut results: BTreeMap<String, ahead_core::AuthorityRecord> = BTreeMap::new();
     for m in &request.mutations {
         // `decode` resolves the same descriptor first, so both refuse together.
         let (name, mutation_version) = match config.descriptor(&m.raw) {
@@ -524,8 +536,8 @@ pub async fn process_push(
                 continue;
             }
         };
-        let args = match decode(config, &m.raw) {
-            Ok(a) => a,
+        let (args, targets) = match decode(config, &m.raw) {
+            Ok(decoded) => decoded,
             Err(refused) => {
                 rejections.push(Rejection {
                     ordinal: m.ordinal,
@@ -547,41 +559,52 @@ pub async fn process_push(
                 ordinal: m.ordinal,
             })
             .await?;
-        match settlement {
-            Handled::Rejected { rejection } => {
+        let outcome = match settlement {
+            Handled::Rejected { rejection } => Outcome::Refused(rejection),
+            Handled::Settled {
+                changes,
+                publications,
+            } => {
+                let mut set = Changes::new();
+                for key in targets {
+                    readback::insert(&mut set, key)?;
+                }
+                for record in &changes {
+                    readback::insert(&mut set, readback::resolve(config, record)?)?;
+                }
+                readback::read_back(config, &request.models, owner, &set, &publications, host)
+                    .await?
+            }
+        };
+        match outcome {
+            Outcome::Refused(code) => {
                 let Acknowledged = host
                     .call_typed(HostRequest::Rollback { ordinal: m.ordinal })
                     .await?;
                 rejections.push(Rejection {
                     ordinal: m.ordinal,
-                    code: rejection,
+                    code,
                 });
             }
-            Handled::Settled { channel } => {
-                channels.insert(channel);
+            Outcome::Records(records) => {
+                for record in records {
+                    let key = config
+                        .schema
+                        .record_key(&record.model, &record.identity)
+                        .map_err(internal)?;
+                    results.insert(key.encoded().map_err(internal)?, record);
+                }
             }
         }
         let Acknowledged = host
             .call_typed(HostRequest::Release { ordinal: m.ordinal })
             .await?;
     }
-    let mut checkpoints = vec![];
-    for ch in channels {
-        checkpoints.push(ChannelCheckpoint {
-            cursor: head(host, &ch).await?,
-            channel: ch,
-        });
-    }
-    checkpoints.sort_by(|a, b| a.channel.encode_utf16().cmp(b.channel.encode_utf16()));
-    let (required_channel, required_cursor) = match checkpoints.first() {
-        Some(cp) => (cp.channel.clone(), cp.cursor),
-        None => (String::new(), 0),
-    };
     let receipt = PushReceipt {
-        required_checkpoints: checkpoints,
-        required_channel,
-        required_cursor,
+        client_id: request.client_id.clone(),
+        batch_sequence: request.batch_sequence,
         rejections,
+        records: results.into_values().collect(),
     };
     let text = String::from_utf8(receipt.encode().map_err(internal)?).map_err(internal)?;
     let Acknowledged = host
@@ -672,9 +695,20 @@ pub async fn process_pull(
                 version,
                 identities,
                 owner: owner.into(),
-                channel: request.channel.clone(),
             })
             .await?;
+        // A refused read fails the page as a whole today: per-read isolation
+        // and its reporting are [#95](https://github.com/zanminwang/ahead/issues/95).
+        let loaded = match loaded {
+            Loaded::Rows(rows) => rows,
+            Loaded::Refused { rejection } => {
+                return Err(Error::new(
+                    code::LOADER_REFUSED,
+                    format!("loader refused {model}: {rejection}"),
+                )
+                .with_details(json!({"model":model,"rejection":rejection})));
+            }
+        };
         if loaded.len() != indexes.len() {
             return Err(Error::new(code::LOADER_INVALID, "misaligned loader result"));
         }
@@ -734,18 +768,22 @@ pub async fn publish(
             .map_err(|e| publish_invalid(&e.to_string()))?;
         keys.insert(key.encoded().map_err(internal)?, key);
     }
+    // An external notification reports a business change: each record gets
+    // one new stamp, and every selected channel distributes that same version.
+    let mut stamps = BTreeMap::new();
+    for (encoded, key) in &keys {
+        let Stamped(stamp) = host
+            .call_typed(HostRequest::AdvanceStamp {
+                model: key.model.clone(),
+                identity_key: key.encoded_identity().map_err(internal)?,
+            })
+            .await?;
+        stamps.insert(encoded.clone(), stamp);
+    }
     let mut result = vec![];
     for channel in selected {
-        for key in keys.values() {
-            // The counters are validated on decode; the engine re-reads `head`.
-            let Published { .. } = host
-                .call_typed(HostRequest::Publish {
-                    channel: channel.into(),
-                    model: key.model.clone(),
-                    identity: key.identity.clone(),
-                    identity_key: key.encoded_identity().map_err(internal)?,
-                })
-                .await?;
+        for (encoded, key) in &keys {
+            readback::publish_one(host, channel, key, stamps[encoded]).await?;
         }
         result.push(json!({"scope":channel,"syncId":head(host,channel).await?}));
     }

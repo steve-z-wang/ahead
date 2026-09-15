@@ -31,10 +31,12 @@ fn rust_selects_transport_actions_and_reuses_frozen_request_on_retry() {
     let mut host = RuntimeHost::default();
     let schema: Value =
         serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
-    let id = host
+    let opened = host
         .call(json!({"op":"open","path":dir.path().join("db"),"schema":schema,"owner":"u"}))
-        .unwrap()["value"]["handle"]
+        .unwrap()["value"]
         .clone();
+    let id = opened["handle"].clone();
+    let client_id = opened["clientId"].clone();
     host.call(json!({"op":"channel","handle":id,"channel":"book","subscribed":true}))
         .unwrap();
     host.call(json!({"op":"startSync","handle":id})).unwrap();
@@ -50,7 +52,12 @@ fn rust_selects_transport_actions_and_reuses_frozen_request_on_retry() {
         host.call(json!({"op":"next","handle":id})).unwrap()["value"],
         action
     );
-    host.call(json!({"op":"complete","handle":id,"response":{"requiredScope":"book","requiredSyncId":2,"requiredCheckpoints":[{"scope":"book","syncId":2}],"rejections":[]}})).unwrap();
+    host.call(json!({"op":"complete","handle":id,"response":{"clientId":client_id,"batchSequence":1,"rejections":[],"records":[{"model":"Entry","identity":{"id":"e"},"stamp":2,"state":{"text":"B","note":null}}]}})).unwrap();
+    assert_eq!(
+        host.call(json!({"op":"status","handle":id})).unwrap()["value"]["pending"],
+        0,
+        "the receipt completes the push"
+    );
     assert_eq!(
         host.call(json!({"op":"next","handle":id})).unwrap()["value"]["kind"],
         "pull"
@@ -63,10 +70,12 @@ fn live_push_cycle_keeps_receipts_but_leaves_reads_to_the_stream() {
     let mut host = RuntimeHost::default();
     let schema: Value =
         serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
-    let id = host
+    let opened = host
         .call(json!({"op":"open","path":dir.path().join("db"),"schema":schema}))
-        .unwrap()["value"]["handle"]
+        .unwrap()["value"]
         .clone();
+    let id = opened["handle"].clone();
+    let client_id = opened["clientId"].clone();
     host.call(json!({"op":"channel","handle":id,"channel":"book","subscribed":true}))
         .unwrap();
     host.call(json!({"op":"startSync","handle":id,"pushOnly":true}))
@@ -83,16 +92,23 @@ fn live_push_cycle_keeps_receipts_but_leaves_reads_to_the_stream() {
         host.call(json!({"op":"next","handle":id})).unwrap()["value"],
         action
     );
-    host.call(json!({"op":"complete","handle":id,"response":{"requiredScope":"book","requiredSyncId":1,"rejections":[]}})).unwrap();
+    host.call(json!({"op":"complete","handle":id,"response":{"clientId":client_id,"batchSequence":1,"rejections":[],"records":[{"model":"Entry","identity":{"id":"e"},"stamp":1,"state":{"text":"normalized","note":null}}]}})).unwrap();
     assert!(host.call(json!({"op":"next","handle":id})).unwrap()["value"].is_null());
     assert_eq!(
         host.call(json!({"op":"status","handle":id})).unwrap()["value"]["pending"],
-        1
+        0,
+        "the receipt completes the push without a pull"
     );
+    assert_eq!(
+        host.call(json!({"op":"read","handle":id,"key":{"model":"Entry","identity":{"id":"e"}}}))
+            .unwrap()["value"]["text"],
+        "normalized"
+    );
+    // The stream later carries the same authority: a no-op that advances the cursor.
     host.call(json!({"op":"pull","handle":id,"page":{"scope":"book","fromCursor":0,"toCursor":1,"changes":[{"syncId":1,"model":"Entry","identity":{"id":"e"},"stamp":1,"state":{"text":"normalized","note":null}}]}})).unwrap();
     assert_eq!(
-        host.call(json!({"op":"status","handle":id})).unwrap()["value"]["pending"],
-        0
+        host.call(json!({"op":"status","handle":id})).unwrap()["value"]["cursors"]["book"],
+        1
     );
     host.call(json!({"op":"startSync","handle":id})).unwrap();
     assert_eq!(

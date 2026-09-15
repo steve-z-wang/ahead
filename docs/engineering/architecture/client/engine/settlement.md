@@ -2,52 +2,55 @@
 
 ## 1. Introduction and Goals
 
-A local write is shown to the user before the server has seen it. Settlement is the moment that optimism ends: the client learns the server's answer and replaces the optimistic row with the authoritative one, or rolls the write back. Its job is to do this exactly once per mutation, in the order batches were sent, after required checkpoints on subscribed channels have been reached. Acceptance alone does not supply the final record; results outside the current subscriptions are not awaited.
+A local write is shown to the user before the server has seen it. Settlement is the moment that optimism ends: the client learns the server's answer and replaces the optimistic row with the authoritative one, or rolls the write back. Its job is to do this exactly once per mutation, from the receipt alone, in one local transaction that cannot leave the queue and the records disagreeing. The receipt carries the server's final content for every record the batch changed, so no channel is awaited and no subscription is required.
 
-The rest of the engine sets settlement up. [Local operations](local-operations/README.md) keeps a *before image* (the last server-known row) under every record with pending mutations; [Push](push/README.md) freezes mutations into numbered batches; [Pull](pull.md) applies server pages and moves per-channel cursors. Settlement reads all three.
+The rest of the engine sets settlement up. [Local operations](local-operations/README.md) keeps a *before image* (the last server-known row) under every record with pending mutations; [Push](push/README.md) freezes mutations into numbered batches; [Pull](pull.md) applies server pages through the same authority applier settlement uses.
 
 ## 3. Context and Scope
 
-Settlement is triggered by three events and works entirely inside the engine's transaction:
+Settlement is triggered by one event and works entirely inside the engine's transaction:
 
 | Event | What arrives | What settlement does |
 | --- | --- | --- |
-| A receipt for a batch ([Protocol / Push](../../protocol/push.md)) | rejections and *required checkpoints* (channel → cursor) | removes rejected mutations, records what the accepted ones are waiting for, then tries to settle |
-| A cursor advance from [Pull](pull.md) | one channel moved forward | tries to settle, because a checkpoint may now be reached |
-| An unsubscribe | one channel will never move again | drops that channel's checkpoints and settles what they were holding |
+| A receipt for the batch in flight ([Protocol / Push](../../protocol/push.md)) | rejections and the final authority of every record the accepted operations changed | stages the authority beneath the queue, records rejections, removes the completed operations, replays what remains, remembers the completion |
 
-State it owns: `ahead_push_checkpoint` (per batch, the cursor each channel must reach) and `ahead_rejection` (the durable inbox of rejected mutations). It deletes rows from the queue tables owned by [Queue](push/queue.md) and rewrites records through the replay logic of [Local operations](local-operations/README.md).
+State it owns: `ahead_client.last_completed_push` (the sequence of the last completed batch), `ahead_client.push_models` (the read contracts the batch in flight declared) and `ahead_rejection` (the durable inbox of rejected mutations). It deletes rows from the queue tables owned by [Queue](push/queue.md) and rewrites records through the authority applier and the replay logic of [Local operations](local-operations/README.md).
 
 ## 5. Building Block View
 
-Settlement has no internal parts. It is the receipt, settle and rejection functions in [client/push.rs](../../../../../crates/client/src/push.rs) (`acknowledge`, `awaitable`, `settle`, `settle_push`, `remove_rejected`), the replay function `rebuild` in [client/mutate.rs](../../../../../crates/client/src/mutate.rs), and the unsubscribe path in the same file.
+- **Acknowledgement**: `acknowledge` in [client/push.rs](../../../../../crates/client/src/push.rs) validates the receipt and runs the transition below; `mark_rejected` records rejections and their lifecycle dependents.
+- **Authority applier**: `stage_authority` and `rebuild_held` in [client/authority.rs](../../../../../crates/client/src/authority.rs), shared with [Pull](pull.md). It compares by stamp and stages content beneath pending operations or writes it to a clean row; the caller decides when to replay.
+- **Replay**: `rebuild` in [client/mutate.rs](../../../../../crates/client/src/mutate.rs) writes the before image plus the remaining operations, and drops the before image when nothing pending touches the record.
 
 ## 6. Runtime View
 
-### Receiving a receipt
+### Validating the receipt
 
-The first receipt for a batch is authoritative. A receipt for an unknown batch, or one whose rejections name an ordinal outside the batch, is refused. If the same batch is acknowledged again (a retried push whose first receipt was lost), the receipt must describe the same checkpoints and is otherwise ignored.
+A receipt must name this client and the batch in flight. A receipt for a sequence at or below `last_completed_push` is a duplicate and changes nothing, whatever it carries; one for any other sequence, or for another client, is refused. Its rejections must name ordinals of the batch, and its records must cover every record the accepted wire operations targeted: a receipt that omits one cannot complete the batch and is refused, leaving the frozen batch for retry. Authority the client cannot decode (a state its schema refuses) is refused the same way. Nothing below runs until all of this holds.
 
-Rejected mutations are removed first (see below). For the accepted ones, the receipt's checkpoints are filtered: a cursor only moves for channels the client is subscribed to, so a checkpoint on any other channel could never be met and is dropped. What happens next depends on what is left:
+### The atomic transition
 
-- Some checkpoints remain: they are stored, and the ordered settlement below decides when the batch settles.
-- No accepted mutation remains in the batch: there is nothing to settle.
-- Every checkpoint was dropped but accepted mutations remain: a *nothing-awaited* marker is stored instead (a checkpoint row on the empty channel at cursor 0, which every channel has reached). The batch is then ready, and the ordered walk below settles it as soon as every earlier batch has settled, never before. The marker also keeps the batch from reading as in flight, so it is not sent again after a restart. The visible-state contract for this case is recorded in section 9.
+1. **Snapshot the queue.** The batch's mutations, the records every operation touches, and which of them are wire targets.
+2. **Fold companions.** Accepted local-only companions, and the cascade deletes of companion deletes, settle as they always have: folded into the before image of records the server did not report. A record the receipt covers takes the server's authority instead.
+3. **Stage authority.** Each receipt record goes through the applier while the queue still says which records hold a base. A newer stamp lands beneath the pending operations (in the before image) or directly in a clean row; an equal stamp compares against that base, not the optimistic row, so a page that already delivered the same change is recognized as the same authority rather than a conflict; an older stamp is ignored. A deletion stages the deletion of declared descendants too. Every record staged beneath pending operations is remembered for replay.
+4. **Record rejections.** Rejected mutations and their lifecycle dependents get their inbox entries and leave the queue.
+5. **Remove the completed operations.** The accepted mutations' rows go, with their operations, dependencies and prerequisites.
+6. **Replay once.** Every record the batch touched or that was staged beneath pending operations is rebuilt from its before image plus whatever is still queued; the before image is dropped where nothing pending remains. Queued deletes are extended to descendants that appeared. A clean row that received authority in step 3 is left alone.
+7. **Remember the completion.** `last_completed_push` becomes the batch sequence and the frozen declaration is released; the transaction commits.
 
-### Waiting and settling in order
+Any failure rolls the whole transition back: the batch stays in flight, the records keep their optimism, and the next cycle resends the same bytes.
 
-The ordered walk goes through batches by push number and stops at the first one that is *in flight* (sent, no receipt yet) or still waiting on a cursor. Along this path a later batch never settles before an earlier one, even if its own checkpoints are already reached or it has nothing to await; this keeps replayed edits on the right base. Every cursor advance and every stored receipt re-runs the walk. Guarantee A5 states this ordering as the required behavior, and every settlement goes through the walk.
+### Whichever arrives first
 
-The order in which the receipt and the page arrive does not matter. Two things are involved: the *authoritative base* (the before image) and the *visible row*. When a page delivers a record that still has pending mutations, the base is updated and the visible row is rebuilt at once as base plus the pending edits replayed on top ([Writes](local-operations/writes.md)); fields the pending edit does not touch therefore show the server's values immediately. Settlement then removes the pending edit and rebuilds again, so the visible row becomes the base itself. Both sequences end in the same state:
+The receipt and a page for the same change carry the same authority at the same stamp. When the page comes first, the base is updated and the visible row rebuilt at once as base plus the pending edits ([Writes](local-operations/writes.md)); the receipt then finds an equal stamp with equal content, rewrites nothing, and still completes the batch. When the receipt comes first, the page finds the same and rewrites nothing, and still advances its cursor. Newer authority that a page delivered before the receipt is never regressed by the receipt's older stamp; the operation still completes over it.
 
 ```
 receipt first                                        page first
 ─────────────                                        ──────────
-receipt: checkpoint {a: 5} stored                    page a 4→5: base = server row
-   visible = base + pending edit (unchanged)            visible = server row + pending edit replayed
-page a 4→5: base = server row                        receipt: checkpoint {a: 5} stored
-   visible = server row + pending edit replayed         settle: cursor already 5 → batch settles
-   settle: cursor 5 reached → batch settles
+receipt: authority @12 staged under the edit        page a 4→5: base = server row @12
+   completed op removed, row rebuilt = server row       visible = server row + pending edit replayed
+page a 4→5: same stamp, same content → no write     receipt @12: same stamp → no write
+   cursor → 5                                           completed op removed, row rebuilt = server row
 visible = server row, pending 0                      visible = server row, pending 0
 ```
 
@@ -55,38 +58,36 @@ Because the pending edit is replayed over the new base rather than discarded, th
 
 ### Replacing the optimistic row
 
-- *Accepted.* The batch's mutations are deleted from the queue, then every touched record is rebuilt: the base becomes the visible row, any still-pending later mutations are replayed on top, and the base is dropped once nothing pending touches the record (guarantee A1). Companion operations, the local-only writes attached to a mutation, are folded into the base first so they become local truth, unless the same record also carries a wire operation, in which case the server's row wins.
+- *Accepted.* The base becomes the visible row, any still-pending later mutations are replayed on top, and the base is dropped once nothing pending touches the record (guarantee A1). A pending create has no base until its receipt arrives; the receipt's authority is its first base, so the created record survives with the server's content.
 - *Rejected.* The mutation and every mutation whose lifecycle depends on it (for example an edit of a record the rejected mutation created) are removed. Each gets a durable inbox entry with its code (`dependency.rejected` for the dependents) and the records it touched, and the touched records are rebuilt from their base, which undoes the optimistic change (guarantee P5). The application reads the inbox through `rejections()` or `record_status()` and clears entries with `dismiss_rejection`.
 
 ### Unsubscribing
 
-Nothing will advance an unsubscribed channel's cursor again, so waiting would be forever. The channel's checkpoint rows are deleted and the batches they were holding are settled as if the checkpoint had been met.
+Unsubscribing no longer touches settlement: it deletes the subscription row and nothing else ([Pull](pull.md)).
 
 ## 9. Architecture Decisions
 
-**Acceptance does not promote optimistic wire operations to local truth.** A receipt confirms execution, not the handler's final records. Keep the existing behavior: ignore checkpoints outside the current subscriptions, settle in batch order, and rebuild from the available base plus remaining pending edits. Without new authority, an update can revert to the previous value and a create can disappear. A later subscription can deliver the server's result. Unsubscribe releases its checkpoint requirement and can remove records with no remaining channel claims; it does not preserve pending optimism indefinitely.
+**Completion from the receipt, not from a channel ([#55](https://github.com/zanminwang/ahead/issues/55); supersedes [#52](https://github.com/zanminwang/ahead/issues/52)).** The earlier contract stored the channel positions a receipt named and settled a batch only once subscribed channels reached them, dropping positions on unsubscribed channels. Acceptance without a subscribed channel therefore reverted an update and removed a create until some channel delivered the result, and settlement had to run in batch order behind waiting batches. Now the server reads every changed record back in the handler's transaction and the receipt carries it, so the batch completes on arrival with the server's content, with or without subscriptions, and no ordering rule is needed: one batch is in flight at a time. The stamp rule is shared with pages, so the receipt and the channel never disagree about which content is newer. The proposals of adding a per-operation required stamp, keeping accepted operations waiting for the channel, or flagging receipt-confirmed predictions as provisional were withdrawn.
 
-Applications that need to display the result must subscribe to the channel their backend publishes to and keep that subscription while awaiting the result. The loader must return the resulting record to that client. Sending a mutation without subscribing remains supported; Ahead neither auto-subscribes nor converts its optimistic wire operations into direct writes. See the [usage guide](https://github.com/zanminwang/ahead/blob/main/website/docs/frontend/sync.md#receive-mutation-results) and decision [#52](https://github.com/zanminwang/ahead/issues/52).
+**Stage before removing, replay once.** Authority is staged while the queue still identifies which records hold a base, and the visible rows are rebuilt only after the completed operations are gone. Replaying before removal would put the completed edit back on top of the server's row; removing before staging would lose track of a pending create's absent base. The applier never replays on its own for this reason; page application, whose queue state does not change, stages and replays in one step.
+
+**A refused receipt is not partially applied.** Membership of the rejections, coverage of the accepted targets and decodability of every record are checked before any row is touched, and the whole transition is one transaction. A receipt the client cannot apply is a defect on the wire, and the honest outcome is a batch that stays in flight, not accepted work cleared after a record was silently skipped.
 
 ## 10. Quality Requirements
 
-- **Optimism is removed only after every stored checkpoint is met, regardless of arrival order** (guarantee A3). Evidence: [crates/sim/tests/authority.rs](../../../../../crates/sim/tests/authority.rs) `a3_ack_alone_does_not_settle`; [sqlite/tests/push.rs](../../../../../crates/sqlite/tests/push.rs) `offline_queue_and_frozen_bytes_survive_restart_and_ack_waits_for_pull`, `pull_before_ack_and_later_local_edit_replay_in_order`, `record_status_reports_phases_and_duplicate_ack_is_idempotent`.
-- **Batches settle in accepted-prefix order, including a later batch with nothing to await** (guarantee A5). Evidence: `a5_batches_settle_in_accepted_prefix_order`, `a5_immediately_settleable_batch_waits_for_the_earlier_batch`; `accepted_batches_only_settle_in_ready_prefix`, `immediately_settleable_batch_waits_for_the_earlier_waiting_batch` (queue state, replayed visible row, duplicate and changed receipts, reopen without a resend, then settlement once the earlier cursor arrives).
-- **The server's value replaces the optimistic one, and later local edits replay on top** (guarantee A1). Evidence: `a1_server_value_overrides_optimism_and_later_edits_replay`; `accepted_wire_rows_do_not_promote_companion_over_server_authority`.
-- **A rejection rolls back the mutation and its lifecycle dependents, and the reason survives restart until dismissed** (guarantee P5). Evidence: [crates/sim/tests/push.rs](../../../../../crates/sim/tests/push.rs) `p5_rejection_rolls_back_and_rejects_dependents`; `rejection_removes_optimism_preserves_direct_truth_and_has_durable_inbox`.
-- **Unsubscribing settles the batches that were waiting on that channel.** Evidence: [sqlite/tests/downlink.rs](../../../../../crates/sqlite/tests/downlink.rs) `unsubscribing_settles_its_checkpoint_and_later_pages_are_dropped`.
-- **When none of a receipt's checkpoints can be awaited and no earlier batch is waiting, the batch settles at once.** Evidence: [sqlite/tests/query.rs](../../../../../crates/sqlite/tests/query.rs) `transport_pulls_only_subscribed_channels_and_unawaitable_checkpoints_settle` (pending count, and the unsubscribed channel is never pulled).
-- **Settling without authority rebuilds from the available base plus the remaining pending edits** (decision in section 9). Evidence: [sqlite/tests/settlement.rs](../../../../../crates/sqlite/tests/settlement.rs) `update_without_subscription_reverts_to_the_base_on_settlement`, `create_without_subscription_disappears_on_settlement`, `unrelated_subscription_does_not_await_the_checkpoint`, `later_subscription_delivers_the_authoritative_result`, `unsubscribe_releases_the_wait_and_removes_unclaimed_records`, `remaining_pending_edits_replay_over_the_base` — each asserts the visible records and the pending work.
+- **A successful push completes from its receipt alone, with the server's content, with no subscription; the frozen bytes carry the declaration and survive restart until completion** (guarantee A3). Evidence: [sqlite/tests/settlement.rs](../../../../../crates/sqlite/tests/settlement.rs) `response_completes_without_a_subscription`, `frozen_batch_and_its_declaration_survive_restart_until_completed`; [sqlite/tests/query.rs](../../../../../crates/sqlite/tests/query.rs) `transport_pulls_only_subscribed_channels_and_the_receipt_completes_the_push`; [bindings/common/tests/session.rs](../../../../../bindings/common/tests/session.rs) `live_push_cycle_keeps_receipts_but_leaves_reads_to_the_stream`.
+- **Staging order: the authority lands beneath the pending operation before it is removed; a pending create survives with the server's content; clean extra authority is written and kept** (section 9). Evidence: `authority_is_staged_under_the_pending_operation_before_it_is_removed`, `accepted_create_survives_with_the_servers_content`, `clean_extra_authority_is_written_and_kept`.
+- **Receipt and page in either order leave the same state; an equal stamp compares against the held base; newer channel authority is not regressed by an older receipt** (guarantee A4). Evidence: `channel_first_then_receipt_dedups_and_still_completes`, `receipt_first_then_channel_is_a_no_op_that_advances_the_cursor`, `newer_channel_authority_is_not_regressed_by_an_older_response`; [sqlite/tests/push.rs](../../../../../crates/sqlite/tests/push.rs) `pull_before_ack_and_later_local_edit_replay_in_order`, `offline_queue_and_frozen_bytes_survive_restart_and_receipt_completes_at_once`.
+- **The server's value replaces the optimistic one, later local edits replay on top, companions on reported records do not outrank the server, and unrelated records are untouched** (guarantee A1). Evidence: `later_unsent_edit_replays_over_the_returned_authority`, `companions_settle_locally_except_where_the_server_answered`, `unrelated_records_are_unaffected`, `repeated_record_in_one_batch_completes_from_one_final_result`; `accepted_wire_rows_do_not_promote_companion_over_server_authority`, `accepted_companion_cascade_does_not_resurrect_descendants`.
+- **A rejection rolls back the mutation and its lifecycle dependents beside an accepted one, and the reason survives restart until dismissed** (guarantee P5). Evidence: `failed_sibling_mutation_is_rolled_back_beside_the_accepted_one`, `rejection_cascades_to_lifecycle_dependents`, `all_rejected_batch_removes_optimism_and_keeps_direct_edits`; `rejection_removes_optimism_preserves_direct_truth_and_has_durable_inbox`; [crates/sim/tests/push.rs](../../../../../crates/sim/tests/push.rs) `p5_rejection_rolls_back_and_rejects_dependents`.
+- **A receipt that cannot be applied is refused whole and the batch stays frozen; a duplicate changes nothing before or after reopen and never touches a later batch; a deletion keeps its stamp** (guarantee A5, D5). Evidence: `a_receipt_that_cannot_be_applied_is_refused_and_the_batch_stays_frozen`, `duplicate_receipt_is_ignored_and_completion_survives_restart`, `deletion_authority_removes_the_row_and_retains_the_stamp`; `record_status_reports_phases_and_duplicate_ack_is_idempotent`.
 
-Verified 2026-09-14: `cargo test -p ahead-sqlite --locked --test push` and `cargo test -p ahead-sim --locked --test authority` passed with the two A5 immediate-path tests; the earlier rows were read, not executed. Verified 2026-09-15: `cargo test -p ahead-sqlite --locked` passed (63 tests) with the settlement regressions above.
+Verified 2026-09-15: `cargo test -p ahead-sqlite --locked` and `cargo test -p ahead-binding --locked` passed with the suites above.
 
 ## 11. Risks and Technical Debt
 
-**Accepted consequence: visible state after settlement without authority.**
-
-- *Condition.* Every checkpoint in a receipt names a channel the client is not subscribed to, so all are dropped and the batch settles as soon as the ordered walk reaches it. In practice: a client that subscribes to nothing, or a handler that publishes the record only to channels this client does not follow.
-- *Consequence.* No page ever delivers the server's version, so the rebuild restores the base as it was before the mutation: an updated row reverts to its pre-mutation value, and a locally created row disappears, even though the server accepted the mutation. The record reappears only if some subscribed channel later delivers it.
-- *Status.* Decided and covered ([#52](https://github.com/zanminwang/ahead/issues/52), section 9). The earlier one-off reproduction is superseded by the named regressions in [sqlite/tests/settlement.rs](../../../../../crates/sqlite/tests/settlement.rs), which assert the visible records and the pending work for each case: `update_without_subscription_reverts_to_the_base_on_settlement`, `create_without_subscription_disappears_on_settlement`, `unrelated_subscription_does_not_await_the_checkpoint`, `later_subscription_delivers_the_authoritative_result`, `unsubscribe_releases_the_wait_and_removes_unclaimed_records`, `remaining_pending_edits_replay_over_the_base`.
-- *Evidence.* Code path: `awaitable` and `settle_push` in [client/push.rs](../../../../../crates/client/src/push.rs), then `rebuild` in [client/mutate.rs](../../../../../crates/client/src/mutate.rs). Verified 2026-09-15: `cargo test -p ahead-sqlite --locked` passed (63 tests, the six above included).
-
 **Accepted limitation.** Only lifecycle dependents are rejected with their parent; a sequence dependent of a rejected mutation is still sent. This matches guarantee P5 as written and is noted because the two dependency kinds are easy to confuse ([Dependencies](push/dependencies.md)).
+
+**Accepted limitation.** The server reads back the change set it knows about: uploaded targets and `changes.add`. A server-side cascade the handler does not register (a database `ON DELETE CASCADE`, for example) is not in the receipt; a locally cascaded child whose parent's receipt state is `null` is deleted with it, but a child the server removed while the parent survived is corrected only when a channel delivers it.
+
+**Accepted consequence.** A record's authority in the receipt is an optional extra for records with no pending operation: it is written directly. The applier has no way to tell a record the client never held from one it deleted, and does not need one, because deleted records keep their stamp ([Pull](pull.md)).
