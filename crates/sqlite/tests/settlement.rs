@@ -104,6 +104,11 @@ fn unrelated_subscription_does_not_await_the_checkpoint() {
     let mut c = open(&dir.path().join("db"));
     subscribe(&mut c, "book");
     c.apply_page(page("book", 0, 1, Some("A"))).unwrap();
+    assert_eq!(
+        c.read(&key()).unwrap().unwrap()["text"],
+        "A",
+        "the page from the subscribed channel is the base the rebuild will restore"
+    );
     c.transaction(|tx| {
         tx.enqueue(mutation("B"))?;
         tx.enqueue(create_entry())?;
@@ -111,6 +116,8 @@ fn unrelated_subscription_does_not_await_the_checkpoint() {
     })
     .unwrap();
     c.freeze().unwrap().unwrap();
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
+    assert_eq!(c.read(&created()).unwrap().unwrap()["text"], "new");
     assert_eq!(c.pending_count().unwrap(), 2);
 
     c.acknowledge(1, receipt("other", 3)).unwrap();
@@ -161,6 +168,11 @@ fn later_subscription_delivers_the_authoritative_result() {
     });
     let report = c.apply_page(delivered).unwrap();
     assert_eq!((report.applied, report.skipped), (2, 0));
+    assert_eq!(
+        c.cursor("notify").unwrap(),
+        5,
+        "the new subscription's cursor advances to the page's toCursor"
+    );
 
     assert_eq!(
         c.read(&key()).unwrap().unwrap()["text"],
