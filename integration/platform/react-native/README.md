@@ -59,7 +59,7 @@ The runner prints an evidence directory containing phase assertions, screenshots
 
 ## Evidence
 
-Verified 2026-09-15 on branch `codex/react-native` (base `9b81fad`, plus the uncommitted implementation at that time) with Xcode 26.5 (17F42), iOS 26.5 simulator runtime (23F77), two disposable iPhone 17 simulators, Node 26.4.0, cargo 1.98.1, CocoaPods 1.16.2, Expo 57.0.22, React Native 0.86.3, React 19.2.3, arm64 simulator slice of `libahead_mobile.a`.
+Verified 2026-09-15 on branch `codex/react-native` at commit `c54ff70` (rerun after the review fixes; an earlier run on the pre-review working tree also passed) with Xcode 26.5 (17F42), iOS 26.5 simulator runtime (23F77), two disposable iPhone 17 simulators, Node 26.4.0, cargo 1.98.1, CocoaPods 1.16.2, Expo 57.0.22, React Native 0.86.3, React 19.2.3, arm64 simulator slice of `libahead_mobile.a`.
 
 Commands, from the repository root after the setup above:
 
