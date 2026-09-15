@@ -25,7 +25,7 @@ The import specifiers for the runtime packages are configurable (`--backend-runt
 ## 5. Building Block View
 
 - **Source versus descriptor.** The `.model` text is the source of truth; the JSON descriptors are what the runtimes validate at load time; generated language code embeds the descriptor verbatim.
-- **TypeScript.** Per model: `Name`, `NameIdentity`, `NamePatch`, decode and encode functions; `NameModel` with `get`, `query` (equality `where`, scalar `orderBy`, `limit`) and relation accessors; `NameLiveModel.watch`; `NameTxModel` with direct `create`, `update`, `delete`. Per mutation: a typed args interface and a builder that emits wire operations. Handler keys are `lowerFirst(name)` for the latest version and `lowerFirst(name)V<n>` for older ones.
+- **TypeScript.** Per model: `Name`, `NameIdentity`, `NamePatch`, decode and encode functions; `NameModel` with `get`, `query` (equality `where`, scalar `orderBy`, `limit`) and relation accessors; `NameLiveModel.watch`; `NameTxModel` with direct `create`, `update`, `delete`. Per mutation: a typed args interface and a builder that emits wire operations. Handler registration is one key per mutation, `lowerFirst(name)`, holding a `v<n>` member for every retained version; a mutation retaining only v1 also accepts a bare function ([Typed API / Server](../sdks/typed-api/server.md#9-architecture-decisions)). Input type names stay `NameInput` for the latest version and `NameV<n>Input` for older ones.
 - **Dart.** The same surface with `Present<T>` wrappers for patch and filter presence, named parameters for mutations, and a `libraryPath` requirement outside iOS.
 - **Dates.** Encoded with `toISOString()` / `toUtc().toIso8601String()`, decoded with `new Date` / `DateTime.parse` ([Types](../schema/types.md)).
 
@@ -51,7 +51,7 @@ Generated APIs must carry the [version deprecation notices](../schema/mutations.
 
 - Generated TypeScript and Dart compile against valid usage and forward calls unchanged to the runtime. Evidence: [compiler/tests/compiler.rs](../../../../crates/compiler/tests/compiler.rs) emitter tests; [integration/generated-api/test.ts](../../../../integration/generated-api/test.ts); [generated_test.dart](../../../../integration/generated-api/generated_test.dart).
 - Misuse is a TypeScript compile error: identity in a patch, disallowed patch field, wrong filter type, enum typo. Evidence: the `@ts-expect-error` block in `test.ts`. Dart negatives are not asserted.
-- Older mutation versions get suffixed handler keys. Evidence: `backend_emitter_suffixes_older_mutation_versions`.
+- Retained mutation versions are grouped under the mutation's handler key, with the bare-function shorthand only for a v1-only mutation. Evidence: `backend_emitter_groups_handler_versions_under_the_mutation_name`, `backend_emitter_accepts_a_bare_function_only_for_a_v1_only_mutation`; the `@ts-expect-error` negatives for a bare function and a `v3` key in [test.ts](../../../../integration/generated-api/test.ts). Executed 2026-09-15: `cargo test -p ahead-compiler --locked` (23 passed), `bash integration/generated-api/verify.sh` (passed).
 
 ## 11. Risks and Technical Debt
 

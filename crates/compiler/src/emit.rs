@@ -445,15 +445,6 @@ pub fn backend_typescript(v: &Value, runtime: &str) -> String {
             .max()
             .unwrap()
     };
-    let key = |m: &Value| {
-        let n = s(m, "name");
-        let ver = m["version"].as_u64().unwrap();
-        if ver == latest(n) {
-            lower(n)
-        } else {
-            format!("{}V{ver}", lower(n))
-        }
-    };
     let input_name = |m: &Value| {
         let n = s(m, "name");
         let ver = m["version"].as_u64().unwrap();
@@ -470,15 +461,40 @@ pub fn backend_typescript(v: &Value, runtime: &str) -> String {
         }
         o.push_str("}\n");
     }
+    // Registration groups every retained version under the mutation name; a bare function is
+    // shorthand for v1 and never for the latest version ([#91](https://github.com/zanminwang/ahead/issues/91)).
     o.push_str("export interface Handlers<Tx> {\n");
+    let mut emitted: Vec<&str> = vec![];
     for m in mutations {
-        writeln!(
-            o,
-            " {}(call: HandlerCall<Tx, {}>): Promise<void | {{ channel: string }}>;",
-            key(m),
-            input_name(m)
-        )
-        .unwrap();
+        let n = s(m, "name");
+        if emitted.contains(&n) {
+            continue;
+        }
+        emitted.push(n);
+        let mut versions: Vec<&Value> = mutations.iter().filter(|x| s(x, "name") == n).collect();
+        versions.sort_by_key(|x| x["version"].as_u64().unwrap());
+        let members: Vec<String> = versions
+            .iter()
+            .map(|x| {
+                format!(
+                    "v{}(call: HandlerCall<Tx, {}>): Promise<void | {{ channel: string }}>;",
+                    x["version"].as_u64().unwrap(),
+                    input_name(x)
+                )
+            })
+            .collect();
+        let grouped = format!("{{ {} }}", members.join(" ").trim_end_matches(';'));
+        if versions.len() == 1 && versions[0]["version"].as_u64() == Some(1) {
+            writeln!(
+                o,
+                " {}: {grouped} | ((call: HandlerCall<Tx, {}>) => Promise<void | {{ channel: string }}>);",
+                lower(n),
+                input_name(versions[0])
+            )
+            .unwrap();
+        } else {
+            writeln!(o, " {}: {grouped};", lower(n)).unwrap();
+        }
     }
     o.push_str("}\n");
     o.push_str("export interface Loaders<Tx> {\n");

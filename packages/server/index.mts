@@ -182,6 +182,9 @@ export type Handler<Tx, Input = any> = (
 export type Loader<Tx, Identity = any, Row = object> = (
   call: LoaderCall<Tx, Identity>,
 ) => Promise<readonly (Row | null)[]>;
+/** Every retained version of one mutation, or a bare function as shorthand for a v1-only contract. */
+export type HandlerRegistration<Tx> =
+  Handler<Tx> | { [version: `v${number}`]: Handler<Tx> };
 export const RECORD: unique symbol = Symbol("ahead.record");
 function toRef(value: unknown): RecordRef {
   if (value !== null && typeof value === "object") {
@@ -208,7 +211,7 @@ export interface BackendOptions<T> {
   config: object;
   database: Database<T>;
   authenticate: Authenticate;
-  handlers: Record<string, Handler<T>>;
+  handlers: Record<string, HandlerRegistration<T>>;
   loaders: Record<string, Loader<T>>;
   loaderHooks?: Record<
     string,
@@ -313,11 +316,12 @@ export function createBackend<T>(options: BackendOptions<T>) {
     schema?: { models?: { name: string }[] };
     mutations?: MutationDescriptor[];
   };
-  const latest = new Map<string, number>();
+  const retained = new Map<string, number[]>();
   for (const m of descriptor.mutations ?? [])
-    latest.set(m.name, Math.max(latest.get(m.name) ?? 0, m.version));
-  const handlerKey = (name: string, version: number) =>
-    lowerFirst(name) + (version === latest.get(name) ? "" : `V${version}`);
+    retained.set(
+      m.name,
+      [...(retained.get(m.name) ?? []), m.version].sort((a, b) => a - b),
+    );
   const modelNames = (descriptor.schema?.models ?? []).map(
     (model) => model.name,
   );
@@ -332,20 +336,56 @@ export function createBackend<T>(options: BackendOptions<T>) {
     if (typeof loader !== "function") throw new Error(`Missing loader ${name}`);
     loaderTable.set(name, loader);
   }
+  // One registration per mutation name holds every retained version; a bare function is shorthand
+  // for a v1-only contract and never stands for the latest version.
+  const registered = new Map<string, Map<number, Handler<T>>>();
+  for (const [name, versions] of retained) {
+    const key = lowerFirst(name);
+    const list = versions.map((version) => `v${version}`).join(", ");
+    const registration = options.handlers[key];
+    const table = new Map<number, Handler<T>>();
+    if (typeof registration === "function") {
+      if (versions.length !== 1 || versions[0] !== 1)
+        throw new Error(
+          `Handler ${key} must register ${list} of ${name}; a function registers v1 only`,
+        );
+      table.set(1, registration);
+    } else if (registration === null || typeof registration !== "object") {
+      throw new Error(
+        `Missing handler ${key} for ${name} ${versions.map((version) => `v${version}`).join(" and ")}`,
+      );
+    } else {
+      for (const version of versions) {
+        const handler = (registration as Record<string, unknown>)[
+          `v${version}`
+        ];
+        if (handler === undefined)
+          throw new Error(
+            `Missing handler ${key}.v${version} for ${name} v${version}`,
+          );
+        if (typeof handler !== "function")
+          throw new Error(
+            `Handler ${key}.v${version} for ${name} v${version} must be a function`,
+          );
+        table.set(version, handler as Handler<T>);
+      }
+      for (const found of Object.keys(registration))
+        if (!/^v[1-9][0-9]*$/.test(found) || !table.has(Number(found.slice(1))))
+          throw new Error(
+            `Unknown handler ${key}.${found} for ${name}: retained versions are ${list}`,
+          );
+    }
+    registered.set(name, table);
+  }
   const handlerTable = new Map<
     string,
     { handler: Handler<T>; slots: MutationSlot[] }
   >();
-  for (const m of descriptor.mutations ?? []) {
-    const key = handlerKey(m.name, m.version);
-    const handler = options.handlers[key];
-    if (typeof handler !== "function")
-      throw new Error(`Missing handler ${key} for ${m.name} v${m.version}`);
+  for (const m of descriptor.mutations ?? [])
     handlerTable.set(`${m.name}:${m.version}`, {
-      handler,
+      handler: registered.get(m.name)!.get(m.version)!,
       slots: m.slots ?? [],
     });
-  }
   const sessions = new Map<T, Session>();
   const wakes = new WakeHub();
   const host = (

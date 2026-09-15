@@ -45,6 +45,20 @@ test('backend validates config and complete registrations at startup',()=>{
  assert.throws(()=>createBackend({config:base,native,database:prisma(db),authenticate,handlers:{},loaders:{task:async()=>[]}}),/Missing handler edit for edit v1/);
  assert.throws(()=>createBackend({config:base,native,database:prisma(db),authenticate,handlers:{edit:async()=>{}},loaders:{}}),/Missing loader Task/);
 });
+test('handler registration names every retained version and a function means v1 only',()=>{
+ const base={...config,schema:structuredClone(schema)};
+ const register=(mutations,handlers)=>createBackend({config:{...base,mutations},native,database:prisma(db),authenticate,handlers,loaders:{task:async()=>[]}});
+ const both=[config.mutations[0],{...config.mutations[0],version:2}];
+ assert.throws(()=>register(both,{edit:async()=>{}}),/Handler edit must register v1, v2 of edit; a function registers v1 only/);
+ assert.throws(()=>register([{...config.mutations[0],version:2}],{edit:async()=>{}}),/Handler edit must register v2 of edit; a function registers v1 only/);
+ assert.throws(()=>register(both,{edit:{v1:async()=>{}}}),/Missing handler edit\.v2 for edit v2/);
+ assert.throws(()=>register(both,{edit:{v1:async()=>{},v2:async()=>{},v3:async()=>{}}}),/Unknown handler edit\.v3 for edit: retained versions are v1, v2/);
+ assert.throws(()=>register(both,{edit:{v1:async()=>{},v2:'later'}}),/Handler edit\.v2 for edit v2 must be a function/);
+ assert.throws(()=>register(both,{edit:null}),/Missing handler edit for edit v1 and v2/);
+ register(both,{edit:{v1:async()=>{},v2:async()=>{}}});
+ register([config.mutations[0]],{edit:{v1:async()=>{}}});
+ register([config.mutations[0]],{edit:async()=>{}});
+});
 test('Prisma persistence supports reusable bind without owning a transaction',async()=>{
  const reusable=new PrismaPersistence();let calls=0;
  const tx={$queryRawUnsafe:async()=>[{head:4}],$executeRawUnsafe:async()=>{calls++;return 1}};
@@ -456,4 +470,20 @@ test('an upgrade whose authentication completes after close begins is refused wi
   assert.match(await outcome,/503/,'authenticated after close began: refused, not served');
   await closing;
  }finally{await server.close();}
+});
+
+test('a version dispatches only to its own handler and a function registers v1',async()=>{
+ const seen=[];
+ const record=tag=>async({input,notify})=>{seen.push([tag,input.task.patch.title]);notify({channel:'registration',records:[input.task]});};
+ const make=(handlers,mutations=config.mutations)=>createBackend({config:{...config,schema:structuredClone(schema),mutations},database:prisma(db),authenticate,handlers,loaders:{async task({ids}){return ids.map(()=>null)}}});
+ const shorthand=JSON.parse(await make({edit:record('function')}).push('alice',push('register-function',1,[mutation(1,'same','reg-a')])));
+ const explicit=JSON.parse(await make({edit:{v1:record('v1 key')}}).push('alice',push('register-v1-key',1,[mutation(1,'same','reg-a')])));
+ assert.deepEqual(seen,[['function','same'],['v1 key','same']],'both registrations reach the same v1 handler');
+ assert.deepEqual(shorthand.rejections,[]);assert.deepEqual(explicit.rejections,[]);
+ assert.equal(shorthand.requiredScope,'registration');assert.equal(explicit.requiredScope,'registration');
+ assert.equal(explicit.requiredSyncId,shorthand.requiredSyncId+1,'only the publication sequence differs');
+ const two=make({edit:{v1:record('v1'),v2:record('v2')}},[config.mutations[0],{...config.mutations[0],version:2}]);
+ await two.push('alice',push('register-dispatch',1,[mutation(1,'from v1','reg-b')]));
+ await two.push('alice',push('register-dispatch',2,[{...mutation(1,'from v2','reg-c'),version:2}]));
+ assert.deepEqual(seen.slice(2),[['v1','from v1'],['v2','from v2']],'no fallback between versions');
 });

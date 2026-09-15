@@ -93,7 +93,7 @@ Builders emit operations in declared slot order. Slot bindings can connect opera
 
 ## History and compatibility
 
-Backend descriptors retain declared mutation versions with their input schemas and known field sets. Latest handlers use names such as `edit`; older versions use `editV1`.
+Backend descriptors retain declared mutation versions with their input schemas and known field sets. The generated `Handlers` interface groups them under one key per mutation, such as `edit: { v1, v2 }`; input types keep names such as `EditInput` for the latest version and `EditV1Input` for older ones.
 
 Same-version changes must be backward compatible. Adding nullable create fields or additional permitted patch/enum values can be compatible. Required create fields, field removal, changed types, reordered slots, changed bindings and changed dependency policy require a new mutation version. Versions cannot decrease and retained mutations cannot disappear.
 

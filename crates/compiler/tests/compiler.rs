@@ -72,10 +72,10 @@ fn backend_emitter_declares_handlers_loaders_and_references() {
     assert!(ts.contains("from \"@ahead/server\""));
     assert!(ts.contains("export interface Handlers<Tx> {"));
     assert!(ts.contains(
-        " addBook(call: HandlerCall<Tx, AddBookInput>): Promise<void | { channel: string }>;"
+        " addBook: { v1(call: HandlerCall<Tx, AddBookInput>): Promise<void | { channel: string }> } | ((call: HandlerCall<Tx, AddBookInput>) => Promise<void | { channel: string }>);"
     ));
     assert!(ts.contains(
-        " addComment(call: HandlerCall<Tx, AddCommentInput>): Promise<void | { channel: string }>;"
+        " addComment: { v1(call: HandlerCall<Tx, AddCommentInput>): Promise<void | { channel: string }> } | ((call: HandlerCall<Tx, AddCommentInput>) => Promise<void | { channel: string }>);"
     ));
     assert!(ts.contains("export interface Loaders<Tx> {"));
     assert!(
@@ -89,15 +89,48 @@ fn backend_emitter_declares_handlers_loaders_and_references() {
     assert!(!ahead_compiler::typescript(&v).contains("backendConfig"));
 }
 #[test]
-fn backend_emitter_suffixes_older_mutation_versions() {
+fn backend_emitter_groups_handler_versions_under_the_mutation_name() {
     let v = compile("model A { id String title String @@id(id) } mutation Edit { a A.update<title> @@version(2) }").unwrap();
     let mut with_history = v.clone();
     let mut old = v["mutations"][0].clone();
     old["version"] = serde_json::json!(1);
     with_history["backendMutations"] = serde_json::json!([old, v["mutations"][0].clone()]);
     let ts = ahead_compiler::backend_typescript(&with_history, "@ahead/server");
-    assert!(ts.contains(" edit(call: HandlerCall<Tx, EditInput>)"));
-    assert!(ts.contains(" editV1(call: HandlerCall<Tx, EditV1Input>)"));
+    assert!(
+        ts.contains(
+            " edit: { v1(call: HandlerCall<Tx, EditV1Input>): Promise<void | { channel: string }>; v2(call: HandlerCall<Tx, EditInput>): Promise<void | { channel: string }> };\n"
+        ),
+        "{ts}"
+    );
+    assert!(!ts.contains(" editV1(call:"));
+}
+
+#[test]
+fn backend_emitter_accepts_a_bare_function_only_for_a_v1_only_mutation() {
+    let v = compile("model A { id String title String @@id(id) } mutation Save { a A.create }")
+        .unwrap();
+    let ts = ahead_compiler::backend_typescript(&v, "@ahead/server");
+    assert!(
+        ts.contains(
+            " save: { v1(call: HandlerCall<Tx, SaveInput>): Promise<void | { channel: string }> } | ((call: HandlerCall<Tx, SaveInput>) => Promise<void | { channel: string }>);\n"
+        ),
+        "{ts}"
+    );
+    let later = compile(
+        "model A { id String title String @@id(id) } mutation Save { a A.create @@version(2) }",
+    )
+    .unwrap();
+    let ts = ahead_compiler::backend_typescript(&later, "@ahead/server");
+    assert!(
+        ts.contains(
+            " save: { v2(call: HandlerCall<Tx, SaveInput>): Promise<void | { channel: string }> };\n"
+        ),
+        "{ts}"
+    );
+    assert!(
+        !ts.contains("| ((call:"),
+        "a single non-v1 version has no shorthand: {ts}"
+    );
 }
 
 #[test]
