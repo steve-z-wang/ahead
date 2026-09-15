@@ -28,6 +28,10 @@ Every call becomes one command through the [bindings](../bindings.md). Generated
 
 Code: [client-js/index.mts](../../../../../packages/client-js/index.mts), [client-js/transaction.mts](../../../../../packages/client-js/transaction.mts), [dart/client.dart](../../../../../packages/dart/lib/src/client.dart), [dart/port.dart](../../../../../packages/dart/lib/src/port.dart).
 
+## 9. Architecture Decisions
+
+**Automatic model-version declaration — agreed, not implemented ([#91](https://github.com/zanminwang/ahead/issues/91)).** Generated client configuration identifies the [model versions](../../schema/models.md#9-architecture-decisions) expected by its generated types. The runtime uses that configuration to declare the client's read contracts to the server; application code does not supply versions on each `channels.subscribe(...)` call. HTTP catch-up and WebSocket delivery must use the same selected contracts. This adds no protocol policy to the SDK: generated metadata passes through bindings to the runtime. Wire placement and validation remain to be designed; read-error behavior follows [failure isolation](../../server/engine/pull.md#9-architecture-decisions).
+
 ## 10. Quality Requirements
 
 - **An unawaited or escaped call poisons the transaction, and a caught failure still rolls it back unless confined to a savepoint** (binding half of guarantee L3). Evidence: [transaction.test.mjs](../../../../../integration/bindings/client-js/transaction.test.mjs); [dart/test/client_test.dart](../../../../../packages/dart/test/client_test.dart) `Dart callbacks read their writes, rollback and reopen through native Rust`.

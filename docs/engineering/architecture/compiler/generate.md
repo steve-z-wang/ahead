@@ -18,6 +18,8 @@ Files written by the CLI, each through a temporary file and rename:
 | `generated.dart` | all of the above for Dart in one file | [Typed API / Client](../sdks/typed-api/client.md) |
 | `mutation-history.json` | retained inputs per version | [Validate](validate.md) on the next run |
 
+The CLI currently writes `mutation-history.json` in the output directory by default; `--mutation-history FILE` overrides that location. Commit history to Git so subsequent compilation can retain old contracts.
+
 The import specifiers for the runtime packages are configurable (`--backend-runtime`, `--client-runtime`).
 
 ## 5. Building Block View
@@ -28,6 +30,22 @@ The import specifiers for the runtime packages are configurable (`--backend-runt
 - **Dates.** Encoded with `toISOString()` / `toUtc().toIso8601String()`, decoded with `new Date` / `DateTime.parse` ([Types](../schema/types.md)).
 
 Code: descriptors assembled at the end of `validate` in [compiler/validate.rs](../../../../crates/compiler/src/validate.rs); emitters in [compiler/emit.rs](../../../../crates/compiler/src/emit.rs); file output in [compiler/main.rs](../../../../crates/compiler/src/main.rs).
+
+## 9. Architecture Decisions
+
+**History storage — agreed target ([#91](https://github.com/zanminwang/ahead/issues/91)).** Keep compiler-maintained history beside the application's schema, separate from disposable generated code, and commit it to Git:
+
+```text
+ahead/
+├── schema.model
+└── history/
+    ├── mutations.json
+    └── models.json
+```
+
+Compilation reads retained definitions, [validates changes](validate.md), and updates history to generate version-specific types and runtime descriptors. Handlers and loaders remain application code. The target layout and model history are not implemented yet.
+
+Generated APIs must carry the [version deprecation notices](../schema/mutations.md#9-architecture-decisions) without dropping historical definitions or changing runtime behavior. This is planned; current generation does not emit those notices.
 
 ## 10. Quality Requirements
 

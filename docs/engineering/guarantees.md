@@ -4,6 +4,10 @@ The behavioral contract of the Rust sync core. These are requirements, not a cla
 
 Simulation exercises these behaviors across clients and message sequences. Real-database tests must also verify claims that depend on persistence or transaction semantics. IDs remain stable so scenarios can refer to them.
 
+## Failure isolation
+
+Applications use individual operations as they would ordinary API calls. This applies to mutations and loader reads: a failure attributable to one operation must be reported for that operation, without rejecting or blocking unrelated work merely because it shares a batch, page or channel. Explicit application transactions and declared dependencies still define shared outcomes. Transport or database transaction failure may require retrying delivery; it must not be reported as business rejection of every operation in that delivery.
+
 ## L. Local writes
 
 | ID | Required behavior |
@@ -23,7 +27,10 @@ Simulation exercises these behaviors across clients and message sequences. Real-
 | P3 | Unready prerequisites block their mutations. Lifecycle dependents wait for predecessor acceptance; sequence dependents may follow their predecessor in the same batch. Independent ready work can proceed. |
 | P4 | Frozen request bytes remain unchanged across retries, restart and supported schema reconciliation. |
 | P5 | Explicit rejection removes the mutation's optimism, rejects its lifecycle dependents, and retains a readable rejection until dismissed. Other pending edits replay on the remaining base. |
-| P6 | Explicit rejection rolls back that mutation's savepoint. An unexpected handler or publication failure rolls back the entire batch, including business changes and its receipt, so the client can retry. |
+| P6 | A failure attributable to one mutation rolls back its savepoint, including its business changes and publications, without rolling back unrelated successful mutations. If infrastructure failure makes the enclosing transaction unusable, the delivery rolls back atomically with its receipt and can be retried; this is not rejection of all mutations. |
+| P7 | A mutation-level rejection, including an unsupported mutation version, is recorded for that mutation in the receipt and retained as a client rejection (P5). It does not reject unrelated mutations merely because they share a batch. Declared lifecycle dependencies still apply; independent valid mutations can proceed. |
+
+P6/P7 describe the target isolation requirement. Currently unsupported mutation versions and unexpected handler/publication failures abort the whole batch; operation-scoped failure classification and isolation need implementation. See [Server / Push](architecture/server/engine/push.md#9-architecture-decisions) and [#95](https://github.com/zanminwang/ahead/issues/95).
 
 ## A. Authority and settlement
 
@@ -34,14 +41,16 @@ Channel cursors order delivery within a subscription. Record stamps order author
 | A1 | Delivered server values replace settled optimism; later pending edits replay over the authoritative base. |
 | A2 | Within a subscription, the cursor never decreases. Covered pages do nothing; overlapping pages apply only their unseen suffix. A page starting beyond the local cursor cannot skip the gap. A page answering a pull issued under an earlier subscription of the channel is stale, not a gap: it is dropped and the cursor stays where the resubscribe put it. |
 | A3 | Accepted optimism waits for all required checkpoints on subscribed channels, whether pages or the receipt arrive first. Checkpoints outside the subscriptions are not awaited. |
-| A4 | Required checkpoints come from channels notified by the handler. Missing or ambiguous selection for an accepted mutation aborts the batch. |
+| A4 | Required checkpoints come from channels notified by the handler. Missing or ambiguous selection fails the affected mutation without rejecting unrelated mutations; a mutation cannot be accepted without its required publication evidence. |
 | A5 | Accepted batches settle in sequence order; a later ready batch must not pass an earlier waiting batch, including a batch whose receipt named nothing the client can await. |
 
-A3's current non-subscribed-channel behavior rebuilds from existing authority: an update can revert and a local create can disappear until delivered through a subscribed channel. Whether to retain this behavior needs a decision in [Settlement](architecture/client/engine/settlement.md).
+A4 is also a target change: missing or ambiguous checkpoint selection currently aborts the batch; see [Server / Push](architecture/server/engine/push.md#9-architecture-decisions).
+
+A3 deliberately does not preserve optimistic wire operations outside the subscribed channels. Settlement rebuilds from the available base plus remaining pending edits: without new authority, an update can revert and a create can disappear until a subscribed channel delivers the result. Acceptance confirms execution, not final record contents; see [Settlement](architecture/client/engine/settlement.md#9-architecture-decisions).
 
 ## D. Distribution
 
-These requirements assume valid backend records, correct publication, and eventual delivery. Convergence means authoritative content agrees after pending work settles; direct-only local data is outside that comparison.
+Convergence assumes valid backend records, correct publication, and eventual delivery. D7 defines isolation when an individual load fails. Convergence means authoritative content agrees after pending work settles; direct-only local data is outside that comparison.
 
 | ID | Required behavior |
 | --- | --- |
@@ -51,6 +60,9 @@ These requirements assume valid backend records, correct publication, and eventu
 | D4 | Moves between channels preserve the latest content and correct claims despite delayed source or destination pages, including declared child membership. |
 | D5 | A newer deletion removes the content while retaining outstanding claims; an older deletion cannot erase newer content. Releasing one channel's claim preserves others. |
 | D6 | Unsubscribe releases that channel's claims and removes records no remaining channel claims, subject to pending local edits. A loader's null record is a deletion. |
+| D7 | A failure attributable to a loader read, including an unsupported model version, is reported to the application for the affected read. A loader may throw; no durable loader-failure queue is required. Unrelated reads can proceed even within the same page or channel. Failed reads do not erase local data, become deletions or count as successfully synchronized authority or satisfied checkpoints. |
+
+D7 is an agreed target, not current behavior. Error reporting and retry granularity must preserve cursor and settlement correctness; see [Server / Pull](architecture/server/engine/pull.md#9-architecture-decisions).
 
 ## R. Resilience
 

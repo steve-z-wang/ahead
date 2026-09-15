@@ -31,6 +31,8 @@ Code: `enqueue`, `direct`, `hold_truth`, `rebuild`, `set_authority`, `descendant
 
 **A direct write.** The operation is applied to the visible table, with the same cascade for deletes. If the record is dirty and exists in authority (its before image holds a row), the write is also folded into the before image, so that a later rejection of the pending mutation does not undo it (guarantee L4). If the record's existence is itself pending (the before image is "absent"), there is no base to advance: the write lives only in the visible row and goes with the create if the create is rejected, or is replaced by the authoritative row once the create is accepted and delivered. A direct write on a clean record touches only the visible table.
 
+**Direct writes and stamps.** A direct create, update or delete does not create or advance the record's stamp. Existing stamp metadata is retained; without it, comparison uses `0`. The stamp tracks the last applied server version, not local edits. A later server change with a higher stamp can replace the local data; equal or older stamps do not overwrite it. [Pull](../pull.md#5-building-block-view) owns the comparison; the application rules below determine the visible result when mutations are pending.
+
 **Server truth arriving.** When [Pull](../pull.md) delivers a record, Writes puts it where it belongs: into the before image and then rebuilds the visible row if the record is dirty, straight into the visible table otherwise. A delivered delete first cascades to local children. Afterwards queued deletes are extended to any children that appeared since they were queued, so a later page cannot resurrect a child of a record the user already deleted.
 
 ## 8. Crosscutting Concepts

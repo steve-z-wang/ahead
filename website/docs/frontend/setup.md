@@ -98,7 +98,7 @@ Start the [tutorial backend](../getting-started.md), then connect the client:
 
 Configure the server once. Ahead submits mutations over HTTP, catches up from saved channel cursors over HTTP, and receives ongoing record changes over WebSocket. Every received page passes through the Rust engine into local SQLite and updates `watch` subscriptions.
 
-Subscribing wakes the connection; it does not wait for initial records. A client with no subscribed channels can still push mutations. Subscription changes update live synchronization automatically. Replace the demo URL and token with your application's endpoint and credentials. On a physical device, localhost refers to that device; use a reachable development-server address.
+Subscribing wakes the connection; it does not wait for initial records. A client with no subscribed channels can still push mutations, but acceptance does not preserve their optimistic records. [Subscribe to receive mutation results](sync.md#receive-mutation-results) when your UI needs to keep displaying them. Subscription changes update live synchronization automatically. Replace the demo URL and token with your application's endpoint and credentials. On a physical device, localhost refers to that device; use a reachable development-server address.
 
 Omit `server` to open local storage without starting a connection.
 

@@ -6,7 +6,7 @@ See the [component documentation index](architecture/README.md) for individual d
 
 - **[Schema](architecture/schema/README.md)** — User-written, language-independent definitions of models, fields, types, identities and mutations.
   - **[Types](architecture/schema/types.md)** — Scalar and enum types, lists and nullability.
-  - **[Models](architecture/schema/models.md)** — Fields, identities and unique constraints.
+  - **[Models](architecture/schema/models.md)** — Fields, identities, unique constraints and record format versions (planned).
   - **[Relations](architecture/schema/relations.md)** — References, inverse relations and deletion rules.
   - **[Mutations](architecture/schema/mutations.md)** — Operation groups, argument bindings, versions and sequencing.
   - **[Prerequisites](architecture/schema/prerequisites.md)** — Prerequisite declarations and references.
