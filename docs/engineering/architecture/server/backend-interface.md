@@ -20,13 +20,13 @@ Each operation is one variant of `HostRequest` with one response type, defined o
 Application-facing contracts ([Typed API / Server](../sdks/typed-api/server.md) shows their types):
 
 - A **handler** receives the decoded input (one value per slot), the transaction, the user id and `notify`. It returns nothing or `{channel}`. Throwing `MutationRejected`, or an error `translateRejection` maps to a code, rejects that one mutation; any other error aborts the whole batch.
-- A **loader** receives identities, the transaction, the user id and the channel that asked. It returns one row or `null` per identity, in order. `null` means "not visible or deleted" and is delivered as a delete; a missing entry or `undefined` is a defect.
+- A **loader** serves one retained model read contract (a model name and version) and receives identities, the transaction, the user id and the channel that asked. It returns one row or `null` per identity, in order, shaped as that version's records. `null` means "not visible or deleted" and is delivered as a delete; a missing entry or `undefined` is a defect.
 - `authenticate(request)` returns the user id or null. Handlers and loaders own application authorization; the framework does not enforce channel-level policy ([#22](https://github.com/zanminwang/ahead/issues/22)).
 - The application also owns unique and identity constraints on the server, child deletion (`onTargetDelete` is a client-side cascade), and one local database per signed-in user; the backend is TypeScript on Node only, and prerequisite arguments are `self` only. These accepted limits are stated for authors in [What your backend owns](../../../../website/docs/backend/api.md#what-your-backend-owns).
 
 ## 5. Building Block View
 
-Startup validates the compiled config and requires a handler for every retained mutation version and a loader for every model; otherwise `createBackend` throws. The config's `models` list (every retained model read contract) is carried but not yet consulted; loaders are keyed by model name until versioned dispatch lands ([#91](https://github.com/zanminwang/ahead/issues/91)). A mutation's handler key is `lowerFirst(name)` and its value holds a `v<n>` member per retained version; a mutation retaining only v1 also accepts the bare function ([Typed API / Server](../sdks/typed-api/server.md#9-architecture-decisions)).
+Startup validates the compiled config and requires a handler for every retained mutation version and a loader for every retained model version; otherwise `createBackend` throws. The engine decodes the config's `models` list (every retained model read contract, `{name, version, identity, fields, enums}`) into one normalization schema per version, refusing a contract whose identity differs from the model's, a duplicate version, an invalid field or enum, and a schema whose current version is not retained; a hand-written config without `models` retains each model at the schema's own version. A mutation's handler key and a model's loader key are `lowerFirst(name)`; each value holds a `v<n>` member per retained version, and a contract retaining only v1 also accepts the bare function ([Typed API / Server](../sdks/typed-api/server.md#9-architecture-decisions)).
 
 At runtime the host function shapes handler input from the engine's decoded arguments: a create slot becomes `{…identity, …data}`, an update becomes `{identity, patch}`, a delete becomes `{identity}`; list slots are arrays and optional slots may be `null`. Each value is tagged with its record reference so `notify` accepts it.
 
@@ -57,7 +57,7 @@ Code: the operation contract in [server/host.rs](../../../../crates/server/src/h
 | `publish` | `channel`, `model`, `identity`, `identityKey` | `Published { cursor, stamp }` |
 | `savepoint` / `rollback` / `release` | `ordinal` | unit |
 | `handle` | `name`, `version`, `arguments`, `owner`, `ordinal` | `Handled::Settled { channel }` or `Handled::Rejected { rejection }` |
-| `load` | `model`, `identities`, `owner`, `channel` | `Vec<Option<Value>>` (one entry per identity) |
+| `load` | `model`, `version`, `identities`, `owner`, `channel` | `Vec<Option<Value>>` (one entry per identity) |
 
 `HostRequest` derives `Serialize`/`Deserialize` with `#[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]` and `deny_unknown_fields`; each response is a struct or enum with `deny_unknown_fields`. The engine constructs requests as enum values and decodes responses into these types, so a malformed response fails at the boundary, naming the operation and the offending field, instead of somewhere later with `unwrap`.
 
@@ -110,6 +110,6 @@ Tests read, not executed.
 
 **Resolved: the host operation set was an untyped string contract implemented three times.** Section 9 landed ([#45](https://github.com/zanminwang/ahead/issues/45)): `host.rs` is the one definition, `host-contract.mts` restates it for TypeScript, and the shared fixture fails whichever side drifts. What remains is the hand-written mirror — the two languages have no shared generator, so adding an operation still means editing `host.rs`, `host-contract.mts` and the fixture; the compiler and the two conformance tests catch a half-done edit, they do not spare it.
 
-**The contract types what the operations do today.** It does not widen them: `handle`, `rollback` and `load` keep exactly the shapes they had, and any extension belongs to [#95](https://github.com/zanminwang/ahead/issues/95).
+**The contract types what the operations do today.** `load` gained `version` for model read contracts ([#91](https://github.com/zanminwang/ahead/issues/91)); `handle` and `rollback` keep exactly the shapes they had, and any failure-result extension belongs to [#95](https://github.com/zanminwang/ahead/issues/95).
 
-**Accepted limitation.** A loader must return exactly the schema's fields: identity fields may be present, an absent nullable field reads as `null`, an absent non-nullable field or any extra property fails normalization and aborts the pull with a 500. Evidence: `normalize_state` in `process_pull`; the loader-defect test above. Documented for authors under [Loaders](../../../../website/docs/backend/api.md#loaders).
+**Accepted limitation.** A loader must return exactly its version's contract fields: identity fields may be present, an absent nullable field reads as `null`, an absent non-nullable field or any extra property fails normalization and aborts the pull with a 500. Evidence: `normalize_state` over the retained contract in `process_pull`; the loader-defect test above and `a pull reaches the loader of the served model version and normalizes rows with that contract`. Documented for authors under [Loaders](../../../../website/docs/backend/api.md#loaders).

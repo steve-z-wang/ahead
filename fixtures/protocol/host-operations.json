@@ -55,7 +55,7 @@
     },
     {
       "op": "load",
-      "request": {"op": "load", "model": "Task", "identities": [{"id": "t-1"}, {"id": "t-2"}], "owner": "alice", "channel": "shared"},
+      "request": {"op": "load", "model": "Task", "version": 1, "identities": [{"id": "t-1"}, {"id": "t-2"}], "owner": "alice", "channel": "shared"},
       "responses": [{"variant": "rows", "value": [{"id": "t-1", "title": "typed"}, null]}]
     },
     {

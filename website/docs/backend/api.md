@@ -34,7 +34,7 @@ The generated `Options<Tx>` requires:
 | `database: Database<Tx>` | Run transactions and bind sync persistence to the supplied transaction |
 | `authenticate: Authenticate` | Resolve the caller's user identity or reject the request |
 | `handlers: Handlers<Tx>` | Implement each supported mutation version |
-| `loaders: Loaders<Tx>` | Implement the read function for each model |
+| `loaders: Loaders<Tx>` | Implement the read function for each supported model version |
 
 Optional options are `translateRejection`, `onError`, `loaderHooks` and `native`, described below. The generated function binds the schema and returns the backend synchronously. The generic function in `packages/server/index.mts` additionally requires `config`; normal generated integrations do not pass it.
 
@@ -131,6 +131,17 @@ export const loaders: Loaders<Prisma.TransactionClient> = {
 | `channel` | Channel whose synchronization requested these records |
 
 A loader returns `Promise<readonly (Record | null)[]>`. Return exactly one item per identity, in the same order. Do not filter out missing rows or return a differently ordered database result directly.
+
+`loaders.entry` holds every retained version of the `Entry` read contract, exactly as `handlers.edit` holds mutation versions. While only v1 is retained, the function above is shorthand for `{ v1: ... }`. Once the model has a second version, register each one and keep both while clients of the older version can still read:
+
+```text
+loaders.entry = {
+  v1: loadOriginalEntry,   // returns EntryV1 rows: the fields and enum values of v1
+  v2: loadNewEntry,        // returns Entry rows
+};
+```
+
+The generated `EntryV1` type is the record shape published for v1, so a v1 loader maps your current rows into it; Ahead does not convert between versions. A row with a field outside the served version's contract is a loader defect and aborts the pull. Registration is checked at startup like handlers: a bare function means v1 only, and a missing version, an unknown `v<n>` key or a non-function value is refused. A load reaches only the loader of the version it names.
 
 What each item may be:
 

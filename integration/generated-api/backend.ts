@@ -41,11 +41,18 @@ export interface Handlers<Tx> {
  editEntry: { v1(call: HandlerCall<Tx, EditEntryV1Input>): Promise<void | { channel: string }>; v2(call: HandlerCall<Tx, EditEntryInput>): Promise<void | { channel: string }> };
  removeEntries: { v1(call: HandlerCall<Tx, RemoveEntriesInput>): Promise<void | { channel: string }> } | ((call: HandlerCall<Tx, RemoveEntriesInput>) => Promise<void | { channel: string }>);
 }
+export interface EntryV1 {
+ id: string;
+ title: string;
+ note: string | null;
+ at: Date;
+ status: "active" | "archived";
+}
 export interface Loaders<Tx> {
- entry(call: LoaderCall<Tx, EntryIdentity>): Promise<readonly (Entry | null)[]>;
- book(call: LoaderCall<Tx, BookIdentity>): Promise<readonly (Book | null)[]>;
- comment(call: LoaderCall<Tx, CommentIdentity>): Promise<readonly (Comment | null)[]>;
- counter(call: LoaderCall<Tx, CounterIdentity>): Promise<readonly (Counter | null)[]>;
+ entry: { v1(call: LoaderCall<Tx, EntryIdentity>): Promise<readonly (EntryV1 | null)[]>; v2(call: LoaderCall<Tx, EntryIdentity>): Promise<readonly (Entry | null)[]> };
+ book: { v1(call: LoaderCall<Tx, BookIdentity>): Promise<readonly (Book | null)[]> } | ((call: LoaderCall<Tx, BookIdentity>) => Promise<readonly (Book | null)[]>);
+ comment: { v1(call: LoaderCall<Tx, CommentIdentity>): Promise<readonly (Comment | null)[]> } | ((call: LoaderCall<Tx, CommentIdentity>) => Promise<readonly (Comment | null)[]>);
+ counter: { v1(call: LoaderCall<Tx, CounterIdentity>): Promise<readonly (Counter | null)[]> } | ((call: LoaderCall<Tx, CounterIdentity>) => Promise<readonly (Counter | null)[]>);
 }
 export type Options<Tx> = Omit<BackendOptions<Tx>, "config" | "handlers" | "loaders"> & { handlers: Handlers<Tx>; loaders: Loaders<Tx> };
 export function createBackend<Tx>(options: Options<Tx>) {

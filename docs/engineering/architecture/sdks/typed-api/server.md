@@ -11,7 +11,7 @@ A backend author writes handlers (one per mutation) and loaders (one per model) 
 | Piece | Shape |
 | --- | --- |
 | Handler | `({input, tx, userId, notify}) => Promise<void \| {channel}>`; `input` is one typed value per slot |
-| Loader | `({ids, tx, userId, channel}) => Promise<(Row \| null)[]>`, aligned with `ids` |
+| Loader | `({ids, tx, userId, channel}) => Promise<(Row \| null)[]>`, aligned with `ids`; one per retained model version, `Row` being that version's record type |
 | Rejecting one mutation | throw `MutationRejected(code)`, or throw anything `translateRejection` maps to a code |
 | Publishing | `notify({channel, records})` inside a handler; `backend.bindTransaction(tx).notify(...)` outside one |
 | Serving | `backend.listen({port, host?})` → `{url, close}` |
@@ -46,7 +46,7 @@ Handlers receive generated input types for their mutation version; loaders retur
 
 Handler registration implements this decision. Generated `Handlers<Tx>` holds one key per mutation, `lowerFirst(name)`, whose value carries a `v<n>` member for every retained version; a mutation retaining only v1 also accepts the bare function. The runtime refuses at startup: a bare function whenever the retained versions are not exactly v1, a missing version, an unknown `v<n>` key and a non-function value, each naming the mutation and version. Dispatch stays keyed by name and version, so a request never falls back to another version.
 
-Loader registration is still by model name only and has no version dispatch. The retained read contracts it will dispatch on are already generated: `backend.json` and the embedded config carry `models`, one `{name, version, identity, fields, enums}` per retained [model version](../../schema/models.md#9-architecture-decisions).
+Loader registration implements the same decision. Generated `Loaders<Tx>` holds one key per model, `lowerFirst(name)`, with a `v<n>` member per retained [model version](../../schema/models.md#9-architecture-decisions), each returning that version's record type: the schema's own version keeps the plain name (`Entry`), an older retained contract is its own type (`EntryV1`) with the enum values of its time inline. A model retaining only v1 also accepts the bare function. The runtime applies the handler rules to loaders at startup, naming the model and version. Dispatch is by model name and contract version: the engine names the version in every `load`, and the runtime never routes one version's request to another's loader. Which version a pull is served at is decided by the engine ([Server / Engine / Pull](../../server/engine/pull.md#6-runtime-view)); the client's declaration of the versions it expects is the remaining step.
 
 ## 10. Quality Requirements
 
@@ -55,8 +55,9 @@ Loader registration is still by model name only and has no version dispatch. The
 - **A version reaches only its own handler, whichever way v1 was registered.** Evidence: `a version dispatches only to its own handler and a function registers v1`.
 - **Slot arguments can be passed to `notify` directly.** Evidence: `slot arguments are tagged so notify accepts them directly`.
 - **Generated handlers group the retained versions of a mutation.** Evidence: [compiler/tests/compiler.rs](../../../../../crates/compiler/tests/compiler.rs) `backend_emitter_groups_handler_versions_under_the_mutation_name`, `backend_emitter_accepts_a_bare_function_only_for_a_v1_only_mutation`.
+- **Loader registration names every retained model version, a bare function registers v1 only, and a pull reaches only the served version's loader.** Evidence: [runtime.test.mjs](../../../../../integration/persistence/server/runtime.test.mjs) `loader registration names every retained model version and a function means v1 only`, `a pull reaches the loader of the served model version and normalizes rows with that contract`; [compiler/tests/compiler.rs](../../../../../crates/compiler/tests/compiler.rs) `backend_emitter_groups_loader_versions_under_the_model_name`; the `@ts-expect-error` loader negatives (bare function, missing and unknown versions, a value outside the v1 contract) in [test.ts](../../../../../integration/generated-api/test.ts).
 
-Executed 2026-09-15: `bash integration/persistence/server/run.sh` (41 passed) and `cargo test -p ahead-compiler --locked` (25 passed).
+Executed 2026-09-15: `bash integration/persistence/server/run.sh` (50 passed), `cargo test -p ahead-compiler --locked` (38 passed), `bash integration/generated-api/verify.sh` (passed).
 
 ## 11. Risks and Technical Debt
 

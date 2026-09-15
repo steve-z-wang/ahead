@@ -11,7 +11,10 @@ export const handlers: Handlers<Tx> = {
   async addComment({ input, notify }) { notify({ channel: "c", records: [input.comment] }); },
 };
 export const loaders: Loaders<Tx> = {
-  async entry({ ids }) { return ids.map(() => null); },
+  entry: {
+    async v1({ ids }) { return ids.map((id) => ({ ...id, title: "old", note: null, at: new Date(0), status: "active" })); },
+    async v2({ ids }) { return ids.map((id) => ({ ...id, title: "new", note: null, at: new Date(0), tags: [], status: "active" })); },
+  },
   async book({ ids }) { return ids.map(() => null); },
   async comment({ ids }) { return ids.map(() => null); },
   async counter({ ids }) { return ids.map(() => null); },

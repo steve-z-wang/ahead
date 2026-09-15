@@ -46,7 +46,25 @@ test('backend validates config and complete registrations at startup',()=>{
  const base={...config,schema:structuredClone(schema)};
  assert.throws(()=>createBackend({config:{...base,mutations:[{name:'bad',version:0,slots:[]}]},native,database:prisma(db),authenticate,handlers:{},loaders:{task:async()=>[]}}),/invalid mutation descriptor/);
  assert.throws(()=>createBackend({config:base,native,database:prisma(db),authenticate,handlers:{},loaders:{task:async()=>[]}}),/Missing handler edit for edit v1/);
- assert.throws(()=>createBackend({config:base,native,database:prisma(db),authenticate,handlers:{edit:async()=>{}},loaders:{}}),/Missing loader Task/);
+ assert.throws(()=>createBackend({config:base,native,database:prisma(db),authenticate,handlers:{edit:async()=>{}},loaders:{}}),/Missing loader task for Task v1/);
+});
+test('loader registration names every retained model version and a function means v1 only',()=>{
+ const base={...config,schema:structuredClone(schema)};
+ const contract=version=>({name:'Task',version,identity:['id'],fields:schema.models[0].fields,enums:[]});
+ const register=(models,loaders,currentVersion=1)=>{const c={...base,schema:structuredClone(schema),models};c.schema.models[0].version=currentVersion;return createBackend({config:c,native,database:prisma(db),authenticate,handlers:{edit:async()=>{}},loaders});};
+ const both=[contract(1),contract(2)];
+ assert.throws(()=>register(both,{task:async()=>[]},2),/Loader task must register v1, v2 of Task; a function registers v1 only/);
+ assert.throws(()=>register([contract(2)],{task:async()=>[]},2),/Loader task must register v2 of Task; a function registers v1 only/);
+ assert.throws(()=>register(both,{task:{v1:async()=>[]}},2),/Missing loader task\.v2 for Task v2/);
+ assert.throws(()=>register(both,{task:{v1:async()=>[],v2:async()=>[],v3:async()=>[]}},2),/Unknown loader task\.v3 for Task: retained versions are v1, v2/);
+ assert.throws(()=>register(both,{task:{v1:async()=>[],v2:'later'}},2),/Loader task\.v2 for Task v2 must be a function/);
+ assert.throws(()=>register(both,{task:null},2),/Missing loader task for Task v1, v2/);
+ // The engine refuses a schema whose current version is not a retained contract.
+ assert.throws(()=>register([contract(1)],{task:{v1:async()=>[]}},2),/not a retained contract/);
+ register(both,{task:{v1:async()=>[],v2:async()=>[]}},2);
+ register([contract(1)],{task:{v1:async()=>[]}});
+ register([contract(1)],{task:async()=>[]});
+ register([],{task:async()=>[]});
 });
 test('handler registration names every retained version and a function means v1 only',()=>{
  const base={...config,schema:structuredClone(schema)};
@@ -103,6 +121,30 @@ test('unsupported versions abort before handlers, invalid bodies settle with emp
 });
 test('loaders receive the channel whose pull requested the rows',async()=>{
  seenChannels.length=0;await pull('shared',0);assert.ok(seenChannels.length>0);assert.ok(seenChannels.every(c=>c==='shared'));
+});
+test('a pull reaches the loader of the served model version and normalizes rows with that contract',async()=>{
+ // Task v2 adds a nullable `note`; v1 keeps {id, title}. Until clients declare a
+ // version, the schema's own version (v2 here) is served, by its own loader.
+ const c=structuredClone(config);c.mutations=[];c.schema.models[0].version=2;
+ const v1={name:'Task',version:1,identity:['id'],fields:schema.models[0].fields,enums:[]};
+ c.schema.models[0].fields=[...schema.models[0].fields,{name:'note',type:{kind:'scalar',name:'string'},nullable:true}];
+ const v2={name:'Task',version:2,identity:['id'],fields:c.schema.models[0].fields,enums:[]};
+ c.models=[v1,v2];
+ const reached=[];
+ const versioned=createBackend({config:c,database:prisma(db),authenticate,handlers:{},loaders:{task:{
+  async v1({ids}){reached.push(1);return ids.map(id=>({id:id.id,title:'old'}))},
+  async v2({ids}){reached.push(2);return ids.map(id=>({id:id.id,title:'new',note:'n'}))},
+ }}});
+ const page=await versioned.pull('alice',JSON.stringify({clientId:'c',scope:'shared',fromCursor:0}));
+ const changes=JSON.parse(page).changes.filter(ch=>ch.state!==null);
+ assert.ok(changes.length>0);assert.deepEqual(changes[0].state,{title:'new',note:'n'});
+ assert.deepEqual([...new Set(reached)],[2],"only the served version's loader ran");
+ // A row outside the served contract is a loader defect, not silently trimmed.
+ const wide=createBackend({config:c,database:prisma(db),authenticate,handlers:{},loaders:{task:{
+  async v1({ids}){return ids.map(id=>({id:id.id,title:'old'}))},
+  async v2({ids}){return ids.map(id=>({id:id.id,title:'new',note:'n',extra:true}))},
+ }}});
+ await assert.rejects(()=>wide.pull('alice',JSON.stringify({clientId:'c',scope:'shared',fromCursor:0})),/unknown|state field/);
 });
 test('compaction materializes latest state; deletion is aligned null',async()=>{
  await backend.push('alice',push('dedup',2,[mutation(1,'updated')]));await assert.rejects(()=>backend.push('alice',push('dedup',1,[mutation(1,'first')])),/overlap/);

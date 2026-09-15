@@ -33,6 +33,7 @@ struct Fixed {
     scan: Value,
     publish: Value,
     published: Mutex<Vec<HostRequest>>,
+    loaded: Mutex<Vec<u64>>,
 }
 impl Fixed {
     fn new(scan: Value, publish: Value) -> Self {
@@ -40,6 +41,7 @@ impl Fixed {
             scan,
             publish,
             published: Mutex::new(vec![]),
+            loaded: Mutex::new(vec![]),
         }
     }
 }
@@ -54,7 +56,10 @@ impl Host for Fixed {
             Ok(match &request {
                 HostRequest::Head { .. } => json!(5),
                 HostRequest::Scan { .. } => self.scan.clone(),
-                HostRequest::Load { .. } => json!([{"id":"e","text":"t"}]),
+                HostRequest::Load { version, .. } => {
+                    self.loaded.lock().unwrap().push(*version);
+                    json!([{"id":"e","text":"t"}])
+                }
                 HostRequest::Publish { .. } => {
                     self.published.lock().unwrap().push(request.clone());
                     self.publish.clone()
@@ -93,6 +98,47 @@ fn pull_copies_the_row_stamp_into_the_change() {
     .unwrap();
     let page = ahead_core::PullPage::decode(text.as_bytes()).unwrap();
     assert_eq!(page.changes[0].stamp, 7);
+    assert_eq!(
+        *host.loaded.lock().unwrap(),
+        [1],
+        "the load names the model version it serves"
+    );
+}
+
+#[test]
+fn pull_normalizes_loader_rows_with_the_retained_contract_of_the_served_version() {
+    // The retained contract of the served version, not the current schema,
+    // decides which fields a loader may return.
+    let host = Fixed::new(row(json!(7)), Value::Null);
+    let mut c = json!({
+        "schema":{"enums":[],"models":[{"name":"Entry","version":2,"identity":["id"],"fields":[
+            {"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},
+            {"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}},
+            {"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}}]}]},
+        "loaders":["Entry"],
+        "mutations":[]
+    });
+    c["models"] = json!([
+        {"name":"Entry","version":1,"identity":["id"],"enums":[],"fields":[
+            {"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},
+            {"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}]},
+        {"name":"Entry","version":2,"identity":["id"],"enums":[],"fields":c["schema"]["models"][0]["fields"].clone()}
+    ]);
+    let config = Config::decode(c).unwrap();
+    let text = run(ahead_server::process_pull(
+        &config,
+        "u",
+        &pull_body(),
+        &host,
+    ))
+    .unwrap();
+    let page = ahead_core::PullPage::decode(text.as_bytes()).unwrap();
+    assert_eq!(page.changes[0].state, json!({"text":"t","note":null}));
+    assert_eq!(
+        *host.loaded.lock().unwrap(),
+        [2],
+        "the schema's own version is served"
+    );
 }
 
 #[test]

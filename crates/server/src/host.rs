@@ -106,9 +106,11 @@ pub enum HostRequest {
         owner: String,
         ordinal: u64,
     },
-    /// Load the current state of these identities for this channel.
+    /// Load the current state of these identities for this channel, as the
+    /// records of one retained model read contract (`version`).
     Load {
         model: String,
+        version: u64,
         identities: Vec<Value>,
         owner: String,
         channel: String,

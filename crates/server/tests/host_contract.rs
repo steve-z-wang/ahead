@@ -291,6 +291,7 @@ fn an_unusable_response_names_its_operation_and_ordinal() {
     );
     let load = HostRequest::Load {
         model: "Task".into(),
+        version: 1,
         identities: vec![],
         owner: "alice".into(),
         channel: "shared".into(),

@@ -28,6 +28,44 @@ pub struct Config {
     pub schema: Schema,
     pub mutations: Vec<Mutation>,
     pub loaders: Vec<String>,
+    /// Every retained model read contract, one per `(name, version)`. Absent
+    /// in a hand-written config, in which case each model is retained at the
+    /// schema's own version.
+    #[serde(default)]
+    pub models: Vec<ModelContract>,
+}
+/// One retained model read contract, as the compiler keeps it in
+/// `history/models.json`: the record structure a loader of `version` returns
+/// and the enums those fields use, as they were when the version was published.
+#[derive(Clone, Deserialize, Serialize)]
+pub struct ModelContract {
+    pub name: String,
+    pub version: u64,
+    pub identity: Vec<String>,
+    pub fields: Vec<ahead_core::FieldDescriptor>,
+    #[serde(default)]
+    pub enums: Vec<ahead_core::EnumDescriptor>,
+    /// The contract as a one-model schema, for normalizing loader rows.
+    #[serde(skip)]
+    contract: Option<Schema>,
+}
+impl ModelContract {
+    fn schema(&self) -> Schema {
+        Schema {
+            enums: self.enums.clone(),
+            models: vec![ahead_core::ModelDescriptor {
+                name: self.name.clone(),
+                version: self.version,
+                identity: self.identity.clone(),
+                fields: self.fields.clone(),
+                relations: vec![],
+                unique: vec![],
+            }],
+            requirements: vec![],
+            prerequisites: vec![],
+            client_policies: vec![],
+        }
+    }
 }
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Mutation {
@@ -131,7 +169,71 @@ impl Config {
         for loader in &c.loaders {
             c.schema.model(loader).map_err(config_invalid)?;
         }
+        let mut c = c;
+        if c.models.is_empty() {
+            c.models = c
+                .schema
+                .models
+                .iter()
+                .map(|m| ModelContract {
+                    name: m.name.clone(),
+                    version: m.version,
+                    identity: m.identity.clone(),
+                    fields: m.fields.clone(),
+                    enums: c
+                        .schema
+                        .enums
+                        .iter()
+                        .filter(|e| {
+                            m.fields.iter().any(|f| {
+                                matches!(&f.value_type, ahead_core::ValueType::Enum { name } if *name == e.name)
+                            })
+                        })
+                        .cloned()
+                        .collect(),
+                    contract: None,
+                })
+                .collect();
+        }
+        let mut retained = BTreeSet::new();
+        for contract in &mut c.models {
+            let current = c.schema.model(&contract.name).map_err(config_invalid)?;
+            if read_counter(&json!(contract.version), true).is_err()
+                || !retained.insert((contract.name.clone(), contract.version))
+                || contract.identity != current.identity
+            {
+                return Err(Error::new(
+                    code::CONFIG_INVALID,
+                    format!(
+                        "invalid model contract {} v{}",
+                        contract.name, contract.version
+                    ),
+                ));
+            }
+            let schema = contract.schema();
+            schema.validate().map_err(config_invalid)?;
+            contract.contract = Some(schema);
+        }
+        for model in &c.schema.models {
+            if !retained.contains(&(model.name.clone(), model.version)) {
+                return Err(Error::new(
+                    code::CONFIG_INVALID,
+                    format!(
+                        "model {} v{} is not a retained contract",
+                        model.name, model.version
+                    ),
+                ));
+            }
+        }
         Ok(c)
+    }
+    /// The read contract a loader of `version` serves for `model`, or `None`
+    /// when that version is not retained.
+    pub fn contract(&self, model: &str, version: u64) -> Option<&Schema> {
+        self.models
+            .iter()
+            .find(|m| m.name == model && m.version == version)
+            .and_then(|m| m.contract.as_ref())
     }
     fn descriptor(&self, body: &Value) -> Result<&Mutation> {
         let name = body["name"]
@@ -526,9 +628,17 @@ pub async fn process_pull(
             .iter()
             .map(|i| changes[*i].identity.clone())
             .collect();
+        // Until clients declare the read contracts they expect, a pull is served
+        // at the schema's own version of each model, which is what every
+        // generated client of this schema reads.
+        let version = config.schema.model(&model).map_err(internal)?.version;
+        let contract = config
+            .contract(&model, version)
+            .ok_or_else(|| internal(format!("model {model} v{version} is not retained")))?;
         let loaded: Loaded = host
             .call_typed(HostRequest::Load {
                 model: model.clone(),
+                version,
                 identities,
                 owner: owner.into(),
                 channel: request.channel.clone(),
@@ -540,8 +650,7 @@ pub async fn process_pull(
         for (i, state) in indexes.iter().zip(&loaded) {
             changes[*i].state = match state {
                 None => Value::Null,
-                Some(state) => config
-                    .schema
+                Some(state) => contract
                     .normalize_state(&model, state)
                     .map_err(|e| Error::new(code::LOADER_INVALID, e.to_string()))?,
             };

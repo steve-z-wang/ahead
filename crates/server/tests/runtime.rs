@@ -86,6 +86,67 @@ fn startup_rejects_invalid_patch_capabilities() {
     assert!(ahead_server::Config::decode(c).is_err());
 }
 
+#[test]
+fn startup_validates_the_retained_model_contracts() {
+    let contract = |version: u64, fields: Value| json!({"name":"Task","version":version,"identity":["id"],"fields":fields,"enums":[]});
+    let id = json!({"name":"id","type":{"kind":"scalar","name":"string"},"nullable":false});
+    let title = json!({"name":"title","type":{"kind":"scalar","name":"string"},"nullable":false});
+    let note = json!({"name":"note","type":{"kind":"scalar","name":"string"},"nullable":true});
+    // Without `models`, every model is retained at the schema's own version.
+    let derived = ahead_server::Config::decode(config()).unwrap();
+    assert_eq!(
+        derived
+            .models
+            .iter()
+            .map(|m| (m.name.as_str(), m.version))
+            .collect::<Vec<_>>(),
+        [("Task", 1)]
+    );
+    let mut c = config();
+    c["schema"]["models"][0]["version"] = json!(2);
+    c["models"] = json!([
+        contract(1, json!([id, title])),
+        contract(2, json!([id, title, note]))
+    ]);
+    let decoded = ahead_server::Config::decode(c.clone()).unwrap();
+    assert_eq!(decoded.models.len(), 2);
+    assert_eq!(
+        decoded
+            .contract("Task", 1)
+            .unwrap()
+            .model("Task")
+            .unwrap()
+            .fields
+            .len(),
+        2
+    );
+    assert!(
+        decoded.contract("Task", 3).is_none(),
+        "an unretained version is not served"
+    );
+    // The schema's current version must be retained; identities must agree;
+    // a contract must be a valid schema; versions are unique per model.
+    let mut missing_current = c.clone();
+    missing_current["models"] = json!([contract(1, json!([id, title]))]);
+    assert!(ahead_server::Config::decode(missing_current).is_err());
+    let mut other_identity = c.clone();
+    other_identity["models"][0]["identity"] = json!(["title"]);
+    assert!(ahead_server::Config::decode(other_identity).is_err());
+    let mut unknown_enum = c.clone();
+    unknown_enum["models"][0]["fields"] =
+        json!([id, {"name":"kind","type":{"kind":"enum","name":"Kind"},"nullable":false}]);
+    assert!(ahead_server::Config::decode(unknown_enum).is_err());
+    let mut duplicate = c.clone();
+    duplicate["models"] = json!([
+        contract(2, json!([id, title])),
+        contract(2, json!([id, title, note]))
+    ]);
+    assert!(ahead_server::Config::decode(duplicate).is_err());
+    let mut unknown_model = c.clone();
+    unknown_model["models"][0]["name"] = json!("Other");
+    assert!(ahead_server::Config::decode(unknown_model).is_err());
+}
+
 /// A host whose `claim` answers with the given owner and last sequence and
 /// which records every `handle` call, for asserting protocol refusals in
 /// process without a database.
