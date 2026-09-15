@@ -209,7 +209,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Modify: `docs/engineering/architecture/compiler/validate.md` (only if it enumerates semantic refusals; check with `grep -n "duplicate slot\|unknown parent slot" docs/engineering/architecture/compiler/validate.md`)
 - Modify: `docs/engineering/testing/components/schema.md` (the "Slot decoding" row), `docs/engineering/testing/components/compiler.md` (if it lists the refusal tests), `docs/engineering/testing/review.md` (item 1)
 
-- [ ] **Step 1: §5 rule**
+- [x] **Step 1: §5 rule**
 
 In `mutations.md`, after the sentence `Operations are matched to slots in order by \`(model, op)\`; a list slot consumes every consecutive match.` insert:
 
@@ -217,7 +217,7 @@ In `mutations.md`, after the sentence `Operations are matched to slots in order 
 A later slot with the same `(model, op)` as an earlier non-single slot, with no single slot fixing a position between them, is refused by the compiler as `ambiguous slot`, so the walk is deterministic for every emitted schema.
 ```
 
-- [ ] **Step 2: §9 decision**
+- [x] **Step 2: §9 decision**
 
 Append to "## 9. Architecture Decisions":
 
@@ -225,11 +225,11 @@ Append to "## 9. Architecture Decisions":
 **Ambiguous adjacent slots are refused at compile time (decided 2026-09-15, [#54](https://github.com/zanminwang/ahead/issues/54)).** Operations carry no slot name, so two slots of one `(model, op)` are only distinguishable when a single slot fixes a position between them or the earlier one is itself single. The compiler reports the later slot; the wire format and the decoders in [server/lib.rs](../../../../crates/server/src/lib.rs) and [client/policies.rs](../../../../crates/client/src/policies.rs) are unchanged, and retained history versions keep decoding as they always did. Evidence: [compiler/tests/compiler.rs](../../../../crates/compiler/tests/compiler.rs) `structural_refusals_a_schema_author_is_likely_to_hit`, `semantic_errors_report_the_offending_declaration`.
 ```
 
-- [ ] **Step 3: §11 removal**
+- [x] **Step 3: §11 removal**
 
 Delete the paragraph beginning `**Potential risk: adjacent slots with the same model and operation decode greedily.**`. Leave the `Model.update<>` paragraph alone (it belongs to #49).
 
-- [ ] **Step 4: Testing docs**
+- [x] **Step 4: Testing docs**
 
 In `docs/engineering/testing/components/schema.md`, "Slot decoding" row, replace
 
@@ -247,12 +247,12 @@ In `docs/engineering/testing/review.md`, item 1, remove the clause `greedy decod
 
 If `validate.md` or `components/compiler.md` list refusals, add one line for `ambiguous slot` in the same style as their `duplicate slot` entry.
 
-- [ ] **Step 5: Link check**
+- [x] **Step 5: Link check**
 
 Run: `grep -rn "greedy\|RemoveEntries\|ambiguous" docs website/docs --include='*.md'`
 Expected: every hit either describes the new rule or the retained v1 history. No hit still calls the greedy result an open risk.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add docs
