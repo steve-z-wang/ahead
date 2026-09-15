@@ -80,7 +80,7 @@ fn backend_emitter_declares_handlers_loaders_and_references() {
     assert!(ts.contains("export interface Loaders<Tx> {"));
     assert!(
         ts.contains(
-            " book(call: LoaderCall<Tx, BookIdentity>): Promise<readonly (Book | null)[]>;"
+            " book: { v1(call: LoaderCall<Tx, BookIdentity>): Promise<readonly (Book | null)[]> } | ((call: LoaderCall<Tx, BookIdentity>) => Promise<readonly (Book | null)[]>);"
         )
     );
     assert!(ts.contains("export function Book(identity: BookIdentity): RecordRef { return { model: \"Book\", identity }; }"));
@@ -128,7 +128,7 @@ fn backend_emitter_accepts_a_bare_function_only_for_a_v1_only_mutation() {
         "{ts}"
     );
     assert!(
-        !ts.contains("| ((call:"),
+        !ts.contains("| ((call: HandlerCall"),
         "a single non-v1 version has no shorthand: {ts}"
     );
 }
@@ -341,4 +341,45 @@ fn model_versions_reach_every_generated_surface() {
     let backend = ahead_compiler::backend_typescript(&with_history, "@ahead/server");
     assert!(backend.contains(r#""models":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}}],"identity":["id"],"name":"Task","version":1}]"#), "{backend}");
     assert!(!backend.contains("backendModels"), "{backend}");
+}
+
+#[test]
+fn backend_emitter_groups_loader_versions_under_the_model_name() {
+    let v = compile("enum Status { open closed archived } model Task { id UUID title String status Status @@id(id) @@version(2) } model Note { id UUID text String @@id(id) }").unwrap();
+    let mut with_history = v.clone();
+    // The retained v1 contract: no `title`, and `Status` as it was published.
+    let old = serde_json::json!({"name":"Task","version":1,"identity":["id"],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}},{"name":"status","nullable":false,"type":{"kind":"enum","name":"Status"}}],"enums":[{"name":"Status","values":["open","closed"]}]});
+    let mut current = v["schema"]["models"][0].clone();
+    current["enums"] = v["schema"]["enums"].clone();
+    let note = serde_json::json!({"name":"Note","version":1,"identity":["id"],"fields":v["schema"]["models"][1]["fields"],"enums":[]});
+    with_history["backendModels"] = serde_json::json!([note, old, current]);
+    let ts = ahead_compiler::backend_typescript(&with_history, "@ahead/server");
+    // An older contract is its own record type, with the enum values of its time inline.
+    assert!(
+        ts.contains(
+            "export interface TaskV1 {\n id: string;\n status: \"open\" | \"closed\";\n}\n"
+        ),
+        "{ts}"
+    );
+    assert!(ts.contains("export type Task = TaskRecord;"), "{ts}");
+    assert!(
+        !ts.contains("TaskV2"),
+        "the latest version keeps the plain name: {ts}"
+    );
+    assert!(
+        ts.contains(" task: { v1(call: LoaderCall<Tx, TaskIdentity>): Promise<readonly (TaskV1 | null)[]>; v2(call: LoaderCall<Tx, TaskIdentity>): Promise<readonly (Task | null)[]> };\n"),
+        "{ts}"
+    );
+    assert!(
+        ts.contains(" note: { v1(call: LoaderCall<Tx, NoteIdentity>): Promise<readonly (Note | null)[]> } | ((call: LoaderCall<Tx, NoteIdentity>) => Promise<readonly (Note | null)[]>);\n"),
+        "{ts}"
+    );
+    // Without a history the schema's own version is the only retained one; a
+    // single non-v1 version has no shorthand.
+    let ts = ahead_compiler::backend_typescript(&v, "@ahead/server");
+    assert!(
+        ts.contains(" task: { v2(call: LoaderCall<Tx, TaskIdentity>): Promise<readonly (Task | null)[]> };\n"),
+        "{ts}"
+    );
+    assert!(!ts.contains("TaskV1"), "{ts}");
 }

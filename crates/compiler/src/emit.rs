@@ -501,15 +501,98 @@ pub fn backend_typescript(v: &Value, runtime: &str) -> String {
         }
     }
     o.push_str("}\n");
+    // Every retained model read contract: the schema's own version is the
+    // latest and keeps the plain record name; an older version is its own
+    // record type with the enum values of its time inline, so a loader of that
+    // version cannot be typed against a value the contract never promised.
+    let retained: Vec<Value> = match backend.get("models").and_then(Value::as_array) {
+        Some(list) => list.clone(),
+        None => models
+            .iter()
+            .map(|m| {
+                let mut snapshot = m.clone();
+                snapshot["enums"] = arr(&v["schema"], "enums")
+                    .iter()
+                    .filter(|e| {
+                        arr(m, "fields")
+                            .iter()
+                            .any(|f| f["type"]["kind"] == "enum" && f["type"]["name"] == e["name"])
+                    })
+                    .cloned()
+                    .collect();
+                snapshot
+            })
+            .collect(),
+    };
+    let record_name = |contract: &Value| {
+        let n = s(contract, "name");
+        let current = models
+            .iter()
+            .find(|m| m["name"] == contract["name"])
+            .map(|m| m["version"].as_u64().unwrap_or(1));
+        if Some(contract["version"].as_u64().unwrap()) == current {
+            n.to_string()
+        } else {
+            format!("{n}V{}", contract["version"])
+        }
+    };
+    for contract in &retained {
+        let name = record_name(contract);
+        if name == s(contract, "name") {
+            continue;
+        }
+        writeln!(o, "export interface {name} {{").unwrap();
+        for f in arr(contract, "fields") {
+            let field_type = if f["type"]["kind"] == "enum" {
+                let en = arr(contract, "enums")
+                    .iter()
+                    .find(|e| e["name"] == f["type"]["name"])
+                    .expect("a retained contract carries the enums its fields use");
+                format!(
+                    "{}{}",
+                    arr(en, "values")
+                        .iter()
+                        .map(Value::to_string)
+                        .collect::<Vec<_>>()
+                        .join(" | "),
+                    if f["nullable"] == true { " | null" } else { "" }
+                )
+            } else {
+                ft(f, false)
+            };
+            writeln!(o, " {}: {field_type};", s(f, "name")).unwrap();
+        }
+        o.push_str("}\n");
+    }
+    // Loader registration mirrors handlers: every retained version under the
+    // model name, a bare function only for a v1-only model.
     o.push_str("export interface Loaders<Tx> {\n");
     for m in models {
         let n = s(m, "name");
-        writeln!(
-            o,
-            " {}(call: LoaderCall<Tx, {n}Identity>): Promise<readonly ({n} | null)[]>;",
-            lower(n)
-        )
-        .unwrap();
+        let mut versions: Vec<&Value> =
+            retained.iter().filter(|c| c["name"] == m["name"]).collect();
+        versions.sort_by_key(|c| c["version"].as_u64().unwrap());
+        let members: Vec<String> = versions
+            .iter()
+            .map(|c| {
+                format!(
+                    "v{}(call: LoaderCall<Tx, {n}Identity>): Promise<readonly ({} | null)[]>;",
+                    c["version"].as_u64().unwrap(),
+                    record_name(c)
+                )
+            })
+            .collect();
+        let grouped = format!("{{ {} }}", members.join(" ").trim_end_matches(';'));
+        if versions.len() == 1 && versions[0]["version"].as_u64() == Some(1) {
+            writeln!(
+                o,
+                " {}: {grouped} | ((call: LoaderCall<Tx, {n}Identity>) => Promise<readonly ({n} | null)[]>);",
+                lower(n)
+            )
+            .unwrap();
+        } else {
+            writeln!(o, " {}: {grouped};", lower(n)).unwrap();
+        }
     }
     o.push_str("}\n");
     o.push_str("export type Options<Tx> = Omit<BackendOptions<Tx>, \"config\" | \"handlers\" | \"loaders\"> & { handlers: Handlers<Tx>; loaders: Loaders<Tx> };\n");

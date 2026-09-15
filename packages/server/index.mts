@@ -210,6 +210,53 @@ export type Loader<Tx, Identity = any, Row = object> = (
 /** Every retained version of one mutation, or a bare function as shorthand for a v1-only contract. */
 export type HandlerRegistration<Tx> =
   Handler<Tx> | { [version: `v${number}`]: Handler<Tx> };
+/** Every retained version of one model's read contract, or a bare function as shorthand for a v1-only model. */
+export type LoaderRegistration<Tx> =
+  Loader<Tx> | { [version: `v${number}`]: Loader<Tx> };
+/**
+ * One registration holds every retained version under the mutation or model
+ * name; a bare function is shorthand for a v1-only contract and never stands
+ * for the latest version. Refused at startup, naming the key and version.
+ */
+function versioned<F>(
+  kind: "handler" | "loader",
+  name: string,
+  key: string,
+  versions: readonly number[],
+  registration: unknown,
+): Map<number, F> {
+  const label = kind.charAt(0).toUpperCase() + kind.slice(1);
+  const list = versions.map((version) => `v${version}`).join(", ");
+  const table = new Map<number, F>();
+  if (typeof registration === "function") {
+    if (versions.length !== 1 || versions[0] !== 1)
+      throw new Error(
+        `${label} ${key} must register ${list} of ${name}; a function registers v1 only`,
+      );
+    table.set(1, registration as F);
+    return table;
+  }
+  if (registration === null || typeof registration !== "object")
+    throw new Error(`Missing ${kind} ${key} for ${name} ${list}`);
+  for (const version of versions) {
+    const found = (registration as Record<string, unknown>)[`v${version}`];
+    if (found === undefined)
+      throw new Error(
+        `Missing ${kind} ${key}.v${version} for ${name} v${version}`,
+      );
+    if (typeof found !== "function")
+      throw new Error(
+        `${label} ${key}.v${version} for ${name} v${version} must be a function`,
+      );
+    table.set(version, found as F);
+  }
+  for (const found of Object.keys(registration))
+    if (!/^v[1-9][0-9]*$/.test(found) || !table.has(Number(found.slice(1))))
+      throw new Error(
+        `Unknown ${kind} ${key}.${found} for ${name}: retained versions are ${list}`,
+      );
+  return table;
+}
 export const RECORD: unique symbol = Symbol("ahead.record");
 function toRef(value: unknown): RecordRef {
   if (value !== null && typeof value === "object") {
@@ -237,7 +284,7 @@ export interface BackendOptions<T> {
   database: Database<T>;
   authenticate: Authenticate;
   handlers: Record<string, HandlerRegistration<T>>;
-  loaders: Record<string, Loader<T>>;
+  loaders: Record<string, LoaderRegistration<T>>;
   loaderHooks?: Record<
     string,
     { prepareForViewer(call: LoaderCall<T, any>): Promise<void> }
@@ -338,8 +385,9 @@ export function createBackend<T>(options: BackendOptions<T>) {
       (require("../../bindings/node/ahead-node.node") as Native),
   );
   const descriptor = options.config as {
-    schema?: { models?: { name: string }[] };
+    schema?: { models?: { name: string; version?: number }[] };
     mutations?: MutationDescriptor[];
+    models?: { name: string; version: number }[];
   };
   const retained = new Map<string, number[]>();
   for (const m of descriptor.mutations ?? [])
@@ -347,58 +395,52 @@ export function createBackend<T>(options: BackendOptions<T>) {
       m.name,
       [...(retained.get(m.name) ?? []), m.version].sort((a, b) => a - b),
     );
-  const modelNames = (descriptor.schema?.models ?? []).map(
-    (model) => model.name,
-  );
+  const schemaModels = descriptor.schema?.models ?? [];
+  const modelNames = schemaModels.map((model) => model.name);
   const config = JSON.stringify({
     ...options.config,
     loaders: modelNames,
   });
   native.validateConfig(config);
+  // Every retained model read contract; a config without `models` retains each
+  // model at the schema's own version, as the engine does.
+  const retainedModels = new Map<string, number[]>();
+  for (const m of descriptor.models?.length
+    ? descriptor.models
+    : schemaModels.map((model) => ({
+        name: model.name,
+        version: model.version ?? 1,
+      })))
+    retainedModels.set(
+      m.name,
+      [...(retainedModels.get(m.name) ?? []), m.version].sort((a, b) => a - b),
+    );
   const loaderTable = new Map<string, Loader<T>>();
   for (const name of modelNames) {
-    const loader = options.loaders[lowerFirst(name)];
-    if (typeof loader !== "function") throw new Error(`Missing loader ${name}`);
-    loaderTable.set(name, loader);
+    const key = lowerFirst(name);
+    const table = versioned<Loader<T>>(
+      "loader",
+      name,
+      key,
+      retainedModels.get(name) ?? [],
+      options.loaders[key],
+    );
+    for (const [version, loader] of table)
+      loaderTable.set(`${name}:${version}`, loader);
   }
-  // One registration per mutation name holds every retained version; a bare function is shorthand
-  // for a v1-only contract and never stands for the latest version.
   const registered = new Map<string, Map<number, Handler<T>>>();
   for (const [name, versions] of retained) {
     const key = lowerFirst(name);
-    const list = versions.map((version) => `v${version}`).join(", ");
-    const registration = options.handlers[key];
-    const table = new Map<number, Handler<T>>();
-    if (typeof registration === "function") {
-      if (versions.length !== 1 || versions[0] !== 1)
-        throw new Error(
-          `Handler ${key} must register ${list} of ${name}; a function registers v1 only`,
-        );
-      table.set(1, registration);
-    } else if (registration === null || typeof registration !== "object") {
-      throw new Error(`Missing handler ${key} for ${name} ${list}`);
-    } else {
-      for (const version of versions) {
-        const handler = (registration as Record<string, unknown>)[
-          `v${version}`
-        ];
-        if (handler === undefined)
-          throw new Error(
-            `Missing handler ${key}.v${version} for ${name} v${version}`,
-          );
-        if (typeof handler !== "function")
-          throw new Error(
-            `Handler ${key}.v${version} for ${name} v${version} must be a function`,
-          );
-        table.set(version, handler as Handler<T>);
-      }
-      for (const found of Object.keys(registration))
-        if (!/^v[1-9][0-9]*$/.test(found) || !table.has(Number(found.slice(1))))
-          throw new Error(
-            `Unknown handler ${key}.${found} for ${name}: retained versions are ${list}`,
-          );
-    }
-    registered.set(name, table);
+    registered.set(
+      name,
+      versioned<Handler<T>>(
+        "handler",
+        name,
+        key,
+        versions,
+        options.handlers[key],
+      ),
+    );
   }
   const handlerTable = new Map<
     string,
@@ -502,8 +544,11 @@ export function createBackend<T>(options: BackendOptions<T>) {
             result = { rejection: new MutationRejected(code).code };
           }
         } else if (req.op === "load") {
-          const loader = loaderTable.get(req.model);
-          if (!loader) throw new Error(`Missing loader ${req.model}`);
+          // Dispatch is by model name and contract version; a version that
+          // was not registered is a defect, never another version's loader.
+          const loader = loaderTable.get(`${req.model}:${req.version}`);
+          if (!loader)
+            throw new Error(`Missing loader ${req.model} v${req.version}`);
           const call = {
             ids: req.identities as any[],
             tx,

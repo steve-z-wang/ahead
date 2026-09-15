@@ -13,7 +13,7 @@ export interface Handlers<Tx> {
  edit: { v1(call: HandlerCall<Tx, EditInput>): Promise<void | { channel: string }> } | ((call: HandlerCall<Tx, EditInput>) => Promise<void | { channel: string }>);
 }
 export interface Loaders<Tx> {
- entry(call: LoaderCall<Tx, EntryIdentity>): Promise<readonly (Entry | null)[]>;
+ entry: { v1(call: LoaderCall<Tx, EntryIdentity>): Promise<readonly (Entry | null)[]> } | ((call: LoaderCall<Tx, EntryIdentity>) => Promise<readonly (Entry | null)[]>);
 }
 export type Options<Tx> = Omit<BackendOptions<Tx>, "config" | "handlers" | "loaders"> & { handlers: Handlers<Tx>; loaders: Loaders<Tx> };
 export function createBackend<Tx>(options: Options<Tx>) {

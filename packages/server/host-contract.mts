@@ -45,10 +45,11 @@ export type HandleRequest = {
   owner: string;
   ordinal: number;
 };
-/** Load the current state of these identities for this channel. */
+/** Load the current state of these identities for this channel, as records of one retained model read contract. */
 export type LoadRequest = {
   op: "load";
   model: string;
+  version: number;
   identities: Record<string, unknown>[];
   owner: string;
   channel: string;

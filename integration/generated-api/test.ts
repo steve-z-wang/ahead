@@ -1,4 +1,4 @@
-import type {Handlers} from './backend.ts';
+import type {Handlers,Loaders,EntryV1} from './backend.ts';
 import {CreateEntry,EditEntry,RemoveEntries,decodeEntry,encodeEntry,EntryModel,EntryLiveModel,GeneratedTransaction,type Entry,type ReadPort,type LivePort,type WritePort} from './generated.ts';
 const row:Entry={id:'123e4567-e89b-42d3-a456-426614174000',title:'hello',note:null,at:new Date('2026-01-01T00:00:00Z'),tags:['x'],status:'active'};
 function check(v:unknown,m:string){if(!v)throw Error(m)}
@@ -44,6 +44,24 @@ if(false){
  const bare:Handlers<Tx>['editEntry']=async()=>{};
  // @ts-expect-error every retained version must be registered
  const partial:Handlers<Tx>['editEntry']={v2:async({input,notify})=>{notify({channel:'c',records:[input.entry]})}};
+
+ // Loaders follow the same shape; a retained older contract has its own record type.
+ const v1Row:EntryV1={id:row.id,title:'old',note:null,at:row.at,status:'active'};
+ const versionedLoaders:Loaders<Tx>['entry']={
+  async v1({ids}){return ids.map(()=>v1Row)},
+  async v2({ids}){return ids.map(()=>row)},
+  // @ts-expect-error v3 is not a retained version of Entry
+  async v3(){return []},
+ };
+ const shorthandLoader:Loaders<Tx>['book']=async({ids})=>ids.map(id=>({...id,title:'t'}));
+ // @ts-expect-error a model with two retained versions cannot register a bare function
+ const bareLoader:Loaders<Tx>['entry']=async()=>[];
+ // @ts-expect-error every retained model version must be registered
+ const partialLoader:Loaders<Tx>['entry']={v2:async({ids})=>ids.map(()=>row)};
+ // @ts-expect-error a v1 loader cannot return a value outside the v1 contract
+ const wrongEnum:EntryV1={...v1Row,status:'typo'};
+ // @ts-expect-error the v1 contract has no tags
+ const extra:EntryV1={...v1Row,tags:[]};
 }
 const tx=new GeneratedTransaction({...reads,async mutate(m){check(JSON.stringify(m)===JSON.stringify(create),'forwarding');return 1},async direct(op){check(JSON.stringify(op)===JSON.stringify({model:'Entry',op:'delete',identity:{id:row.id}}),'local write');}});
 async function main(){check((await tx.models.entry.get({id:row.id}))?.at instanceof Date,'read decode');check((await tx.models.entry.query()).length===1,'query facade');check(await tx.mutate.createEntry({entry:row})===1,'mutate facade');await tx.models.entry.delete({id:row.id});}
