@@ -31,15 +31,15 @@ What reconciliation does depends on the kind of difference. The three outcomes a
 | Enum value set changed | **not detected**; the column is `TEXT` |
 | Model removed from the schema | its tables are **kept** |
 
-Consequences worth knowing: a field rename is handled as "remove the old field, add the new one", so the old column stays in place and the new column follows the rows above for an added field: filled with `null` if nullable, with the declared default if it has one, and refused (open fails) if it is non-nullable without a default; the old column's values are not carried over. A stale unique index keeps constraining rows; and rows holding an enum value the schema no longer declares remain readable as strings that normalization will reject. A refused reconciliation rolls back and leaves the file exactly as it was; the only remedy today is a new database file (guarantee N3).
+Consequences worth knowing: a field rename is handled as "remove the old field, add the new one", so the old column stays in place and the new column follows the rows above for an added field: filled with `null` if nullable, with the declared default if it has one, and refused (open fails) if it is non-nullable without a default; the old column's values are not carried over. A stale unique index keeps constraining rows; and rows holding an enum value the schema no longer declares remain readable as strings that normalization will reject. A refused reconciliation rolls back and leaves the file exactly as it was; the only remedy today is a new database file.
 
 ## 10. Quality Requirements
 
 - **Additive changes open and fill existing rows; unknown columns survive.** Evidence: [sqlite/tests/ddl.rs](../../../../../crates/sqlite/tests/ddl.rs) `adds_missing_columns_to_both_tables_and_keeps_unknown_ones`.
-- **Identity, type and default-less non-nullable changes are refused without touching the file** (guarantee C3). Evidence: `rejects_non_nullable_column_without_default_identity_change_and_type_change`.
+- **Identity, type and default-less non-nullable changes are refused without touching the file**. Evidence: `rejects_non_nullable_column_without_default_identity_change_and_type_change`.
 - **A fresh database gets model, before and framework tables and enforces unique indexes.** Evidence: `creates_model_before_and_framework_tables`.
 
-Tests read, not executed. Reconciliation with a non-empty queue is not tested; the claim that queued operation bytes survive an additive change follows from the row layout (guarantee C3 note).
+Tests read, not executed. Reconciliation with a non-empty queue is not tested; the claim that queued operation bytes survive an additive change follows from the row layout.
 
 ## 11. Risks and Technical Debt
 

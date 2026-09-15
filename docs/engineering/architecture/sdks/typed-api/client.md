@@ -31,8 +31,8 @@ Code: [client-js/index.mts](../../../../../packages/client-js/index.mts), [clien
 ## 10. Quality Requirements
 
 - **An unawaited or escaped call poisons the transaction, and a caught failure still rolls it back unless confined to a savepoint** (binding half of guarantee L3). Evidence: [transaction.test.mjs](../../../../../integration/bindings/client-js/transaction.test.mjs); [dart/test/client_test.dart](../../../../../packages/dart/test/client_test.dart) `Dart callbacks read their writes, rollback and reopen through native Rust`.
-- **Generated code forwards calls unchanged and rejects misuse at compile time** (guarantee S2). Evidence: [integration/generated-api/test.ts](../../../../../integration/generated-api/test.ts) (positives and `@ts-expect-error` negatives); [generated_test.dart](../../../../../integration/generated-api/generated_test.dart) (positives only).
-- **One end-to-end flow per language works against a real backend** (guarantee S4). Evidence: [round-trip.test.mjs](../../../../../integration/e2e/round-trip.test.mjs).
+- **Generated code forwards calls unchanged and rejects misuse at compile time**. Evidence: [integration/generated-api/test.ts](../../../../../integration/generated-api/test.ts) (positives and `@ts-expect-error` negatives); [generated_test.dart](../../../../../integration/generated-api/generated_test.dart) (positives only).
+- **One end-to-end flow per language works against a real backend**. Evidence: [round-trip.test.mjs](../../../../../integration/e2e/round-trip.test.mjs).
 
 Tests read, not executed.
 
@@ -42,4 +42,4 @@ Tests read, not executed.
 
 **Accepted limitation.** `Client.open` and the generated `open` still accept a `migration` option that the runtime ignores; its future is part of [#20](https://github.com/zanminwang/ahead/issues/20).
 
-**To confirm.** No test runs one script through the Rust, TypeScript and Dart clients and compares state (guarantee S3); the two clients are separate implementations of the same session logic ([Live session](../../client/connection/controller/live-session.md)), so identical behavior rests on the shared Rust engine.
+**To confirm.** No test runs one script through the Rust, TypeScript and Dart clients and compares state; the two clients are separate implementations of the same session logic ([Live session](../../client/connection/controller/live-session.md)), sharing the Rust engine alone does not establish equivalent behavior across SDK boundaries. The shared scenarios in `fixtures/scenarios` are prose READMEs, not an executable cross-language runner.

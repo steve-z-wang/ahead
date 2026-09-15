@@ -19,7 +19,7 @@ Application-facing contracts ([Typed API / Server](../sdks/typed-api/server.md) 
 
 - A **handler** receives the decoded input (one value per slot), the transaction, the user id and `notify`. It returns nothing or `{channel}`. Throwing `MutationRejected`, or an error `translateRejection` maps to a code, rejects that one mutation; any other error aborts the whole batch.
 - A **loader** receives identities, the transaction, the user id and the channel that asked. It returns one row or `null` per identity, in order. `null` means "not visible or deleted" and is delivered as a delete; a missing entry or `undefined` is a defect.
-- `authenticate(request)` returns the user id or null. Channel-level authorization does not exist by design (guarantee N5, [#22](https://github.com/zanminwang/ahead/issues/22)); visibility is the loader's decision.
+- `authenticate(request)` returns the user id or null. Handlers and loaders own application authorization; the framework does not enforce channel-level policy ([#22](https://github.com/zanminwang/ahead/issues/22)).
 
 ## 5. Building Block View
 

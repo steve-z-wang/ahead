@@ -6,7 +6,7 @@ Three runtimes exchange the same messages: Rust, TypeScript and Dart. The protoc
 
 ## 2. Architecture Constraints
 
-Wire names are inherited from the reference implementation and must not change: `scope` is a channel, `syncId` a cursor, and `requiredScope`/`requiredSyncId` are the legacy single-checkpoint pair (guarantee C1). Every counter (cursor, stamp, batch sequence, ordinal, version) is an integer in `0..=2^53−1` so JavaScript reads it exactly.
+Wire names are inherited from the reference implementation and must not change: `scope` is a channel, `syncId` a cursor, and `requiredScope`/`requiredSyncId` are the legacy single-checkpoint pair. Every counter (cursor, stamp, batch sequence, ordinal, version) is an integer in `0..=2^53−1` so JavaScript reads it exactly.
 
 ## 5. Building Block View
 
@@ -16,7 +16,7 @@ Wire names are inherited from the reference implementation and must not change: 
 
 **Identity.** A record key is the model name plus the normalized identity object; its canonical JSON is the `identityKey` the server stores and the key the client ledgers use ([Models](../schema/models.md)).
 
-**State shapes.** A received state must contain every non-identity field (nullable ones default to `null`), may not contain identity fields, and drops unknown fields, which is what lets an older client accept states from a newer server (guarantee C2). Loader output on the server is looser: it may include identity fields and omit nullable ones. A patch names only known non-identity fields and keeps explicit `null`.
+**State shapes.** A received state must contain every non-identity field (nullable ones default to `null`), may not contain identity fields, and drops unknown fields, which is what lets an older client accept states from a newer server. Loader output on the server is looser: it may include identity fields and omit nullable ones. A patch names only known non-identity fields and keeps explicit `null`.
 
 **Errors.** Core has one error kind carrying a message; codes appear only at the server's HTTP layer ([Server / Connection / Transport](../server/connection/transport.md)).
 
@@ -30,8 +30,8 @@ Several limits are shared by both sides but not negotiated on the wire: 20 mutat
 
 ## 10. Quality Requirements
 
-- **Encoding is byte-identical to JavaScript's: key order, number spelling and unknown-field preservation** (guarantee C1). Evidence: [core/tests/contracts.rs](../../../../crates/core/tests/contracts.rs) `canonical_numbers_match_javascript_and_utf16_key_order`, `wire_names_remain_legacy_and_counters_are_safe`, `server_pull_request_accepts_js_integer_number_spellings`, `shared_wire_fixtures_preserve_counter_and_checkpoint_boundaries`.
-- **A received state tolerates extra fields and refuses missing required ones** (guarantee C2). Evidence: `received_state_supports_additive_schema_evolution`, `state_is_complete_but_patch_preserves_absent_and_null`.
+- **Encoding is byte-identical to JavaScript's: key order, number spelling and unknown-field preservation**. Evidence: [core/tests/contracts.rs](../../../../crates/core/tests/contracts.rs) `canonical_numbers_match_javascript_and_utf16_key_order`, `wire_names_remain_legacy_and_counters_are_safe`, `server_pull_request_accepts_js_integer_number_spellings`, `shared_wire_fixtures_preserve_counter_and_checkpoint_boundaries`.
+- **A received state tolerates extra fields and refuses missing required ones**. Evidence: `received_state_supports_additive_schema_evolution`, `state_is_complete_but_patch_preserves_absent_and_null`.
 
 Tests read, not executed.
 

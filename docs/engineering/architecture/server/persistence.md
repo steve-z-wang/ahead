@@ -37,4 +37,4 @@ Tests read, not executed.
 
 **Technical debt.** The `request_hash` column is never written or read ([Server Push](engine/push.md)).
 
-**Accepted limitations.** PostgreSQL via Prisma is the only adapter; the SQL is PostgreSQL-specific. The framework tables are installed from a raw SQL file with no migration tooling. Rows are never pruned: client rows live forever and invalidation rows grow with records × channels (guarantee N1). The isolation requirement on an application-supplied runner is stated in prose only.
+**Accepted limitations.** PostgreSQL via Prisma is the only adapter; the SQL is PostgreSQL-specific. The framework tables are installed from a raw SQL file with no migration tooling. Rows are never pruned: client rows live forever and invalidation rows grow with records × channels. The isolation requirement on an application-supplied runner is stated in prose only.

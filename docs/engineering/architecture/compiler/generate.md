@@ -31,8 +31,8 @@ Code: descriptors assembled at the end of `compile` in [compiler/lib.rs](../../.
 
 ## 10. Quality Requirements
 
-- Generated TypeScript and Dart compile against valid usage and forward calls unchanged to the runtime (guarantee S2). Evidence: [compiler/tests/compiler.rs](../../../../crates/compiler/tests/compiler.rs) emitter tests; [integration/generated-api/test.ts](../../../../integration/generated-api/test.ts); [generated_test.dart](../../../../integration/generated-api/generated_test.dart).
-- Misuse is a TypeScript compile error: identity in a patch, disallowed patch field, wrong filter type, enum typo. Evidence: the `@ts-expect-error` block in `test.ts`. Dart negatives are not asserted (guarantee S2 note).
+- Generated TypeScript and Dart compile against valid usage and forward calls unchanged to the runtime. Evidence: [compiler/tests/compiler.rs](../../../../crates/compiler/tests/compiler.rs) emitter tests; [integration/generated-api/test.ts](../../../../integration/generated-api/test.ts); [generated_test.dart](../../../../integration/generated-api/generated_test.dart).
+- Misuse is a TypeScript compile error: identity in a patch, disallowed patch field, wrong filter type, enum typo. Evidence: the `@ts-expect-error` block in `test.ts`. Dart negatives are not asserted.
 - Older mutation versions get suffixed handler keys. Evidence: `backend_emitter_suffixes_older_mutation_versions`.
 
 ## 11. Risks and Technical Debt

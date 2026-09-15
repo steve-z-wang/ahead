@@ -35,7 +35,7 @@ Code: parsing and checks in [compiler/lib.rs](../../../../crates/compiler/src/li
 
 ## 6. Runtime View
 
-Changing a mutation's input requires `@@version(n+1)`. The compiler keeps the previous snapshot, the server keeps a `nameVn` handler for it, and the client keeps its policy, so instances queued before the upgrade still decode. A batch that names a known mutation with an unregistered version is refused before any handler runs (guarantee C4).
+Changing a mutation's input requires `@@version(n+1)`. The compiler keeps the previous snapshot, the server keeps a `nameVn` handler for it, and the client keeps its policy, so instances queued before the upgrade still decode. A batch that names a known mutation with an unregistered version is refused before any handler runs.
 
 ## 10. Quality Requirements
 

@@ -37,4 +37,4 @@ Tests read, not executed.
 
 **Accepted limitation (planned changes).** Page size is a fixed 50 with count-based completion ([#11](https://github.com/zanminwang/ahead/issues/11)); bootstrap is a cursor walk from zero over every model ([#14](https://github.com/zanminwang/ahead/issues/14) proposes snapshots).
 
-**Accepted limitation, worth stating.** The loader is the only visibility control: a loader that ignores `userId` and `channel` exposes every record in the channel to any authenticated user (guarantee N5).
+**Accepted limitation, worth stating.** The loader is the only visibility control: a loader that ignores `userId` and `channel` exposes every record in the channel to any authenticated user.
