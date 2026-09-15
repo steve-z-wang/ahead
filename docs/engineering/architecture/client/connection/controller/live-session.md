@@ -39,7 +39,7 @@ Inputs (`LiveEvent`):
 | Event | Meaning |
 | --- | --- |
 | `start` | The lane's cycle began; the session snapshots the subscribed channels and the subscription generation (the same per-channel epochs [Pull](../../engine/pull.md) keeps). |
-| `opened` | The socket is open; the host may send the subscribe frame. |
+| `opened` | The socket is open; the host may send the subscribe frame. Read below as "socket open, frame already sent" (item 1). |
 | `acknowledged { scopes }` | The server's acknowledgement arrived. Refined to `acknowledged { scopes, rejections }` below (item 1). |
 | `page { body }` | A streamed page arrived. |
 | `catchUp { channel, body }` | An HTTP catch-up response arrived for a request the session issued. |
