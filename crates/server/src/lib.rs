@@ -370,9 +370,6 @@ fn decode(c: &Config, body: &Value) -> Result<(Value, Vec<RecordKey>)> {
                             data.insert(name.clone(), invalid(schema.normalize_value(field, v))?);
                         }
                     }
-                    if data.is_empty() {
-                        return Err(Error::code("mutation.invalid"));
-                    }
                     argument["patch"] = Value::Object(data);
                 }
             }

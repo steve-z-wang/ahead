@@ -360,3 +360,30 @@ mod refusals {
         assert!(!serde_json::to_string(&err).unwrap().contains("details"));
     }
 }
+#[test]
+fn empty_patch_decodes_as_a_no_op_update() {
+    let args = ahead_server::decode_arguments(
+        &config(),
+        &json!({"name":"edit","operations":[{"model":"Task","op":"update","identity":{"id":"a"},"values":{}}]}),
+    )
+    .unwrap();
+    assert_eq!(args, json!({"task":{"identity":{"id":"a"},"patch":{}}}));
+}
+#[test]
+fn a_patch_of_only_unknown_fields_decodes_as_a_no_op_update() {
+    let args = ahead_server::decode_arguments(
+        &config(),
+        &json!({"name":"edit","operations":[{"model":"Task","op":"update","identity":{"id":"a"},"values":{"future":true}}]}),
+    )
+    .unwrap();
+    assert_eq!(args, json!({"task":{"identity":{"id":"a"},"patch":{}}}));
+}
+#[test]
+fn update_values_must_still_be_an_object() {
+    let err = ahead_server::decode_arguments(
+        &config(),
+        &json!({"name":"edit","operations":[{"model":"Task","op":"update","identity":{"id":"a"},"values":null}]}),
+    )
+    .unwrap_err();
+    assert_eq!(err.code, "mutation.invalid");
+}
