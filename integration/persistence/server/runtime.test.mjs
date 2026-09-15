@@ -38,6 +38,9 @@ before(async()=>{for(const sql of (await readFile(new URL('../../../packages/per
 after(()=>db.$disconnect());
 test('native exports production runtime',()=>{assert.equal(typeof native.processPush,'function');assert.equal(typeof native.processPull,'function');assert.equal(typeof native.publish,'function');assert.equal(typeof native.validateConfig,'function');
  assert.equal(typeof native.negotiateLive,'function');assert.equal(typeof native.pullLive,'function');
+ assert.equal(typeof native.liveEvent,'function');assert.equal(typeof native.liveClose,'function');
+ assert.throws(()=>native.liveEvent(0,JSON.stringify({type:'closed'})),error=>JSON.parse(error.message).code==='live.invalid_event','an event on a handle that is not open is a host defect');
+ native.liveClose(0);
 });
 test('backend validates config and complete registrations at startup',()=>{
  const base={...config,schema:structuredClone(schema)};
@@ -213,6 +216,27 @@ test('live transport negotiates, wakes only after commit, reconnects, and cleans
  await server.close();
 });
 
+test('a publication committed between negotiation and the acknowledgement is delivered by the first drain',async()=>{
+ // The negotiation transaction commits, then the wrapper holds the result on a
+ // gate; a push commits meanwhile, before any listener exists for the socket.
+ const base=prisma(db);let hold;
+ const gated={transaction:async body=>{const result=await base.transaction(body);const gate=hold;hold=undefined;if(gate)await gate;return result;},persistence:base.persistence};
+ const gatedBackend=createBackend({config,database:gated,authenticate,handlers:{async edit({input,tx,notify}){const {identity,patch}=input.task;await tx.$executeRawUnsafe('INSERT INTO business_task(id,title) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET title=$2',identity.id,patch.title);notify({channel:'shared',records:[input.task]});}},loaders:{async task({ids,tx}){return Promise.all(ids.map(async identity=>{const rows=await tx.$queryRawUnsafe('SELECT title FROM business_task WHERE id=$1',identity.id);return rows[0]??null;}));}}});
+ const server=await gatedBackend.listen({port:0});const port=Number(new URL(server.url).port);
+ try{
+  const socket=await openSocket(port);const frames=[];socket.addEventListener('message',event=>frames.push(JSON.parse(String(event.data))));
+  let release;hold=new Promise(resolve=>{release=resolve;});
+  socket.send(JSON.stringify({type:'subscribe',scopes:['shared']}));
+  await delay(100);assert.equal(frames.length,0,'the acknowledgement is held on the gate');
+  await gatedBackend.push('alice',push('between',1,[mutation(1,'between negotiation and ack','live-between')]));
+  await delay(50);assert.equal(frames.length,0,'no listener exists yet, so the commit wakes nobody');
+  release();
+  while(frames.length<2)await delay(5);
+  assert.deepEqual(frames[0],{rejections:[],scopes:['shared'],type:'subscribed'});
+  assert.deepEqual(frames[1].changes.at(-1),{syncId:frames[1].toCursor,model:'Task',identity:{id:'live-between'},stamp:1,state:{title:'between negotiation and ack'}});
+  socket.close();await new Promise(resolve=>socket.addEventListener('close',resolve,{once:true}));
+ }finally{await server.close();}
+});
 test('loader safely converts PostgreSQL BigInt scalar and list values without widening wire range', async () => {
   const int = {kind: 'scalar', name: 'int'};
   let value = 9007199254740991n;
@@ -400,7 +424,7 @@ test('HTTP maps engine codes to statuses: 403, 409 gap/overlap/version fields, 4
 test('HTTP classifies native failures by code, not message wording; unknown codes fall back to 500',async()=>{
  const errors=[];
  const reason=(code,message,details)=>Object.assign(new Error(JSON.stringify({code,message,...(details?{details}:{})})),{});
- const fake={validateConfig(){},async processPush(){throw reason('gap','the batch sequence 5 skips ahead of 1 (reworded)');},async processPull(){throw reason('mutation_version_unsupported','anything',{ordinal:2,name:'edit',version:9});},async publish(){return '[]';},async negotiateLive(){throw reason('request.invalid','no');},async pullLive(){throw reason('loader.unregistered','unregistered loader');}};
+ const fake={validateConfig(){},async processPush(){throw reason('gap','the batch sequence 5 skips ahead of 1 (reworded)');},async processPull(){throw reason('mutation_version_unsupported','anything',{ordinal:2,name:'edit',version:9});},async publish(){return '[]';},async negotiateLive(){throw reason('request.invalid','no');},async pullLive(){throw reason('loader.unregistered','unregistered loader');},liveEvent(){return '[]';},liveClose(){}};
  const memory={transaction:body=>body({}),persistence:()=>({call:async()=>null})};
  const fakeBackend=createBackend({config,database:memory,native:fake,authenticate,onError:e=>errors.push(e),handlers:{async edit(){}},loaders:{async task({ids}){return ids.map(()=>null)}}});
  await assert.rejects(()=>fakeBackend.push('alice','{}'),error=>error instanceof EngineError&&error.code==='gap'&&error.message.includes('reworded'));
@@ -412,7 +436,7 @@ test('HTTP classifies native failures by code, not message wording; unknown code
   const socket=new serverSdk.WebSocket(`${server.url.replace('http','ws')}/sync/live`,{headers:{authorization:'Bearer alice'}});
   const closed=await new Promise(resolve=>{socket.on('open',()=>socket.send(JSON.stringify({type:'subscribe',scopes:['shared']})));socket.on('close',(code,reasonText)=>resolve({code,reason:String(reasonText)}));socket.on('error',()=>{});});
   assert.equal(closed.code,1002);assert.equal(errors.length,0);
-  fake.negotiateLive=async()=>JSON.stringify({response:JSON.stringify({type:'subscribed',scopes:['shared'],rejections:[]}),subscriptions:[{scope:'shared',fromCursor:0}]});
+  fake.negotiateLive=async()=>JSON.stringify({handle:1,actions:[{type:'listen',scope:'shared'},{type:'send',frame:JSON.stringify({type:'subscribed',scopes:['shared'],rejections:[]})},{type:'pull',scope:'shared',fromCursor:0}]});
   const drained=new serverSdk.WebSocket(`${server.url.replace('http','ws')}/sync/live`,{headers:{authorization:'Bearer alice'}});
   const drainClose=await new Promise(resolve=>{drained.on('open',()=>drained.send(JSON.stringify({type:'subscribe',scopes:['shared']})));drained.on('close',code=>resolve(code));drained.on('error',()=>{});});
   assert.equal(drainClose,1011);assert.equal(errors.length,1);assert.ok(errors[0] instanceof EngineError);assert.equal(errors[0].code,'loader.unregistered');
