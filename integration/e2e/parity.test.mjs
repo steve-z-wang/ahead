@@ -1,0 +1,69 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {spawn} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+import {createExample} from '../../examples/rust-round-trip/server.mts';
+import {Client} from '../../packages/client-js/index.mts';
+
+// One script, two runtimes, one server: the Node client and the Dart client each
+// run the same operations (catch up, an accepted edit, a rejected edit, a direct
+// local create) and dump the same normalized view of their local state. The
+// dumps must be identical. Cursors and client ids are excluded: they legitimately
+// differ between two clients. parity_client.dart is the Dart half.
+const edit=text=>({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text}}]});
+const waitFor=async(condition,label)=>{for(let i=0;i<1000;i++){if(await condition())return;await new Promise(r=>setTimeout(r,10));}throw Error(`timed out waiting for ${label}`);};
+
+async function nodeScript(url,directory,schema){
+ const client=await Client.open({path:join(directory,'parity-node.sqlite'),schema});
+ try{
+  await client.subscribe('book:demo');
+  const connection=await client.connect({url,token:'demo-user'});
+  const settled=async()=>(await client.status()).pending===0;
+  await waitFor(async()=>(await client.read('Entry',{id:'entry-1'}))!==null,'initial catch-up');
+  await client.mutate(edit('  parity  '));await waitFor(settled,'accepted edit');
+  await client.mutate(edit('reject'));await waitFor(settled,'rejected edit');
+  await client.transaction(tx=>tx.direct({model:'Entry',op:'create',identity:{id:'local-only'},values:{text:'local',note:null}}));
+  await connection.close();
+  const entries=(await client.query('Entry')).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
+  const status=await client.status();
+  return {
+   entries:entries.map(row=>({id:row.id,text:row.text,note:row.note})),
+   pending:status.pending,beforeImages:status.beforeImages,channels:status.channels,rejections:status.rejections,
+   entry1:await client.recordStatus('Entry',{id:'entry-1'}),
+   localOnly:await client.recordStatus('Entry',{id:'local-only'}),
+  };
+ }finally{await client.close();}
+}
+
+async function dartScript(url,directory){
+ const root=fileURLToPath(new URL('../..',import.meta.url));
+ let output='';
+ const code=await new Promise((resolve,reject)=>{
+  const child=spawn('dart',[`--packages=${join(root,'packages/dart/.dart_tool/package_config.json')}`,join(root,'integration/e2e/parity_client.dart'),url,directory],{cwd:join(root,'packages/dart'),env:{...process.env,AHEAD_LIBRARY:process.env.AHEAD_LIBRARY ?? join(root,`target/debug/libahead_dart.${process.platform==='darwin'?'dylib':'so'}`)},stdio:['ignore','pipe','inherit']});
+  child.stdout.on('data',data=>{output+=data;});
+  child.on('error',reject);child.on('exit',resolve);
+ });
+ assert.equal(code,0,`Dart parity client exited ${code}: ${output}`);
+ const line=output.split('\n').find(l=>l.startsWith('PARITY '));
+ assert.ok(line,`no PARITY line in Dart output: ${output}`);
+ return JSON.parse(line.slice('PARITY '.length));
+}
+
+test('the Node and Dart clients reach identical local state from one script against one server',{timeout:60000},async()=>{
+ const app=await createExample();const directory=await mkdtemp(join(tmpdir(),'ahead-parity-'));let server;
+ try{
+  await app.initialize();server=await app.listen(0);
+  const node=await nodeScript(server.url,directory,app.schema);
+  const dart=await dartScript(server.url,directory);
+  assert.deepEqual(dart,node,'the two runtimes disagree on local state after the same script');
+  // Guard against agreeing on the wrong thing: the script's outcomes are visible.
+  assert.equal(node.entries.find(e=>e.id==='entry-1').text,'parity');
+  assert.equal(node.entries.find(e=>e.id==='local-only').text,'local');
+  assert.equal(node.pending,0);
+  assert.equal(node.rejections.length,1);assert.equal(node.rejections[0].code,'entry.denied');
+  assert.equal((await app.db.entry.findUnique({where:{id:'entry-1'}})).text,'parity');
+ }finally{await server?.close();await app.close();await rm(directory,{recursive:true,force:true});}
+});
