@@ -399,3 +399,97 @@ fn push_and_pull_requests_refuse_a_blank_client_id() {
         "missing clientId"
     );
 }
+
+#[test]
+fn shared_limits_are_defined_once_and_a_page_continues_only_when_full() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/protocol/live-messages.json"
+    ))
+    .unwrap();
+    assert_eq!(fixture["limits"]["pushMutations"], limits::PUSH_MUTATIONS);
+    assert_eq!(fixture["limits"]["pushBytes"], limits::PUSH_BYTES);
+    assert_eq!(fixture["limits"]["pullChanges"], limits::PULL_CHANGES);
+    let page = |count: usize| {
+        let changes: Vec<Value> = (1..=count)
+            .map(|i| json!({"syncId":i,"model":"Entry","identity":{"id":i.to_string()},"stamp":i,"state":null}))
+            .collect();
+        json!({"scope":"book","fromCursor":0,"toCursor":count.max(1),"changes":changes}).to_string()
+    };
+    let below = PullPage::decode(page(limits::PULL_CHANGES - 1).as_bytes()).unwrap();
+    assert!(!below.continues(), "a short page reaches the head");
+    let full = PullPage::decode(page(limits::PULL_CHANGES).as_bytes()).unwrap();
+    assert!(full.continues(), "a full page may leave changes behind");
+    let err = PullPage::decode(page(limits::PULL_CHANGES + 1).as_bytes()).unwrap_err();
+    assert!(err.to_string().contains("exceeds 50"), "{err}");
+    assert!(!PullPage::decode(page(0).as_bytes()).unwrap().continues());
+}
+
+#[test]
+fn live_frames_decode_as_acknowledgement_or_page_and_scopes_normalize() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/protocol/live-messages.json"
+    ))
+    .unwrap();
+    for case in fixture["subscribe"].as_array().unwrap() {
+        let wire = case["wire"].as_str().unwrap().as_bytes();
+        match SubscribeRequest::decode(wire) {
+            Ok(request) => {
+                assert_eq!(case["valid"], true, "{}", case["name"]);
+                assert_eq!(json!(request.scopes), case["scopes"], "{}", case["name"]);
+                let again = SubscribeRequest::decode(&request.encode().unwrap()).unwrap();
+                assert_eq!(again, request, "encoding is canonical: {}", case["name"]);
+            }
+            Err(_) => assert_eq!(case["valid"], false, "{}", case["name"]),
+        }
+    }
+    for case in fixture["acknowledgement"].as_array().unwrap() {
+        let wire = case["wire"].as_str().unwrap().as_bytes();
+        match SubscriptionAck::decode(wire) {
+            Ok(ack) => {
+                assert_eq!(case["valid"], true, "{}", case["name"]);
+                assert_eq!(json!(ack.scopes), case["scopes"], "{}", case["name"]);
+                assert_eq!(
+                    SubscriptionAck::decode(&ack.encode().unwrap()).unwrap(),
+                    ack
+                );
+            }
+            Err(_) => assert_eq!(case["valid"], false, "{}", case["name"]),
+        }
+    }
+    for case in fixture["frame"].as_array().unwrap() {
+        let wire = case["wire"].as_str().unwrap().as_bytes();
+        let kind = match LiveMessage::decode(wire) {
+            Ok(LiveMessage::Acknowledged(_)) => "acknowledged",
+            Ok(LiveMessage::Page(_)) => "page",
+            Err(_) => "invalid",
+        };
+        assert_eq!(kind, case["kind"], "{}", case["name"]);
+    }
+    let request = SubscribeRequest::new(vec!["b".into(), "a".into()]).unwrap();
+    assert!(
+        SubscriptionAck::new(vec!["a".into(), "b".into()])
+            .unwrap()
+            .confirms(&request)
+    );
+    assert!(
+        !SubscriptionAck::new(vec!["a".into()])
+            .unwrap()
+            .confirms(&request)
+    );
+    assert!(
+        !SubscriptionAck::new(vec!["a".into(), "b".into(), "c".into()])
+            .unwrap()
+            .confirms(&request)
+    );
+    // The server's frame is the acknowledgement the client decodes, byte for byte.
+    assert_eq!(
+        String::from_utf8(
+            SubscriptionAck::new(vec!["b".into(), "a".into()])
+                .unwrap()
+                .encode()
+                .unwrap()
+        )
+        .unwrap(),
+        r#"{"rejections":[],"scopes":["a","b"],"type":"subscribed"}"#
+    );
+}

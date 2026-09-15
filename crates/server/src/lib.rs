@@ -4,7 +4,7 @@ pub mod host;
 pub mod live;
 use ahead_core::{
     ChannelCheckpoint, PullPage, PullRequest, PushReceipt, PushRequest, RecordChange, Rejection,
-    Schema, read_counter,
+    Schema, limits, read_counter,
 };
 pub use error::{Error, code};
 use host::{
@@ -485,10 +485,10 @@ pub async fn process_pull(
         .call_typed(HostRequest::Scan {
             channel: request.channel.clone(),
             after: request.from_cursor,
-            limit: 50,
+            limit: limits::PULL_CHANGES as u64,
         })
         .await?;
-    if rows.len() > 50 {
+    if rows.len() > limits::PULL_CHANGES {
         return Err(storage_invalid("invalid scan size"));
     }
     let mut previous = request.from_cursor;
@@ -550,7 +550,11 @@ pub async fn process_pull(
     let page = PullPage {
         channel: request.channel,
         from_cursor: request.from_cursor,
-        to_cursor: if rows.len() == 50 { previous } else { maximum },
+        to_cursor: if rows.len() == limits::PULL_CHANGES {
+            previous
+        } else {
+            maximum
+        },
         changes,
     };
     String::from_utf8(page.encode().map_err(internal)?).map_err(internal)

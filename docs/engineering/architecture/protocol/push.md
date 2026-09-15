@@ -10,12 +10,12 @@ Engine behavior: [Client Push](../client/engine/push/README.md), [Client Settlem
 
 ## 5. Building Block View
 
-- **Request rules.** `clientId` non-blank; `batchSequence` positive; 1 to 20 mutations, each with a positive ordinal unique within the batch. The mutation body beyond `ordinal` is opaque to the protocol layer and decoded against the schema by the server ([Mutations](../schema/mutations.md)). Encoding re-emits the canonical JSON of the whole raw value, which is what keeps a frozen batch byte-stable (guarantee P4).
+- **Request rules.** `clientId` non-blank; `batchSequence` positive; 1 to `limits::PUSH_MUTATIONS` (20) mutations, each with a positive ordinal unique within the batch. The mutation body beyond `ordinal` is opaque to the protocol layer and decoded against the schema by the server ([Mutations](../schema/mutations.md)). Encoding re-emits the canonical JSON of the whole raw value, which is what keeps a frozen batch byte-stable (guarantee P4).
 - **Receipt rules.** When `requiredCheckpoints` is absent the legacy pair becomes the single checkpoint; an explicit empty list with no rejections is invalid; checkpoint channels are unique; each rejection has a positive ordinal and a non-blank code.
 - **Identity of a mutation.** Ordinals are allocated by the client and never reused, so `(clientId, ordinal)` identifies a mutation across retries.
 - **Rejection codes.** `mutation.invalid`, `<mutation>.not_allowed`, `<mutation>.invalid`, and handler codes matching `^[a-z][a-z0-9]*([._-][a-z0-9]+)*$`. The client adds `dependency.rejected` and `dropped` locally; they never travel.
 
-Code: [core/protocol.rs](../../../../crates/core/src/protocol.rs) (`PushRequest`, `PushReceipt`).
+Code: [core/protocol.rs](../../../../crates/core/src/protocol.rs) (`PushRequest`, `PushReceipt`, `limits`).
 
 ## 6. Runtime View
 

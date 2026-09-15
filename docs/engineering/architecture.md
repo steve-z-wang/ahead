@@ -133,7 +133,7 @@ Current code locations for the components above. Some responsibilities still sha
 | Component | Code location |
 |---|---|
 | Schema | Source syntax in [compiler/parse.rs](../../crates/compiler/src/parse.rs) |
-| Protocol | [core/protocol.rs](../../crates/core/src/protocol.rs); subscription messages in [server/live.rs](../../crates/server/src/live.rs) |
+| Protocol | [core/protocol.rs](../../crates/core/src/protocol.rs), including the shared `limits` and the subscription messages |
 | Compiler / Parse | [compiler/parse.rs](../../crates/compiler/src/parse.rs); file concatenation and error relocation in [compiler/main.rs](../../crates/compiler/src/main.rs) |
 | Compiler / Validate | [compiler/validate.rs](../../crates/compiler/src/validate.rs); version history and fence in [compiler/history.rs](../../crates/compiler/src/history.rs) |
 | Compiler / Generate | Descriptors emitted by [compiler/validate.rs](../../crates/compiler/src/validate.rs), represented by [core/schema.rs](../../crates/core/src/schema.rs); typed interfaces in [compiler/emit.rs](../../crates/compiler/src/emit.rs); output files in [compiler/main.rs](../../crates/compiler/src/main.rs) |
