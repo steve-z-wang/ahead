@@ -40,6 +40,6 @@ Tests read, not executed.
 
 **Problem: the shortcut `backend.notify(tx, …)` never wakes live subscribers.** *Condition:* application code publishes outside a push without `bindTransaction`. *Consequence:* the publication is stored, but the touched set is discarded, so connected clients learn of the change only when they reconnect and catch up. The example backend uses this shortcut. *Evidence:* `publish` falls back to a throwaway session in [server/index.mts](../../../../../packages/server/index.mts); [examples/rust-round-trip/server.mts](../../../../../examples/rust-round-trip/server.mts). **To confirm:** remove the shortcut or document the `afterCommit` requirement ([#50](https://github.com/zanminwang/ahead/issues/50)).
 
-**Accepted limitation.** Wakes are in-process: a second server instance, or a publication from another process, does not wake this process's sockets; those clients catch up on reconnect. No issue tracks an external pub/sub.
+**Accepted limitation.** Wakes are in-process: a second server instance, or a publication from another process, does not wake this process's sockets; those clients catch up on reconnect. Cross-process notification delivery is tracked in [#62](https://github.com/zanminwang/ahead/issues/62).
 
 **Potential risk.** Every publication to a channel updates the same channel row under a row lock, so handlers touching one hot channel serialize and may retry on serialization failure. Not measured ([#12](https://github.com/zanminwang/ahead/issues/12)).
