@@ -2,7 +2,7 @@ import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { setTimeout as delay } from 'node:timers/promises';
-import { TransactionProbe, committedResult } from '../../../bindings/node/transaction-session.mjs';
+import { TransactionProbe, committedResult } from './transaction-session.mjs';
 const require = createRequire(import.meta.url);
 const { PrismaClient } = require('./generated/client');
 const prisma = new PrismaClient();
@@ -112,7 +112,7 @@ test('real deferred constraint commit failure never returns accepted result', as
 });
 
 test('native boundary captures synchronous callback throws without terminating Node', async () => {
-  const {runProbe} = require('../../../bindings/node/ahead-node.node');
+  const {runProbe} = require('../../../bindings/node/ahead-node-probe.node');
   await assert.rejects(runProbe(() => { throw Error('synchronous callback'); }, false), /synchronous callback/);
 });
 

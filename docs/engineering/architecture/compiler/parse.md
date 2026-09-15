@@ -8,7 +8,7 @@ Parse turns one or more `.model` files into structured declarations with token p
 
 - Input: the CLI concatenates every `*.model` file in the input directory in path order; the library takes one string.
 - Output: JSON declarations for enums, models, mutations, unique constraints and prerequisites, consumed in the same call by [Validate](validate.md).
-- Errors: `line:col: message (found 'token')`; the CLI rewrites the line into `path:line`.
+- Errors: `line:col: message (found 'token')` for syntax errors; the CLI rewrites the line into `path:line` for the file that contains it. Every declaration, field, slot, directive and prerequisite field also keeps its token position for [Validate](validate.md).
 
 ## 5. Building Block View
 
@@ -21,6 +21,7 @@ Code: `lex` and `Parser` in [compiler/lib.rs](../../../../crates/compiler/src/li
 ## 10. Quality Requirements
 
 - A syntax error names its line. Evidence: [compiler/tests/compiler.rs](../../../../crates/compiler/tests/compiler.rs) `rejects_unknown_with_location`.
+- With several input files, the CLI names the file and the line within that file, for syntax and semantic errors alike. Evidence: [compiler/tests/cli.rs](../../../../crates/compiler/tests/cli.rs) `cli_relocates_errors_into_the_file_that_declares_them`.
 
 ## 11. Risks and Technical Debt
 
