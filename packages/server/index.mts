@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import type { IncomingMessage, RequestListener, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, WebSocket } from "ws";
+import type { HostRequest } from "./host-contract.mts";
 export { WebSocket } from "ws";
 const require = createRequire(import.meta.url);
 export type Native = {
@@ -25,7 +26,9 @@ export type Native = {
     channels: string,
     callback: (request: string) => Promise<string>,
   ): Promise<string>;
+  /** Negotiates and opens the socket's `Subscriptions`; answers `{handle, actions}` JSON. */
   negotiateLive(
+    config: string,
     owner: string,
     request: string,
     callback: (request: string) => Promise<string>,
@@ -35,9 +38,30 @@ export type Native = {
     owner: string,
     scope: string,
     fromCursor: number,
+    models: string,
     callback: (request: string) => Promise<string>,
   ): Promise<string>;
+  /** Applies one `LiveEvent` JSON to the session and answers its `LiveAction[]` JSON. */
+  liveEvent(handle: number, event: string): string;
+  /** Forgets the session; idempotent. */
+  liveClose(handle: number): void;
 };
+/** What the executor reports to the Rust `Subscriptions` controller. */
+export type LiveEvent =
+  | { type: "committed"; scope: string }
+  | { type: "pulled"; scope: string; page: string }
+  | { type: "closed" };
+/** What the controller asks the executor to do, in order. */
+export type LiveAction =
+  | { type: "listen"; scope: string }
+  | { type: "send"; frame: string }
+  | {
+      type: "pull";
+      scope: string;
+      fromCursor: number;
+      /** The read contracts the session declared: model name to version. */
+      models: Record<string, number>;
+    };
 export interface Persistence {
   call(request: Record<string, any>): Promise<unknown>;
 }
@@ -108,29 +132,39 @@ function engineError(error: unknown): unknown {
   }
   return error;
 }
-/** Wrap every native function so its rejections surface as `EngineError`. */
+/** Wrap every native function so its failures surface as `EngineError`. */
 function typedNative(native: Native): Native {
+  type Async =
+    "processPush" | "processPull" | "publish" | "negotiateLive" | "pullLive";
+  type Sync = "validateConfig" | "liveEvent" | "liveClose";
   const wrap =
-    <K extends Exclude<keyof Native, "validateConfig">>(key: K) =>
+    <K extends Async>(key: K) =>
     (...args: Parameters<Native[K]>): ReturnType<Native[K]> =>
       (native[key] as (...a: Parameters<Native[K]>) => ReturnType<Native[K]>)(
         ...args,
       ).catch((error: unknown) => {
         throw engineError(error);
       }) as ReturnType<Native[K]>;
-  return {
-    validateConfig: (config) => {
+  const wrapSync =
+    <K extends Sync>(key: K) =>
+    (...args: Parameters<Native[K]>): ReturnType<Native[K]> => {
       try {
-        native.validateConfig(config);
+        return (
+          native[key] as (...a: Parameters<Native[K]>) => ReturnType<Native[K]>
+        )(...args);
       } catch (error) {
         throw engineError(error);
       }
-    },
+    };
+  return {
+    validateConfig: wrapSync("validateConfig"),
     processPush: wrap("processPush"),
     processPull: wrap("processPull"),
     publish: wrap("publish"),
     negotiateLive: wrap("negotiateLive"),
     pullLive: wrap("pullLive"),
+    liveEvent: wrapSync("liveEvent"),
+    liveClose: wrapSync("liveClose"),
   };
 }
 /**
@@ -143,6 +177,7 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<string, number>> = {
   gap: 409,
   overlap: 409,
   mutation_version_unsupported: 409,
+  model_version_unsupported: 409,
 };
 export class MutationRejected extends Error {
   readonly code: string;
@@ -181,6 +216,56 @@ export type Handler<Tx, Input = any> = (
 export type Loader<Tx, Identity = any, Row = object> = (
   call: LoaderCall<Tx, Identity>,
 ) => Promise<readonly (Row | null)[]>;
+/** Every retained version of one mutation, or a bare function as shorthand for a v1-only contract. */
+export type HandlerRegistration<Tx> =
+  Handler<Tx> | { [version: `v${number}`]: Handler<Tx> };
+/** Every retained version of one model's read contract, or a bare function as shorthand for a v1-only model. */
+export type LoaderRegistration<Tx> =
+  Loader<Tx> | { [version: `v${number}`]: Loader<Tx> };
+/**
+ * One registration holds every retained version under the mutation or model
+ * name; a bare function is shorthand for a v1-only contract and never stands
+ * for the latest version. Refused at startup, naming the key and version.
+ */
+function versioned<F>(
+  kind: "handler" | "loader",
+  name: string,
+  key: string,
+  versions: readonly number[],
+  registration: unknown,
+): Map<number, F> {
+  const label = kind.charAt(0).toUpperCase() + kind.slice(1);
+  const list = versions.map((version) => `v${version}`).join(", ");
+  const table = new Map<number, F>();
+  if (typeof registration === "function") {
+    if (versions.length !== 1 || versions[0] !== 1)
+      throw new Error(
+        `${label} ${key} must register ${list} of ${name}; a function registers v1 only`,
+      );
+    table.set(1, registration as F);
+    return table;
+  }
+  if (registration === null || typeof registration !== "object")
+    throw new Error(`Missing ${kind} ${key} for ${name} ${list}`);
+  for (const version of versions) {
+    const found = (registration as Record<string, unknown>)[`v${version}`];
+    if (found === undefined)
+      throw new Error(
+        `Missing ${kind} ${key}.v${version} for ${name} v${version}`,
+      );
+    if (typeof found !== "function")
+      throw new Error(
+        `${label} ${key}.v${version} for ${name} v${version} must be a function`,
+      );
+    table.set(version, found as F);
+  }
+  for (const found of Object.keys(registration))
+    if (!/^v[1-9][0-9]*$/.test(found) || !table.has(Number(found.slice(1))))
+      throw new Error(
+        `Unknown ${kind} ${key}.${found} for ${name}: retained versions are ${list}`,
+      );
+  return table;
+}
 export const RECORD: unique symbol = Symbol("ahead.record");
 function toRef(value: unknown): RecordRef {
   if (value !== null && typeof value === "object") {
@@ -207,8 +292,8 @@ export interface BackendOptions<T> {
   config: object;
   database: Database<T>;
   authenticate: Authenticate;
-  handlers: Record<string, Handler<T>>;
-  loaders: Record<string, Loader<T>>;
+  handlers: Record<string, HandlerRegistration<T>>;
+  loaders: Record<string, LoaderRegistration<T>>;
   loaderHooks?: Record<
     string,
     { prepareForViewer(call: LoaderCall<T, any>): Promise<void> }
@@ -309,42 +394,72 @@ export function createBackend<T>(options: BackendOptions<T>) {
       (require("../../bindings/node/ahead-node.node") as Native),
   );
   const descriptor = options.config as {
-    schema?: { models?: { name: string }[] };
+    schema?: { models?: { name: string; version?: number }[] };
     mutations?: MutationDescriptor[];
+    models?: { name: string; version: number }[];
   };
-  const latest = new Map<string, number>();
+  const retained = new Map<string, number[]>();
   for (const m of descriptor.mutations ?? [])
-    latest.set(m.name, Math.max(latest.get(m.name) ?? 0, m.version));
-  const handlerKey = (name: string, version: number) =>
-    lowerFirst(name) + (version === latest.get(name) ? "" : `V${version}`);
-  const modelNames = (descriptor.schema?.models ?? []).map(
-    (model) => model.name,
-  );
+    retained.set(
+      m.name,
+      [...(retained.get(m.name) ?? []), m.version].sort((a, b) => a - b),
+    );
+  const schemaModels = descriptor.schema?.models ?? [];
+  const modelNames = schemaModels.map((model) => model.name);
   const config = JSON.stringify({
     ...options.config,
     loaders: modelNames,
   });
   native.validateConfig(config);
+  // Every retained model read contract; a config without `models` retains each
+  // model at the schema's own version, as the engine does.
+  const retainedModels = new Map<string, number[]>();
+  for (const m of descriptor.models?.length
+    ? descriptor.models
+    : schemaModels.map((model) => ({
+        name: model.name,
+        version: model.version ?? 1,
+      })))
+    retainedModels.set(
+      m.name,
+      [...(retainedModels.get(m.name) ?? []), m.version].sort((a, b) => a - b),
+    );
   const loaderTable = new Map<string, Loader<T>>();
   for (const name of modelNames) {
-    const loader = options.loaders[lowerFirst(name)];
-    if (typeof loader !== "function") throw new Error(`Missing loader ${name}`);
-    loaderTable.set(name, loader);
+    const key = lowerFirst(name);
+    const table = versioned<Loader<T>>(
+      "loader",
+      name,
+      key,
+      retainedModels.get(name) ?? [],
+      options.loaders[key],
+    );
+    for (const [version, loader] of table)
+      loaderTable.set(`${name}:${version}`, loader);
+  }
+  const registered = new Map<string, Map<number, Handler<T>>>();
+  for (const [name, versions] of retained) {
+    const key = lowerFirst(name);
+    registered.set(
+      name,
+      versioned<Handler<T>>(
+        "handler",
+        name,
+        key,
+        versions,
+        options.handlers[key],
+      ),
+    );
   }
   const handlerTable = new Map<
     string,
     { handler: Handler<T>; slots: MutationSlot[] }
   >();
-  for (const m of descriptor.mutations ?? []) {
-    const key = handlerKey(m.name, m.version);
-    const handler = options.handlers[key];
-    if (typeof handler !== "function")
-      throw new Error(`Missing handler ${key} for ${m.name} v${m.version}`);
+  for (const m of descriptor.mutations ?? [])
     handlerTable.set(`${m.name}:${m.version}`, {
-      handler,
+      handler: registered.get(m.name)!.get(m.version)!,
       slots: m.slots ?? [],
     });
-  }
   const sessions = new Map<T, Session>();
   const wakes = new WakeHub();
   const host = (
@@ -354,8 +469,10 @@ export function createBackend<T>(options: BackendOptions<T>) {
     const storage = options.database.persistence(tx);
     return (raw) =>
       session.track(async () => {
-        const req = JSON.parse(raw);
+        const req = JSON.parse(raw) as HostRequest;
         let result: unknown;
+        // `savepoint`, `rollback` and `release` are answered by the persistence
+        // and also bookkept here, so each one does both.
         if (req.op === "savepoint") session.savepoint(req.ordinal);
         if (req.op === "rollback") session.rollback(req.ordinal);
         if (req.op === "release") session.release(req.ordinal);
@@ -377,7 +494,7 @@ export function createBackend<T>(options: BackendOptions<T>) {
           };
           const input: Record<string, unknown> = {};
           for (const slot of entry.slots) {
-            const raw = req.arguments[slot.name];
+            const raw = req.arguments[slot.name] as any;
             input[slot.name] =
               slot.cardinality === "list"
                 ? (raw as any[]).map((item) => shape(slot, item))
@@ -436,10 +553,13 @@ export function createBackend<T>(options: BackendOptions<T>) {
             result = { rejection: new MutationRejected(code).code };
           }
         } else if (req.op === "load") {
-          const loader = loaderTable.get(req.model);
-          if (!loader) throw new Error(`Missing loader ${req.model}`);
+          // Dispatch is by model name and contract version; a version that
+          // was not registered is a defect, never another version's loader.
+          const loader = loaderTable.get(`${req.model}:${req.version}`);
+          if (!loader)
+            throw new Error(`Missing loader ${req.model} v${req.version}`);
           const call = {
-            ids: req.identities,
+            ids: req.identities as any[],
             tx,
             userId: req.owner,
             channel: req.channel,
@@ -453,7 +573,27 @@ export function createBackend<T>(options: BackendOptions<T>) {
             result.some((value) => value === undefined)
           )
             throw new Error("invalid loader: undefined or non-array result");
-        } else result = await storage.call(req);
+        } else {
+          // Everything the persistence owns, plus anything this build does not
+          // know: an operation added to the contract without an arm here is a
+          // compile error, not a silent forward.
+          switch (req.op) {
+            case "claim":
+            case "saveReceipt":
+            case "head":
+            case "scan":
+            case "savepoint":
+            case "rollback":
+            case "release":
+            case "publish":
+              break;
+            default: {
+              const unreachable: never = req;
+              void unreachable;
+            }
+          }
+          result = await storage.call(req);
+        }
         return callbackJson(result);
       });
   };
@@ -533,14 +673,32 @@ export function createBackend<T>(options: BackendOptions<T>) {
       run((tx, session) =>
         native.processPull(config, owner, text(request), host(tx, session)),
       ),
-    negotiateLive: (owner: string, request: Uint8Array | string) =>
+    negotiateLive: (
+      owner: string,
+      request: Uint8Array | string,
+    ): Promise<{ handle: number; actions: LiveAction[] }> =>
       run((tx, session) =>
-        native.negotiateLive(owner, text(request), host(tx, session)),
+        native.negotiateLive(config, owner, text(request), host(tx, session)),
       ).then(JSON.parse),
-    pullLive: (owner: string, scope: string, fromCursor: number) =>
+    pullLive: (
+      owner: string,
+      scope: string,
+      fromCursor: number,
+      models: Record<string, number>,
+    ): Promise<{ page: string; toCursor: number; continues: boolean }> =>
       run((tx, session) =>
-        native.pullLive(config, owner, scope, fromCursor, host(tx, session)),
+        native.pullLive(
+          config,
+          owner,
+          scope,
+          fromCursor,
+          JSON.stringify(models),
+          host(tx, session),
+        ),
       ).then(JSON.parse),
+    liveEvent: (handle: number, event: LiveEvent): LiveAction[] =>
+      JSON.parse(native.liveEvent(handle, JSON.stringify(event))),
+    liveClose: (handle: number): void => native.liveClose(handle),
     onCommitted: (scope: string, wake: () => void) =>
       wakes.subscribe(scope, wake),
     notifyCommitted: (scopes: readonly string[]) => wakes.notify(scopes),
@@ -687,19 +845,24 @@ function createHttpHandler(options: {
   };
 }
 
+/**
+ * The live executor's seams: the Rust `Subscriptions` controller behind
+ * `negotiateLive`, `liveEvent` and `liveClose`, plus the database pull and the
+ * commit hub it asks the executor to use.
+ */
 interface LiveBackend {
   negotiateLive(
     owner: string,
     request: Uint8Array | string,
-  ): Promise<{
-    response: string;
-    subscriptions: { scope: string; fromCursor: number }[];
-  }>;
+  ): Promise<{ handle: number; actions: LiveAction[] }>;
   pullLive(
     owner: string,
     scope: string,
     fromCursor: number,
+    models: Record<string, number>,
   ): Promise<{ page: string; toCursor: number; continues: boolean }>;
+  liveEvent(handle: number, event: LiveEvent): LiveAction[];
+  liveClose(handle: number): void;
   onCommitted(scope: string, wake: () => void): () => void;
 }
 
@@ -762,6 +925,12 @@ function attachLive(
   };
 }
 
+/**
+ * Executes the Rust controller's actions for one socket. Every sync decision
+ * (what to pull, when, what to send) is the controller's; this only carries
+ * events in and performs actions out. Pulls for different scopes may run
+ * concurrently; the controller keeps at most one outstanding per scope.
+ */
 async function serveLive(
   connection: WebSocket,
   owner: string,
@@ -769,13 +938,6 @@ async function serveLive(
   onError?: (error: unknown) => void,
 ): Promise<void> {
   const cleanups: (() => void)[] = [];
-  let states: {
-    scope: string;
-    fromCursor: number;
-    pending: boolean;
-    running: boolean;
-    closed: boolean;
-  }[] = [];
   let settled = false;
   let handshakeReject: ((error: Error) => void) | undefined;
   const transportError = (error: Error) => {
@@ -783,6 +945,48 @@ async function serveLive(
   };
   connection.on("error", transportError);
   cleanups.push(() => connection.off("error", transportError));
+  let handle: number | undefined;
+  let released = false;
+  const open = () => connection.readyState === WebSocket.OPEN;
+  const fail = (error: unknown) => {
+    onError?.(error);
+    if (open()) connection.close(1011, "server");
+  };
+  const dispatch = (event: LiveEvent) => {
+    if (handle === undefined || released) return;
+    let actions: LiveAction[];
+    try {
+      actions = backend.liveEvent(handle, event);
+    } catch (error) {
+      fail(error);
+      return;
+    }
+    execute(actions);
+  };
+  const execute = (actions: LiveAction[]) => {
+    for (const action of actions) {
+      if (action.type === "listen") {
+        const { scope } = action;
+        cleanups.push(
+          backend.onCommitted(scope, () =>
+            dispatch({ type: "committed", scope }),
+          ),
+        );
+      } else if (action.type === "send") {
+        if (open()) connection.send(action.frame);
+      } else {
+        const { scope } = action;
+        backend
+          .pullLive(owner, scope, action.fromCursor, action.models)
+          .then(
+            (progress) =>
+              dispatch({ type: "pulled", scope, page: progress.page }),
+            fail,
+          );
+      }
+    }
+  };
+  const closed = () => dispatch({ type: "closed" });
   try {
     const first = await new Promise<Buffer>((resolve, reject) => {
       const message = (data: Buffer) => {
@@ -793,109 +997,48 @@ async function serveLive(
         settled = true;
         resolve(Buffer.from(data));
       };
-      const closed = () => reject(new Error("live handshake closed"));
+      const handshakeClosed = () => reject(new Error("live handshake closed"));
       handshakeReject = reject;
       connection.on("message", message);
-      connection.once("close", closed);
+      connection.once("close", handshakeClosed);
       cleanups.push(
         () => connection.off("message", message),
-        () => connection.off("close", closed),
+        () => connection.off("close", handshakeClosed),
       );
     });
-    const negotiation = await backend.negotiateLive(owner, first);
+    const opened = await backend.negotiateLive(owner, first);
     handshakeReject = undefined;
-    states = negotiation.subscriptions.map((subscription) => ({
-      ...subscription,
-      pending: false,
-      running: false,
-      closed: false,
-    }));
-    const stop = () => {
-      for (const state of states) {
-        state.closed = true;
-        state.pending = false;
-      }
-    };
-    connection.once("close", stop);
-    connection.once("error", stop);
+    handle = opened.handle;
+    connection.once("close", closed);
+    connection.once("error", closed);
     cleanups.push(
-      () => connection.off("close", stop),
-      () => connection.off("error", stop),
+      () => connection.off("close", closed),
+      () => connection.off("error", closed),
     );
-    const drain = async (state: (typeof states)[number]) => {
-      if (
-        state.running ||
-        state.closed ||
-        connection.readyState !== WebSocket.OPEN
-      )
-        return;
-      state.running = true;
-      try {
-        while (
-          state.pending &&
-          !state.closed &&
-          connection.readyState === WebSocket.OPEN
-        ) {
-          state.pending = false;
-          do {
-            const progress = await backend.pullLive(
-              owner,
-              state.scope,
-              state.fromCursor,
-            );
-            if (state.closed || connection.readyState !== WebSocket.OPEN)
-              return;
-            if (progress.toCursor > state.fromCursor)
-              connection.send(progress.page);
-            state.fromCursor = progress.toCursor;
-            if (!progress.continues) break;
-          } while (!state.closed);
-        }
-      } catch (error) {
-        onError?.(error);
-        if (connection.readyState === WebSocket.OPEN)
-          connection.close(1011, "server");
-      } finally {
-        state.running = false;
-        if (
-          state.pending &&
-          !state.closed &&
-          connection.readyState === WebSocket.OPEN
-        )
-          void drain(state);
-      }
-    };
-    for (const state of states)
-      cleanups.push(
-        backend.onCommitted(state.scope, () => {
-          state.pending = true;
-          void drain(state);
-        }),
-      );
-    if (connection.readyState !== WebSocket.OPEN) {
-      stop();
-      return;
-    }
-    connection.send(negotiation.response);
-    for (const state of states) {
-      state.pending = true;
-      void drain(state);
-    }
+    if (!open()) return;
+    execute(opened.actions);
     await new Promise<void>((resolve) => {
       connection.once("close", () => resolve());
       connection.once("error", () => resolve());
     });
-    stop();
   } catch (error) {
-    const invalid =
-      error instanceof EngineError && error.code === "request.invalid";
-    if (connection.readyState === WebSocket.OPEN)
-      connection.close(invalid ? 1002 : 1011, "request.invalid");
-    if (!invalid) onError?.(error);
+    // A malformed subscribe or a refused read-contract declaration is the
+    // client's fault: closed as a protocol violation, not reported as a failure.
+    const refused =
+      error instanceof EngineError &&
+      (error.code === "request.invalid" ||
+        error.code === "model_version_unsupported");
+    if (open())
+      connection.close(
+        refused ? 1002 : 1011,
+        refused ? (error as EngineError).code : "request.invalid",
+      );
+    if (!refused) onError?.(error);
   } finally {
-    for (const state of states) {
-      state.closed = true;
-      state.pending = false;
+    if (handle !== undefined) {
+      closed();
+      released = true;
+      backend.liveClose(handle);
     }
     for (const cleanup of cleanups) cleanup();
   }

@@ -224,11 +224,136 @@ fn compatible(old: &Value, new: &Value) -> Result<bool, String> {
     }
     Ok(true)
 }
+/// Preserve every published model read contract, independently of mutation
+/// history and of today's storage schema ([#91](https://github.com/zanminwang/ahead/issues/91)).
+///
+/// A snapshot is `{name, version, identity, fields, enums}`: the record
+/// structure a loader of that version returns, with the definitions of the
+/// enums those fields use as they were when the version was published.
+/// A compatible change (an added nullable field) updates the version's
+/// snapshot; a breaking change (a required field, a renamed, removed or
+/// retyped field, a changed enum) needs a higher `@@version`, and the old
+/// snapshot stays untouched.
+pub fn reconcile_model_history(current: &Value, history: Option<&Value>) -> Result<Value, String> {
+    let mut result = history
+        .cloned()
+        .unwrap_or(json!({"formatVersion":1,"models":{}}));
+    if result["formatVersion"] != 1 || !result["models"].is_object() {
+        return Err("unsupported model history format".into());
+    }
+    let models = list(&current["schema"], "models")?;
+    for name in result["models"].as_object().unwrap().keys() {
+        if !models.iter().any(|m| m["name"] == *name) {
+            return Err(format!("retained model {name} cannot be removed"));
+        }
+    }
+    for model in models {
+        let name = model["name"].as_str().ok_or("unnamed model")?;
+        let version = model["version"].as_u64().ok_or("invalid model version")?;
+        let snapshot = capture_model(current, model)?;
+        let versions = result["models"]
+            .as_object_mut()
+            .unwrap()
+            .entry(name)
+            .or_insert(json!({}))
+            .as_object_mut()
+            .ok_or("invalid history versions")?;
+        let mut retained: Vec<u64> = versions
+            .keys()
+            .map(|v| v.parse::<u64>().map_err(|_| "invalid retained version"))
+            .collect::<Result<_, _>>()?;
+        retained.sort_unstable();
+        if let Some(latest) = retained.last()
+            && version < *latest
+        {
+            return Err(format!("{name}: version cannot decrease from {latest}"));
+        }
+        // Identity is the record key in every table and message; changing it is
+        // not a read-contract change and no version permits it yet.
+        for previous in versions.values() {
+            if previous["identity"] != snapshot["identity"] {
+                return Err(format!(
+                    "{name}: identity change is not supported; a model version describes the record structure, not its identity"
+                ));
+            }
+        }
+        if let Some(previous) = versions.get(&version.to_string())
+            && let Some(reason) = model_break(previous, &snapshot)?
+        {
+            return Err(format!(
+                "{name} v{version}: {reason} changes the read contract; increase @@version and keep the old loader"
+            ));
+        }
+        versions.insert(version.to_string(), snapshot);
+    }
+    Ok(result)
+}
+fn capture_model(config: &Value, model: &Value) -> Result<Value, String> {
+    let fields = list(model, "fields")?;
+    let used: std::collections::BTreeSet<&str> = fields
+        .iter()
+        .filter(|f| f["type"]["kind"] == "enum")
+        .filter_map(|f| f["type"]["name"].as_str())
+        .collect();
+    let enums: Vec<_> = list(&config["schema"], "enums")?
+        .iter()
+        .filter(|e| e["name"].as_str().is_some_and(|n| used.contains(n)))
+        .cloned()
+        .collect();
+    Ok(json!({
+        "name": model["name"],
+        "version": model["version"],
+        "identity": model["identity"],
+        "fields": fields,
+        "enums": enums,
+    }))
+}
+/// The first rule an old reader of `old` would trip over when served `new`,
+/// or `None` when every difference is an added nullable field.
+fn model_break(old: &Value, new: &Value) -> Result<Option<String>, String> {
+    for field in list(old, "fields")? {
+        match named(list(new, "fields")?, &field["name"]) {
+            None => {
+                return Ok(Some(format!(
+                    "removing or renaming field {}",
+                    field["name"]
+                )));
+            }
+            Some(next) if next != field => {
+                return Ok(Some(format!(
+                    "changing the type of field {}",
+                    field["name"]
+                )));
+            }
+            Some(_) => {}
+        }
+    }
+    for field in list(new, "fields")? {
+        if named(list(old, "fields")?, &field["name"]).is_none() && field["nullable"] != true {
+            return Ok(Some(format!("adding required field {}", field["name"])));
+        }
+    }
+    for en in list(old, "enums")? {
+        // An enum an old reader knows must keep exactly the values it knows:
+        // a new value is one it cannot interpret.
+        if named(list(new, "enums")?, &en["name"]) != Some(en) {
+            return Ok(Some(format!("changing the values of enum {}", en["name"])));
+        }
+    }
+    Ok(None)
+}
 /// Preserve the reference published model/field-name fence. Stronger type/identity fences are deferred.
+/// A model whose version increased is checked by [`reconcile_model_history`]
+/// instead: the fence keeps its published field names only while the read
+/// contract is the same version.
 pub fn check_fence(before: &Value, after: &Value) -> Result<(), String> {
     for model in list(before, "models")? {
         let next = named(list(after, "models")?, &model["name"])
             .ok_or_else(|| format!("schema fence: published model {} removed", model["name"]))?;
+        let version = |m: &Value| m.get("version").and_then(Value::as_u64).unwrap_or(1);
+        if version(next) > version(model) {
+            continue;
+        }
         for field in list(model, "fields")? {
             named(list(next, "fields")?, &field["name"]).ok_or_else(|| {
                 format!(

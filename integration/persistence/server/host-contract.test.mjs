@@ -1,0 +1,113 @@
+// Replays every request in fixtures/protocol/host-operations.json through the
+// real TypeScript host with a fake persistence, and checks the answers against
+// the same fixture crates/server/tests/host_contract.rs round-trips in Rust.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {createRequire} from 'node:module';
+import {createBackend,MutationRejected} from '../../../packages/server/index.mts';
+import {HOST_OPERATIONS} from '../../../packages/server/host-contract.mts';
+import {PrismaPersistence} from '../../../packages/persistence-prisma/index.mts';
+const require=createRequire(import.meta.url);
+const native=require('../../../bindings/node/ahead-node.node');
+const fixture=JSON.parse(await readFile(new URL('../../../fixtures/protocol/host-operations.json',import.meta.url),'utf8'));
+const entry=op=>fixture.operations.find(o=>o.op===op);
+const response=(op,variant)=>{
+ const found=entry(op).responses.find(r=>variant?r.variant===variant:true);
+ assert.ok(found,`${op}/${variant??'first'} is in the fixture`);
+ return found.value;
+};
+
+const schema={enums:[],models:[{name:'Task',identity:['id'],fields:[
+ {name:'id',type:{kind:'scalar',name:'string'},nullable:false},
+ {name:'title',type:{kind:'scalar',name:'string'},nullable:false}]}]};
+const config={schema,mutations:[{name:'edit',version:1,slots:[
+ {name:'task',model:'Task',operation:'update',cardinality:'single',allowedPatchFields:['title']}]}]};
+
+/** Answers the persistence half of the contract from the fixture. */
+const fakePersistence=seen=>({
+ async call(request){
+  seen.push(request);
+  switch(request.op){
+   case 'claim':return response('claim','claimed');
+   case 'saveReceipt':case 'savepoint':case 'rollback':case 'release':return null;
+   case 'head':return response('head','cursor');
+   case 'scan':return response('scan','rows');
+   case 'publish':return response('publish','published');
+   default:throw new Error(`fake persistence reached ${request.op}`);
+  }
+ },
+});
+
+/**
+ * Drives the host callback with the fixture requests instead of a real push.
+ * Returns [op, response] for every replayed request, plus what the persistence saw.
+ */
+async function replay(requests,{reject=false}={}){
+ const seen=[],answers=[],handled=[],loaded=[];
+ const backend=createBackend({
+  config,
+  native:{
+   validateConfig:c=>native.validateConfig(c),
+   processPush:async(_config,_owner,_request,callback)=>{
+    for(const request of requests)answers.push([request.op,JSON.parse(await callback(JSON.stringify(request)))]);
+    return '{"requiredScope":"shared","requiredSyncId":1,"rejections":[]}';
+   },
+   processPull:async()=>'{}',
+   publish:async()=>'[]',
+   negotiateLive:async()=>'{}',
+   pullLive:async()=>'{}',
+  },
+  database:{transaction:body=>body({}),persistence:()=>fakePersistence(seen)},
+  authenticate:()=>'alice',
+  handlers:{async edit({input,notify}){
+   handled.push(input);
+   notify({channel:'shared',records:[input.task]});
+   if(reject)throw new MutationRejected('task.refused');
+  }},
+  loaders:{async task({ids,channel}){loaded.push({ids,channel});return response('load','rows');}},
+ });
+ await backend.push('alice','{}');
+ return {answers,seen,handled,loaded};
+}
+
+test('the fixture and the TypeScript union cover the same operations',()=>{
+ assert.deepEqual([...fixture.operations.map(o=>o.op)].sort(),[...HOST_OPERATIONS].sort());
+ assert.equal(new Set(fixture.operations.map(o=>o.op)).size,fixture.operations.length);
+});
+
+test('every fixture request replays through the TypeScript host to the fixture answer',async()=>{
+ const requests=fixture.operations.map(o=>o.request);
+ const {answers,seen,handled,loaded}=await replay(requests);
+ assert.deepEqual(answers.map(([op])=>op),HOST_OPERATIONS);
+ const expected={
+  claim:response('claim','claimed'),saveReceipt:null,head:response('head','cursor'),
+  scan:response('scan','rows'),savepoint:null,rollback:null,release:null,
+  handle:response('handle','settled'),load:response('load','rows'),publish:response('publish','published'),
+ };
+ for(const [op,answer] of answers)assert.deepEqual(answer,expected[op],`${op} answer`);
+ // handle and load reach application code; everything else reaches persistence,
+ // savepoint/rollback/release included - they are bookkept *and* forwarded.
+ assert.deepEqual(seen.map(r=>r.op),HOST_OPERATIONS.filter(op=>op!=='handle'&&op!=='load'));
+ assert.equal(handled.length,1);
+ assert.deepEqual(handled[0].task.patch,entry('handle').request.arguments.task.patch);
+ assert.deepEqual(loaded,[{ids:entry('load').request.identities,channel:entry('load').request.channel}]);
+});
+
+test('the same handle request settles as the fixture rejection when the handler refuses',async()=>{
+ const {answers}=await replay([entry('handle').request],{reject:true});
+ assert.deepEqual(answers,[['handle',response('handle','rejected')]]);
+});
+
+test('Prisma persistence answers the persistence half and refuses application operations',async()=>{
+ const tx={
+  $queryRawUnsafe:async sql=>sql.startsWith('SELECT head')?[{head:6}]:[],
+  $executeRawUnsafe:async()=>1,
+ };
+ const bound=new PrismaPersistence().bind(tx);
+ assert.equal(await bound.call(entry('head').request),response('head','cursor'));
+ assert.equal(await bound.call(entry('savepoint').request),null);
+ for(const op of ['handle','load'])
+  await assert.rejects(()=>bound.call(entry(op).request),/Unsupported persistence operation/);
+ await assert.rejects(()=>bound.call({op:'vacuum'}),/Unsupported persistence operation vacuum/);
+});

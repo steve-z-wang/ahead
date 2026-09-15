@@ -1,3 +1,12 @@
+import type {
+  Acknowledged,
+  Claimed,
+  Head,
+  HostRequest,
+  Invalidation,
+  Published,
+} from "../server/host-contract.mts";
+
 /** A capability over the caller's Prisma interactive transaction, never an owned connection. */
 export interface PrismaTransaction {
   $queryRawUnsafe<T = unknown>(sql: string, ...values: any[]): Promise<T>;
@@ -17,7 +26,11 @@ export class PrismaPersistence {
   bind(transaction: PrismaTransaction): PrismaPersistence {
     return new PrismaPersistence(transaction);
   }
-  async call(r: Record<string, any>): Promise<unknown> {
+  /** `Persistence.call` keeps its untyped signature; the contract is applied here. */
+  call(request: Record<string, any>): Promise<unknown> {
+    return this.answer(request as HostRequest);
+  }
+  private async answer(r: HostRequest): Promise<unknown> {
     const tx = this.transaction;
     if (!tx)
       throw new Error("PrismaPersistence must be bound to a transaction");
@@ -34,12 +47,13 @@ export class PrismaPersistence {
         );
         if (rows.length !== 1) throw new Error("Failed to lock client");
         const row = rows[0];
-        return {
+        const claimed: Claimed = {
           clientId: row.client_id,
           owner: row.owner_id,
           sequence: safe(row.sequence),
           receipt: row.receipt,
         };
+        return claimed;
       }
       case "saveReceipt": {
         const count = await tx.$executeRawUnsafe(
@@ -50,14 +64,16 @@ export class PrismaPersistence {
           r.receipt,
         );
         if (count !== 1) throw new Error("Receipt owner mismatch");
-        return null;
+        const acknowledged: Acknowledged = null;
+        return acknowledged;
       }
       case "head": {
         const rows = await tx.$queryRawUnsafe<any[]>(
           "SELECT head FROM ahead_channel WHERE channel=$1",
           r.channel,
         );
-        return rows.length ? safe(rows[0].head) : 0;
+        const head: Head = rows.length ? safe(rows[0].head) : 0;
+        return head;
       }
       case "scan": {
         const rows = await tx.$queryRawUnsafe<any[]>(
@@ -66,7 +82,7 @@ export class PrismaPersistence {
           BigInt(r.after),
           r.limit,
         );
-        return rows.map((row) => ({
+        const scanned: Invalidation[] = rows.map((row) => ({
           channel: row.channel,
           cursor: safe(row.cursor),
           model: row.model,
@@ -74,6 +90,7 @@ export class PrismaPersistence {
           identity: row.identity,
           stamp: safe(row.stamp),
         }));
+        return scanned;
       }
       case "publish": {
         // The record row is locked first, so concurrent notifies of one record
@@ -98,7 +115,8 @@ export class PrismaPersistence {
           BigInt(cursor),
           BigInt(stamp),
         );
-        return { cursor, stamp };
+        const published: Published = { cursor, stamp };
+        return published;
       }
       case "savepoint":
       case "rollback":
@@ -113,11 +131,22 @@ export class PrismaPersistence {
               ? "ROLLBACK TO SAVEPOINT"
               : "RELEASE SAVEPOINT";
         await tx.$executeRawUnsafe(`${command} ${name}`);
-        return null;
+        const acknowledged: Acknowledged = null;
+        return acknowledged;
       }
-      default:
-        throw new Error(`Unsupported persistence operation ${r.op}`);
+      // `handle` and `load` reach application code, never persistence. An
+      // operation added to the contract without an arm here is a compile error.
+      case "handle":
+      case "load":
+        break;
+      default: {
+        const unreachable: never = r;
+        void unreachable;
+      }
     }
+    throw new Error(
+      `Unsupported persistence operation ${(r as { op: string }).op}`,
+    );
   }
 }
 

@@ -1,9 +1,24 @@
-# Ahead
+<h1 align="center">
+  <img src="assets/branding/ahead-logo.png" alt="Ahead" width="560">
+</h1>
 
-[![Verify](https://github.com/zanminwang/ahead/actions/workflows/verify.yml/badge.svg?branch=main)](https://github.com/zanminwang/ahead/actions/workflows/verify.yml)
-[![Documentation](https://github.com/zanminwang/ahead/actions/workflows/docs.yml/badge.svg?branch=main)](https://github.com/zanminwang/ahead/actions/workflows/docs.yml)
+<p align="center">
+  A schema-driven framework for building local-first apps with your own backend.
+</p>
 
-Ahead is a schema-driven framework for building local-first apps with your own backend.
+<p align="center">
+  <a href="https://github.com/zanminwang/ahead/actions/workflows/verify.yml"><img src="https://github.com/zanminwang/ahead/actions/workflows/verify.yml/badge.svg?branch=main" alt="Verify"></a>
+  <a href="https://github.com/zanminwang/ahead/actions/workflows/docs.yml"><img src="https://github.com/zanminwang/ahead/actions/workflows/docs.yml/badge.svg?branch=main" alt="Documentation"></a>
+</p>
+
+<p align="center">
+  <a href="#build-with-ahead">Quick start</a> ·
+  <a href="website/docs/schema/reference.md">Schema</a> ·
+  <a href="website/docs/frontend/setup.md">Client</a> ·
+  <a href="website/docs/backend/setup.md">Backend</a>
+</p>
+
+## Why Ahead?
 
 - **Schema-driven.** Define your models and local mutations in a schema. Ahead handles the local state changes.
 - **Type-safe end to end.** Get typed client calls and backend read/write interfaces from the same schema.

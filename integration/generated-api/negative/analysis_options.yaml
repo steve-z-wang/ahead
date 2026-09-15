@@ -1,0 +1,11 @@
+# Own analysis context so `dart analyze integration/generated-api` (which excludes
+# this directory) stays clean while verify.sh analyzes this directory on its own
+# and requires the errors listed in misuse.dart.
+analyzer:
+  errors:
+    unused_local_variable: ignore
+# Deprecated members generated from `@deprecated` are reported here so the
+# notices can be asserted; the rule is off by default for same-package use.
+linter:
+  rules:
+    - deprecated_member_use_from_same_package

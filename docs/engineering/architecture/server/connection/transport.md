@@ -20,11 +20,11 @@ Request handling is a pipeline: `authenticate` (null or blank → `401 unauthent
 | `mutation_version_unsupported` | 409 | `{code, ordinal, name, version}` |
 | any other code, or a non-engine error | 500 | `{code: "server"}`, and the error goes to `onError` |
 
-The live path closes with `1002` when negotiation fails with `request.invalid`, and with `1011` for any other failure, which also goes to `onError`.
+The live path closes with `1002` when negotiation fails with `request.invalid`, and with `1011` for any other failure (a failed pull, or a controller error such as `live.invalid_page`), which also goes to `onError`. What to pull and send is decided by the Rust controller; `serveLive` only executes its actions ([Controller](controller.md)).
 
 The upgrade path authenticates before accepting the socket and refuses with a raw `401`, `500` (authenticate threw) or `503` (server closing). `close` stops upgrades, closes sockets with `1001`, then closes the server.
 
-Code: `createHttpHandler`, `attachLive`, `listen` in [server/index.mts](../../../../../packages/server/index.mts).
+Code: `createHttpHandler`, `attachLive`, `serveLive`, `listen` in [server/index.mts](../../../../../packages/server/index.mts).
 
 ## 7. Deployment View
 

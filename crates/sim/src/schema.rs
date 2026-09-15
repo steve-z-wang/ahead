@@ -40,6 +40,14 @@ pub fn config() -> Config {
     }))
     .unwrap()
 }
+/// The read contracts a simulated client declares: every model at its schema version.
+pub fn declared_models() -> std::collections::BTreeMap<String, u64> {
+    schema()
+        .models
+        .iter()
+        .map(|m| (m.name.clone(), m.version))
+        .collect()
+}
 pub fn entry_key(id: &str) -> RecordKey {
     schema().record_key("Entry", &json!({ "id": id })).unwrap()
 }

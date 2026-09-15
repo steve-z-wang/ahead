@@ -34,7 +34,7 @@ The generated `Options<Tx>` requires:
 | `database: Database<Tx>` | Run transactions and bind sync persistence to the supplied transaction |
 | `authenticate: Authenticate` | Resolve the caller's user identity or reject the request |
 | `handlers: Handlers<Tx>` | Implement each supported mutation version |
-| `loaders: Loaders<Tx>` | Implement the read function for each model |
+| `loaders: Loaders<Tx>` | Implement the read function for each supported model version |
 
 Optional options are `translateRejection`, `onError`, `loaderHooks` and `native`, described below. The generated function binds the schema and returns the backend synchronously. The generic function in `packages/server/index.mts` additionally requires `config`; normal generated integrations do not pass it.
 
@@ -92,7 +92,16 @@ A handler returns `Promise<void | { channel: string }>`. Returning void selects 
 
 One mutation can have several slots and perform several business writes. Ahead runs it in a savepoint inside the batch transaction. The schema describes the local operation and typed input; it does not require the backend to replay the same database operations. The backend can normalize values or use different tables.
 
-The latest `Edit` version uses `handlers.edit`. Additional retained versions use names such as `editV1`. Keep the handlers required by the generated interface while clients can still send those versions. A known but unsupported version fails before any handler executes.
+`handlers.edit` holds every retained version of `Edit`. While only v1 is retained, the function above is shorthand for `{ v1: ... }`. Once a second version is retained, register each one explicitly and keep them all while clients can still send those versions:
+
+```text
+handlers.edit = {
+  v1: handleOriginalEdit,   // receives EditV1Input
+  v2: handleNewEdit,        // receives EditInput
+};
+```
+
+A bare function always means v1, never the latest version, so a mutation whose retained versions are not exactly v1 refuses it at startup, as does a missing version, an unknown `v<n>` key or a value that is not a function. A request reaches only the handler of the version it names; there is no fallback. A known but unsupported version fails before any handler executes.
 
 ## Loaders
 
@@ -122,6 +131,17 @@ export const loaders: Loaders<Prisma.TransactionClient> = {
 | `channel` | Channel whose synchronization requested these records |
 
 A loader returns `Promise<readonly (Record | null)[]>`. Return exactly one item per identity, in the same order. Do not filter out missing rows or return a differently ordered database result directly.
+
+`loaders.entry` holds every retained version of the `Entry` read contract, exactly as `handlers.edit` holds mutation versions. While only v1 is retained, the function above is shorthand for `{ v1: ... }`. Once the model has a second version, register each one and keep both while clients of the older version can still read:
+
+```text
+loaders.entry = {
+  v1: loadOriginalEntry,   // returns EntryV1 rows: the fields and enum values of v1
+  v2: loadNewEntry,        // returns Entry rows
+};
+```
+
+The generated `EntryV1` type is the record shape published for v1, so a v1 loader maps your current rows into it; Ahead does not convert between versions. A row with a field outside the served version's contract is a loader defect and aborts the pull. Registration is checked at startup like handlers: a bare function means v1 only, and a missing version, an unknown `v<n>` key or a non-function value is refused. A load reaches only the loader of the version it names.
 
 What each item may be:
 
@@ -185,6 +205,7 @@ Protocol refusals are answered with a status and a JSON body chosen by the engin
 | `client.owner_mismatch` | 403 | The client identity belongs to another user |
 | `gap`, `overlap` | 409 | The batch sequence is not the next one and not a retry of the last |
 | `mutation_version_unsupported` | 409 | A mutation version this backend does not serve; the body adds `ordinal`, `name` and `version` |
+| `model_version_unsupported` | 409 | A model read contract this backend does not serve: the client declared an unknown model or an unretained version (body adds `model` and `version`), or a page holds a model the client did not declare (body adds `model`). On the WebSocket the handshake closes with `1002` and this code as the reason. |
 | anything else | 500 `{ code: "server" }` | A server-side failure; the `EngineError` or thrown error goes to `onError` |
 
 ## Listener

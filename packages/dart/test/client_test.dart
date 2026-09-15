@@ -4,6 +4,54 @@ import 'dart:io';
 import 'package:ahead/ahead.dart';
 import 'package:test/test.dart';
 
+/// One client over a fresh temporary file with the Entry schema, plus a way to
+/// reopen the same file. Every clause below starts from its own copy.
+class Fixture {
+  Fixture(this.dir, this.schema);
+  final Directory dir;
+  final Map<String, dynamic> schema;
+  String get path => '${dir.path}/db';
+
+  static Future<Fixture> create(String prefix) async {
+    final dir = await Directory.systemTemp.createTemp(prefix);
+    final schema =
+        jsonDecode(
+              await File('../../fixtures/schemas/entry.json').readAsString(),
+            )
+            as Map<String, dynamic>;
+    return Fixture(dir, schema);
+  }
+
+  Future<Client> open() => Client.open(
+    path: path,
+    schema: schema,
+    libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+  );
+
+  Future<void> dispose() => dir.delete(recursive: true);
+}
+
+Map<String, dynamic> update(String text) => {
+  'model': 'Entry',
+  'op': 'update',
+  'identity': {'id': 'e'},
+  'values': {'text': text},
+};
+
+/// Creates Entry `e` with text `hello` and reads it back inside the transaction.
+Future<void> seed(Client client) => client.transaction((tx) async {
+  await tx.direct({
+    'model': 'Entry',
+    'op': 'create',
+    'identity': {'id': 'e'},
+    'values': {'text': 'hello'},
+  });
+  expect((await tx.read('Entry', {'id': 'e'}))!['text'], 'hello');
+});
+
+Future<String?> text(Client client) async =>
+    (await client.read('Entry', {'id': 'e'}))?['text'] as String?;
+
 void main() {
   test('default native loader is reserved for iOS process symbols', () async {
     if (Platform.isIOS) return;
@@ -18,57 +66,45 @@ void main() {
       ),
     );
   });
-  test(
-    'Dart callbacks read their writes, rollback and reopen through native Rust',
-    () async {
-      final dir = await Directory.systemTemp.createTemp('ahead-dart-test-');
-      final schema =
-          jsonDecode(
-                await File('../../fixtures/schemas/entry.json').readAsString(),
-              )
-              as Map<String, dynamic>;
-      final path = '${dir.path}/db';
-      var client = await Client.open(
-        path: path,
-        schema: schema,
 
-        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+  group('Dart callbacks through native Rust', () {
+    late Fixture fixture;
+    late Client client;
+    setUp(() async {
+      fixture = await Fixture.create('ahead-dart-test-');
+      client = await fixture.open();
+      await seed(client);
+    });
+    tearDown(() async {
+      await client.close();
+      await fixture.dispose();
+    });
+
+    test('a transaction reads its own writes; a throw rolls it back', () async {
+      await expectLater(
+        client.transaction((tx) async {
+          await tx.direct(update('bad'));
+          expect((await tx.read('Entry', {'id': 'e'}))!['text'], 'bad');
+          throw StateError('rollback');
+        }),
+        throwsStateError,
       );
-      try {
-        await client.transaction((tx) async {
-          await tx.direct({
-            'model': 'Entry',
-            'op': 'create',
-            'identity': {'id': 'e'},
-            'values': {'text': 'hello'},
-          });
-          expect((await tx.read('Entry', {'id': 'e'}))!['text'], 'hello');
-        });
-        await expectLater(
-          client.transaction((tx) async {
-            await tx.direct({
-              'model': 'Entry',
-              'op': 'update',
-              'identity': {'id': 'e'},
-              'values': {'text': 'bad'},
-            });
-            throw StateError('rollback');
-          }),
-          throwsStateError,
-        );
-        expect((await client.read('Entry', {'id': 'e'}))!['text'], 'hello');
-        await expectLater(
-          client.transaction((tx) async {
-            tx.direct({
-              'model': 'Entry',
-              'op': 'update',
-              'identity': {'id': 'e'},
-              'values': {'text': 'forgotten'},
-            });
-          }),
-          throwsStateError,
-        );
-        expect((await client.read('Entry', {'id': 'e'}))!['text'], 'hello');
+      expect(await text(client), 'hello');
+    });
+
+    test('an unawaited native call fails the transaction', () async {
+      await expectLater(
+        client.transaction((tx) async {
+          tx.direct(update('forgotten'));
+        }),
+        throwsStateError,
+      );
+      expect(await text(client), 'hello');
+    });
+
+    test(
+      'a failed native call fails the transaction even when caught',
+      () async {
         await expectLater(
           client.transaction((tx) async {
             try {
@@ -79,37 +115,37 @@ void main() {
                 'values': {'text': 'duplicate'},
               });
             } catch (_) {}
-            ;
           }),
           throwsStateError,
         );
-        await client.transaction((tx) async {
-          try {
-            await tx.savepoint(() async {
-              await tx.direct({
-                'model': 'Entry',
-                'op': 'update',
-                'identity': {'id': 'e'},
-                'values': {'text': 'savepoint'},
-              });
-              throw StateError('rollback');
-            });
-          } catch (_) {}
-          ;
-        });
-        expect((await client.read('Entry', {'id': 'e'}))!['text'], 'hello');
+        expect(await text(client), 'hello');
+      },
+    );
+
+    test('a savepoint confines its rollback to its own scope', () async {
+      await client.transaction((tx) async {
+        try {
+          await tx.savepoint(() async {
+            await tx.direct(update('savepoint'));
+            throw StateError('rollback');
+          });
+        } catch (_) {}
+        expect((await tx.read('Entry', {'id': 'e'}))!['text'], 'hello');
+        await tx.direct(update('after savepoint'));
+      });
+      expect(await text(client), 'after savepoint');
+    });
+
+    test(
+      'a child savepoint finishing after its parent fails the transaction',
+      () async {
         await expectLater(
           client.transaction((tx) async {
             final gate = Completer<void>();
             Future<void>? child;
             try {
               await tx.savepoint(() async {
-                await tx.direct({
-                  'model': 'Entry',
-                  'op': 'update',
-                  'identity': {'id': 'e'},
-                  'values': {'text': 'outer'},
-                });
+                await tx.direct(update('outer'));
                 child = tx
                     .savepoint<void>(() async {
                       await gate.future;
@@ -123,51 +159,33 @@ void main() {
           }),
           throwsStateError,
         );
-        expect((await client.read('Entry', {'id': 'e'}))!['text'], 'hello');
+        expect(await text(client), 'hello');
+      },
+    );
+
+    test(
+      'a frozen batch and committed state survive reopen; a closed handle refuses reads',
+      () async {
         await client.mutate({
           'name': 'Edit',
-          'operations': [
-            {
-              'model': 'Entry',
-              'op': 'update',
-              'identity': {'id': 'e'},
-              'values': {'text': 'offline'},
-            },
-          ],
+          'operations': [update('offline')],
         });
         final frozen = await client.freeze();
         await client.close();
-        client = await Client.open(
-          path: path,
-          schema: schema,
-
-          libraryPath: Platform.environment['AHEAD_LIBRARY']!,
-        );
+        client = await fixture.open();
         expect(await client.freeze(), frozen);
-        expect((await client.read('Entry', {'id': 'e'}))!['text'], 'offline');
+        expect(await text(client), 'offline');
         await client.close();
         await expectLater(client.read('Entry', {'id': 'e'}), throwsStateError);
-      } finally {
-        await client.close();
-        await dir.delete(recursive: true);
-      }
-    },
-  );
+      },
+    );
+  });
+
   test(
     'client close waits for connection setup and remains idempotent',
     () async {
-      final dir = await Directory.systemTemp.createTemp('ahead-dart-close-');
-      final schema =
-          jsonDecode(
-                await File('../../fixtures/schemas/entry.json').readAsString(),
-              )
-              as Map<String, dynamic>;
-      final client = await Client.open(
-        path: '${dir.path}/db',
-        schema: schema,
-
-        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
-      );
+      final fixture = await Fixture.create('ahead-dart-close-');
+      final client = await fixture.open();
       final errors = <Object>[];
       try {
         final starting = client.connect(
@@ -187,7 +205,7 @@ void main() {
         );
       } finally {
         await client.close();
-        await dir.delete(recursive: true);
+        await fixture.dispose();
       }
     },
   );

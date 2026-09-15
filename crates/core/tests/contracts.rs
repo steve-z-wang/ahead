@@ -90,12 +90,16 @@ fn wire_names_remain_legacy_and_counters_are_safe() {
 }
 
 #[test]
-fn batch_envelope_keeps_unknown_data_in_receipt_hash() {
+fn batch_envelope_keeps_unknown_data_in_canonical_bytes() {
     let a=PushRequest::decode(br#"{"clientId":"c","batchSequence":1,"mutations":[{"ordinal":4,"name":"Edit","args":{}}],"future":1}"#).unwrap();
     let b=PushRequest::decode(br#"{"future":1,"mutations":[{"args":{},"name":"Edit","ordinal":4}],"batchSequence":1,"clientId":"c"}"#).unwrap();
-    assert_eq!(a.semantic_hash().unwrap(), b.semantic_hash().unwrap());
+    assert_eq!(a.encode().unwrap(), b.encode().unwrap());
+    assert_eq!(
+        a.encode().unwrap(),
+        br#"{"batchSequence":1,"clientId":"c","future":1,"mutations":[{"args":{},"name":"Edit","ordinal":4}]}"#
+    );
     let c=PushRequest::decode(br#"{"clientId":"c","batchSequence":1,"mutations":[{"ordinal":4,"name":"Edit","args":{}}]}"#).unwrap();
-    assert_ne!(a.semantic_hash().unwrap(), c.semantic_hash().unwrap());
+    assert_ne!(a.encode().unwrap(), c.encode().unwrap());
     assert!(
         PushRequest::decode(
             br#"{"clientId":"c","batchSequence":1,"mutations":[{"ordinal":1},{"ordinal":1}]}"#
@@ -158,7 +162,9 @@ fn received_state_supports_additive_schema_evolution() {
 #[test]
 fn server_pull_request_accepts_js_integer_number_spellings() {
     for number in ["0.0", "1e0", "-0"] {
-        let wire = format!("{{\"clientId\":\"c\",\"scope\":\"s\",\"fromCursor\":{number}}}");
+        let wire = format!(
+            "{{\"clientId\":\"c\",\"scope\":\"s\",\"fromCursor\":{number},\"models\":{{\"Entry\":1}}}}"
+        );
         assert!(PullRequest::decode(wire.as_bytes()).is_ok(), "{number}");
     }
 }
@@ -381,7 +387,8 @@ fn push_and_pull_requests_refuse_a_blank_client_id() {
             PushRequest::decode(push.as_bytes()).is_err(),
             "push {blank:?}"
         );
-        let pull = json!({"clientId":blank,"scope":"a","fromCursor":0}).to_string();
+        let pull =
+            json!({"clientId":blank,"scope":"a","fromCursor":0,"models":{"Entry":1}}).to_string();
         assert!(
             PullRequest::decode(pull.as_bytes()).is_err(),
             "pull {blank:?}"
@@ -394,4 +401,147 @@ fn push_and_pull_requests_refuse_a_blank_client_id() {
         PushRequest::decode(missing.as_bytes()).is_err(),
         "missing clientId"
     );
+}
+
+#[test]
+fn shared_limits_are_defined_once_and_a_page_continues_only_when_full() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/protocol/live-messages.json"
+    ))
+    .unwrap();
+    assert_eq!(fixture["limits"]["pushMutations"], limits::PUSH_MUTATIONS);
+    assert_eq!(fixture["limits"]["pushBytes"], limits::PUSH_BYTES);
+    assert_eq!(fixture["limits"]["pullChanges"], limits::PULL_CHANGES);
+    let page = |count: usize| {
+        let changes: Vec<Value> = (1..=count)
+            .map(|i| json!({"syncId":i,"model":"Entry","identity":{"id":i.to_string()},"stamp":i,"state":null}))
+            .collect();
+        json!({"scope":"book","fromCursor":0,"toCursor":count.max(1),"changes":changes}).to_string()
+    };
+    let below = PullPage::decode(page(limits::PULL_CHANGES - 1).as_bytes()).unwrap();
+    assert!(!below.continues(), "a short page reaches the head");
+    let full = PullPage::decode(page(limits::PULL_CHANGES).as_bytes()).unwrap();
+    assert!(full.continues(), "a full page may leave changes behind");
+    let err = PullPage::decode(page(limits::PULL_CHANGES + 1).as_bytes()).unwrap_err();
+    assert!(err.to_string().contains("exceeds 50"), "{err}");
+    assert!(!PullPage::decode(page(0).as_bytes()).unwrap().continues());
+}
+
+#[test]
+fn live_frames_decode_as_acknowledgement_or_page_and_scopes_normalize() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/protocol/live-messages.json"
+    ))
+    .unwrap();
+    for case in fixture["subscribe"].as_array().unwrap() {
+        let wire = case["wire"].as_str().unwrap().as_bytes();
+        match SubscribeRequest::decode(wire) {
+            Ok(request) => {
+                assert_eq!(case["valid"], true, "{}", case["name"]);
+                assert_eq!(json!(request.scopes), case["scopes"], "{}", case["name"]);
+                assert_eq!(json!(request.models), case["models"], "{}", case["name"]);
+                let again = SubscribeRequest::decode(&request.encode().unwrap()).unwrap();
+                assert_eq!(again, request, "encoding is canonical: {}", case["name"]);
+            }
+            Err(_) => assert_eq!(case["valid"], false, "{}", case["name"]),
+        }
+    }
+    for case in fixture["acknowledgement"].as_array().unwrap() {
+        let wire = case["wire"].as_str().unwrap().as_bytes();
+        match SubscriptionAck::decode(wire) {
+            Ok(ack) => {
+                assert_eq!(case["valid"], true, "{}", case["name"]);
+                assert_eq!(json!(ack.scopes), case["scopes"], "{}", case["name"]);
+                assert_eq!(
+                    SubscriptionAck::decode(&ack.encode().unwrap()).unwrap(),
+                    ack
+                );
+            }
+            Err(_) => assert_eq!(case["valid"], false, "{}", case["name"]),
+        }
+    }
+    for case in fixture["frame"].as_array().unwrap() {
+        let wire = case["wire"].as_str().unwrap().as_bytes();
+        let kind = match LiveMessage::decode(wire) {
+            Ok(LiveMessage::Acknowledged(_)) => "acknowledged",
+            Ok(LiveMessage::Page(_)) => "page",
+            Err(_) => "invalid",
+        };
+        assert_eq!(kind, case["kind"], "{}", case["name"]);
+    }
+    let models = std::collections::BTreeMap::from([("Task".to_string(), 1)]);
+    let request = SubscribeRequest::new(vec!["b".into(), "a".into()], models.clone()).unwrap();
+    assert!(
+        SubscriptionAck::new(vec!["a".into(), "b".into()])
+            .unwrap()
+            .confirms(&request)
+    );
+    assert!(
+        !SubscriptionAck::new(vec!["a".into()])
+            .unwrap()
+            .confirms(&request)
+    );
+    assert!(
+        !SubscriptionAck::new(vec!["a".into(), "b".into(), "c".into()])
+            .unwrap()
+            .confirms(&request)
+    );
+    // The server's frame is the acknowledgement the client decodes, byte for byte.
+    assert_eq!(
+        String::from_utf8(
+            SubscriptionAck::new(vec!["b".into(), "a".into()])
+                .unwrap()
+                .encode()
+                .unwrap()
+        )
+        .unwrap(),
+        r#"{"rejections":[],"scopes":["a","b"],"type":"subscribed"}"#
+    );
+}
+
+#[test]
+fn pull_and_subscribe_declare_the_read_contracts_and_refuse_a_missing_or_bad_declaration() {
+    // The declaration is the same object on both paths: one positive version per model.
+    let good = json!({"clientId":"c","scope":"a","fromCursor":0,"models":{"Task":2,"Note":1}});
+    let request = PullRequest::decode(good.to_string().as_bytes()).unwrap();
+    assert_eq!(request.models.get("Task"), Some(&2));
+    assert_eq!(request.models.get("Note"), Some(&1));
+    assert_eq!(
+        String::from_utf8(request.encode().unwrap()).unwrap(),
+        r#"{"clientId":"c","fromCursor":0,"models":{"Note":1,"Task":2},"scope":"a"}"#,
+        "canonical: models sorted by name"
+    );
+    for (name, models) in [
+        ("missing", Value::Null),
+        ("not an object", json!(["Task"])),
+        ("empty", json!({})),
+        ("zero version", json!({"Task":0})),
+        ("negative version", json!({"Task":-1})),
+        ("fractional version", json!({"Task":1.5})),
+        ("string version", json!({"Task":"1"})),
+        ("empty model name", json!({"":1})),
+    ] {
+        let mut pull = good.clone();
+        if models.is_null() {
+            pull.as_object_mut().unwrap().remove("models");
+        } else {
+            pull["models"] = models.clone();
+        }
+        assert!(
+            PullRequest::decode(pull.to_string().as_bytes()).is_err(),
+            "pull {name}"
+        );
+        let mut subscribe = json!({"type":"subscribe","scopes":["a"],"models":{"Task":1}});
+        if models.is_null() {
+            subscribe.as_object_mut().unwrap().remove("models");
+        } else {
+            subscribe["models"] = models;
+        }
+        assert!(
+            SubscribeRequest::decode(subscribe.to_string().as_bytes()).is_err(),
+            "subscribe {name}"
+        );
+    }
+    let empty = std::collections::BTreeMap::new();
+    assert!(SubscribeRequest::new(vec!["a".into()], empty).is_err());
 }

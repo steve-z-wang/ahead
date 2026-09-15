@@ -1,7 +1,13 @@
+use ahead_server::live::Subscriptions;
 use napi::{bindgen_prelude::*, threadsafe_function::ThreadsafeFunction};
 use napi_derive::napi;
 use serde_json::Value;
-use std::{future::Future, pin::Pin};
+use std::{
+    collections::BTreeMap,
+    future::Future,
+    pin::Pin,
+    sync::{Mutex, MutexGuard, OnceLock},
+};
 struct CallbackHost(ThreadsafeFunction<String, Promise<String>, String, Status, false>);
 impl ahead_server::Host for CallbackHost {
     fn call(
@@ -101,17 +107,81 @@ pub async fn publish(
     .map(|v| v.to_string())
     .map_err(reason)
 }
+/// The open live sessions of this process, one `Subscriptions` per socket
+/// under a handle the host carries between native calls (like the client
+/// `RuntimeHost`). The controller is pure state, so the lock is held only for
+/// the transition itself.
+#[derive(Default)]
+struct LiveSessions {
+    next: u64,
+    open: BTreeMap<u64, Subscriptions>,
+}
+static LIVE: OnceLock<Mutex<LiveSessions>> = OnceLock::new();
+fn live_sessions() -> Result<MutexGuard<'static, LiveSessions>> {
+    LIVE.get_or_init(Mutex::default)
+        .lock()
+        .map_err(|_| internal("live sessions poisoned"))
+}
+fn live_invalid(message: &str) -> Error {
+    reason(ahead_server::Error::new(
+        ahead_server::code::LIVE_INVALID_EVENT,
+        message,
+    ))
+}
+/// Negotiates the subscribe frame inside the host's transaction, opens the
+/// socket's `Subscriptions`, and answers `{handle, actions}`: the handle names
+/// the session for `live_event` and `live_close`, and the actions are the
+/// session's first (listen, send the acknowledgement, pull each scope).
 #[napi]
 pub async fn negotiate_live(
+    config_json: String,
     owner: String,
     request_json: String,
     callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
 ) -> Result<String> {
-    let result =
-        ahead_server::live::negotiate(&owner, request_json.as_bytes(), &CallbackHost(callback))
-            .await
-            .map_err(reason)?;
-    serde_json::to_string(&result).map_err(internal)
+    let negotiation = ahead_server::live::negotiate(
+        &config(&config_json)?,
+        &owner,
+        request_json.as_bytes(),
+        &CallbackHost(callback),
+    )
+    .await
+    .map_err(reason)?;
+    let (subscriptions, actions) = Subscriptions::open(negotiation);
+    let handle = {
+        let mut sessions = live_sessions()?;
+        sessions.next += 1;
+        let handle = sessions.next;
+        sessions.open.insert(handle, subscriptions);
+        handle
+    };
+    serde_json::to_string(&serde_json::json!({"handle": handle, "actions": actions}))
+        .map_err(internal)
+}
+/// Applies one `LiveEvent` (JSON) to the session and answers its `LiveAction`s
+/// (JSON array). Synchronous: no host call is involved. An unknown handle is
+/// `live.invalid_event`, like any other event the session cannot accept.
+#[napi]
+pub fn live_event(handle: i64, event_json: String) -> Result<String> {
+    let event = serde_json::from_str(&event_json).map_err(|e| live_invalid(&e.to_string()))?;
+    let actions = {
+        let mut sessions = live_sessions()?;
+        let subscriptions = u64::try_from(handle)
+            .ok()
+            .and_then(|handle| sessions.open.get_mut(&handle))
+            .ok_or_else(|| live_invalid("live session handle is not open"))?;
+        subscriptions.handle(event).map_err(reason)?
+    };
+    serde_json::to_string(&actions).map_err(internal)
+}
+/// Forgets the session; idempotent. The host calls it once the socket is
+/// closed and `closed` has been dispatched.
+#[napi]
+pub fn live_close(handle: i64) -> Result<()> {
+    if let Ok(handle) = u64::try_from(handle) {
+        live_sessions()?.open.remove(&handle);
+    }
+    Ok(())
 }
 #[napi]
 pub async fn pull_live(
@@ -119,8 +189,17 @@ pub async fn pull_live(
     owner: String,
     scope: String,
     from_cursor: f64,
+    models_json: String,
     callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
 ) -> Result<String> {
+    // The engine validates the declaration again when it decodes the pull.
+    let models: std::collections::BTreeMap<String, u64> = serde_json::from_str(&models_json)
+        .map_err(|_| {
+            reason(ahead_server::Error::new(
+                ahead_server::code::REQUEST_INVALID,
+                "invalid live models",
+            ))
+        })?;
     if !from_cursor.is_finite()
         || from_cursor.fract() != 0.0
         || from_cursor < 0.0
@@ -136,6 +215,7 @@ pub async fn pull_live(
         &owner,
         &scope,
         from_cursor as u64,
+        &models,
         &CallbackHost(callback),
     )
     .await

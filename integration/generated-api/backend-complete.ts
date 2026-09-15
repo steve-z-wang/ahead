@@ -2,13 +2,19 @@ import { createBackend, devAuth, type Handlers, type Loaders } from "./backend.t
 type Tx = { rows: Map<string, object> };
 export const handlers: Handlers<Tx> = {
   async createEntry({ input, notify }) { notify({ channel: "c", records: [input.entry] }); },
-  async editEntry({ input, notify }) { notify({ channel: "c", records: [input.entry] }); },
+  editEntry: {
+    async v1({ input, notify }) { notify({ channel: "c", records: [input.target] }); },
+    async v2({ input, notify }) { notify({ channel: "c", records: [input.entry] }); },
+  },
   async removeEntries({ input, notify }) { notify({ channel: "c", records: input.entries }); },
   async addBook({ input, notify }) { notify({ channel: "c", records: [input.book] }); },
   async addComment({ input, notify }) { notify({ channel: "c", records: [input.comment] }); },
 };
 export const loaders: Loaders<Tx> = {
-  async entry({ ids }) { return ids.map(() => null); },
+  entry: {
+    async v1({ ids }) { return ids.map((id) => ({ ...id, title: "old", note: null, at: new Date(0), status: "active" })); },
+    async v2({ ids }) { return ids.map((id) => ({ ...id, title: "new", note: null, at: new Date(0), tags: [], status: "active" })); },
+  },
   async book({ ids }) { return ids.map(() => null); },
   async comment({ ids }) { return ids.map(() => null); },
   async counter({ ids }) { return ids.map(() => null); },
@@ -18,5 +24,5 @@ export const backend = createBackend<Tx>({
   authenticate: devAuth(),
   handlers,
   loaders,
-  native: { validateConfig() {}, processPush: async () => "", processPull: async () => "", publish: async () => "", negotiateLive: async () => "", pullLive: async () => "" },
+  native: { validateConfig() {}, processPush: async () => "", processPull: async () => "", publish: async () => "", negotiateLive: async () => "", pullLive: async () => "", liveEvent: () => "[]", liveClose() {} },
 });

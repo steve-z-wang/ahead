@@ -49,12 +49,27 @@ fn historical_known_field_outside_capability_is_refused() {
 #[test]
 fn live_subscribe_requires_one_subscribe_frame_and_normalizes_scopes() {
     let decoded = ahead_server::live::decode_subscribe(
-        br#"{"type":"subscribe","scopes":["shared","alice","shared"]}"#,
+        br#"{"type":"subscribe","scopes":["shared","alice","shared"],"models":{"Task":1}}"#,
     )
     .unwrap();
-    assert_eq!(decoded, vec!["alice", "shared"]);
-    assert!(ahead_server::live::decode_subscribe(br#"{"type":"other","scopes":["a"]}"#).is_err());
-    assert!(ahead_server::live::decode_subscribe(br#"{"type":"subscribe","scopes":[]}"#).is_err());
+    assert_eq!(decoded.scopes, vec!["alice", "shared"]);
+    assert_eq!(decoded.models.get("Task"), Some(&1));
+    assert!(
+        ahead_server::live::decode_subscribe(
+            br#"{"type":"other","scopes":["a"],"models":{"Task":1}}"#
+        )
+        .is_err()
+    );
+    assert!(
+        ahead_server::live::decode_subscribe(
+            br#"{"type":"subscribe","scopes":[],"models":{"Task":1}}"#
+        )
+        .is_err()
+    );
+    assert!(
+        ahead_server::live::decode_subscribe(br#"{"type":"subscribe","scopes":["a"]}"#).is_err(),
+        "models are required"
+    );
 }
 
 #[test]
@@ -86,11 +101,75 @@ fn startup_rejects_invalid_patch_capabilities() {
     assert!(ahead_server::Config::decode(c).is_err());
 }
 
+#[test]
+fn startup_validates_the_retained_model_contracts() {
+    let contract = |version: u64, fields: Value| json!({"name":"Task","version":version,"identity":["id"],"fields":fields,"enums":[]});
+    let id = json!({"name":"id","type":{"kind":"scalar","name":"string"},"nullable":false});
+    let title = json!({"name":"title","type":{"kind":"scalar","name":"string"},"nullable":false});
+    let note = json!({"name":"note","type":{"kind":"scalar","name":"string"},"nullable":true});
+    // Without `models`, every model is retained at the schema's own version.
+    let derived = ahead_server::Config::decode(config()).unwrap();
+    assert_eq!(
+        derived
+            .models
+            .iter()
+            .map(|m| (m.name.as_str(), m.version))
+            .collect::<Vec<_>>(),
+        [("Task", 1)]
+    );
+    let mut c = config();
+    c["schema"]["models"][0]["version"] = json!(2);
+    c["models"] = json!([
+        contract(1, json!([id, title])),
+        contract(2, json!([id, title, note]))
+    ]);
+    let decoded = ahead_server::Config::decode(c.clone()).unwrap();
+    assert_eq!(decoded.models.len(), 2);
+    assert_eq!(
+        decoded
+            .contract("Task", 1)
+            .unwrap()
+            .model("Task")
+            .unwrap()
+            .fields
+            .len(),
+        2
+    );
+    assert!(
+        decoded.contract("Task", 3).is_none(),
+        "an unretained version is not served"
+    );
+    // The schema's current version must be retained; identities must agree;
+    // a contract must be a valid schema; versions are unique per model.
+    let mut missing_current = c.clone();
+    missing_current["models"] = json!([contract(1, json!([id, title]))]);
+    assert!(ahead_server::Config::decode(missing_current).is_err());
+    let mut other_identity = c.clone();
+    other_identity["models"][0]["identity"] = json!(["title"]);
+    assert!(ahead_server::Config::decode(other_identity).is_err());
+    let mut unknown_enum = c.clone();
+    unknown_enum["models"][0]["fields"] =
+        json!([id, {"name":"kind","type":{"kind":"enum","name":"Kind"},"nullable":false}]);
+    assert!(ahead_server::Config::decode(unknown_enum).is_err());
+    let mut duplicate = c.clone();
+    duplicate["models"] = json!([
+        contract(2, json!([id, title])),
+        contract(2, json!([id, title, note]))
+    ]);
+    assert!(ahead_server::Config::decode(duplicate).is_err());
+    let mut unknown_model = c.clone();
+    unknown_model["models"][0]["name"] = json!("Other");
+    assert!(ahead_server::Config::decode(unknown_model).is_err());
+}
+
 /// A host whose `claim` answers with the given owner and last sequence and
 /// which records every `handle` call, for asserting protocol refusals in
 /// process without a database.
 mod refusals {
-    use ahead_server::{Host, HostResult, code};
+    use ahead_server::{
+        Host, HostResult, code,
+        host::{self, Acknowledged, Handled, Head, HostRequest},
+    };
     use serde_json::{Value, json};
     use std::{
         future::Future,
@@ -111,23 +190,36 @@ mod refusals {
     struct Claimed {
         owner: &'static str,
         sequence: u64,
-        handled: Mutex<Vec<Value>>,
+        handled: Mutex<Vec<HostRequest>>,
     }
     impl Host for Claimed {
         fn call(&self, r: Value) -> Pin<Box<dyn Future<Output = HostResult<Value>> + Send + '_>> {
             Box::pin(async move {
-                Ok(match r["op"].as_str().unwrap() {
-                    "claim" => json!({
-                        "clientId": r["clientId"], "owner": self.owner,
-                        "sequence": self.sequence, "receipt": "{}"
-                    }),
-                    "handle" => {
-                        self.handled.lock().unwrap().push(r.clone());
-                        json!({"channel":"a"})
+                let request: HostRequest = serde_json::from_value(r)
+                    .map_err(|error| format!("unsupported host request: {error}"))?;
+                Ok(match &request {
+                    HostRequest::Claim { client_id, .. } => serde_json::to_value(host::Claimed {
+                        client_id: client_id.clone(),
+                        owner: self.owner.into(),
+                        sequence: self.sequence,
+                        receipt: Some("{}".into()),
+                    })
+                    .unwrap(),
+                    HostRequest::Handle { .. } => {
+                        self.handled.lock().unwrap().push(request.clone());
+                        serde_json::to_value(Handled::Settled {
+                            channel: "a".into(),
+                        })
+                        .unwrap()
                     }
-                    "head" => json!(0),
-                    "savepoint" | "rollback" | "release" | "saveReceipt" => Value::Null,
-                    other => return Err(format!("unsupported {other}")),
+                    HostRequest::Head { .. } => serde_json::to_value(Head(0)).unwrap(),
+                    HostRequest::Savepoint { .. }
+                    | HostRequest::Rollback { .. }
+                    | HostRequest::Release { .. }
+                    | HostRequest::SaveReceipt { .. } => {
+                        serde_json::to_value(Acknowledged).unwrap()
+                    }
+                    other => return Err(format!("unsupported {}", other.label())),
                 })
             })
         }
@@ -204,7 +296,8 @@ mod refusals {
         assert_eq!(err.code, code::REQUEST_INVALID);
         let err = run(ahead_server::process_pull(&config(), "alice", b"[]", &host)).unwrap_err();
         assert_eq!(err.code, code::REQUEST_INVALID);
-        let ahead = json!({"clientId":"c","scope":"a","fromCursor":7}).to_string();
+        let ahead =
+            json!({"clientId":"c","scope":"a","fromCursor":7,"models":{"Task":1}}).to_string();
         let err = run(ahead_server::process_pull(
             &config(),
             "alice",

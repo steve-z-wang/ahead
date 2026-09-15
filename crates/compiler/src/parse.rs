@@ -126,6 +126,44 @@ impl Parser {
         }
         Ok(Value::Object(args))
     }
+    /// The `(n)` of a `@@version` directive: a positive integer within the safe range.
+    fn version(&mut self, seen: &mut bool) -> Result<u64, String> {
+        if *seen {
+            return Err(self.err("duplicate version"));
+        }
+        *seen = true;
+        self.need("(")?;
+        let version = self
+            .take()
+            .parse::<u64>()
+            .map_err(|_| self.err("expected positive version"))?;
+        if version == 0 || version > ahead_core::MAX_SAFE_INTEGER {
+            return Err(self.err("version must be positive"));
+        }
+        self.need(")")?;
+        Ok(version)
+    }
+    /// The arguments of a `@deprecated` directive, GraphQL style: nothing, or
+    /// `(reason: "text")`.
+    fn deprecation(&mut self) -> Result<Option<String>, String> {
+        if !self.eat("(") {
+            return Ok(None);
+        }
+        if self.eat(")") {
+            return Ok(None);
+        }
+        if self.ident()? != "reason" {
+            return Err(self.err("deprecated accepts only reason"));
+        }
+        self.need(":")?;
+        if !self.peek().starts_with('"') {
+            return Err(self.err("deprecated reason must be a string"));
+        }
+        let reason: String =
+            serde_json::from_str(&self.take()).map_err(|_| self.err("invalid string"))?;
+        self.need(")")?;
+        Ok(Some(reason))
+    }
     fn names(&mut self, end: &str) -> Result<Vec<String>, String> {
         let mut n = vec![];
         while !self.eat(end) {
@@ -220,11 +258,15 @@ pub struct Declarations {
 pub struct EnumDecl {
     pub name: String,
     pub values: Vec<String>,
+    /// `value @deprecated(reason: "…")`: the value and its optional reason.
+    pub deprecated: Vec<(String, Option<String>)>,
     pub pos: Pos,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct ModelDecl {
     pub name: String,
+    /// The read-contract version declared by `@@version(n)`; 1 when omitted.
+    pub version: u64,
     pub identity: Vec<String>,
     pub fields: Vec<FieldDecl>,
     pub unique: Vec<UniqueDecl>,
@@ -238,6 +280,8 @@ pub struct FieldDecl {
     pub nullable: bool,
     /// `@reference`, `@inverse` and `@requires` arguments, keyed by directive name.
     pub attributes: Map<String, Value>,
+    /// `@deprecated(reason: "…")`: `Some(reason)` when present, the reason itself optional.
+    pub deprecated: Option<Option<String>>,
     pub pos: Pos,
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -267,6 +311,8 @@ pub struct SlotDecl {
     pub allowed_patch_fields: Option<Vec<String>>,
     /// The `(relation: parentSlot, …)` arguments, as a JSON object.
     pub relation_bindings: Value,
+    /// `@deprecated(reason: "…")` on the slot.
+    pub deprecated: Option<Option<String>>,
     pub pos: Pos,
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -316,20 +362,44 @@ pub fn parse(source: &str) -> Result<Declarations, String> {
         p.need("{")?;
         match kind.as_str() {
             "enum" => {
-                let mut values = vec![];
+                let (mut values, mut deprecated) = (vec![], vec![]);
                 while !p.eat("}") {
-                    values.push(p.ident()?);
+                    let value = p.ident()?;
+                    let mut marked = false;
+                    while p.peek() == "@" && p.tokens.get(p.i + 1).is_some_and(|t| t.text != "@") {
+                        p.need("@")?;
+                        let attr = p.ident()?;
+                        if attr != "deprecated" {
+                            return Err(p.err(format!("unsupported enum value directive {attr}")));
+                        }
+                        if marked {
+                            return Err(p.err("duplicate deprecated"));
+                        }
+                        marked = true;
+                        deprecated.push((value.clone(), p.deprecation()?));
+                    }
+                    values.push(value);
                     p.eat(",");
                 }
-                d.enums.push(EnumDecl { name, values, pos });
+                d.enums.push(EnumDecl {
+                    name,
+                    values,
+                    deprecated,
+                    pos,
+                });
             }
             "model" => {
                 let (mut fields, mut identity, mut unique) = (vec![], vec![], vec![]);
+                let (mut version, mut version_seen) = (1, false);
                 while !p.eat("}") {
                     let directive_pos = p.pos();
                     if p.eat("@") {
                         p.need("@")?;
                         let attr = p.ident()?;
+                        if attr == "version" {
+                            version = p.version(&mut version_seen)?;
+                            continue;
+                        }
                         p.need("(")?;
                         let names = p.names(")")?;
                         match attr.as_str() {
@@ -357,9 +427,17 @@ pub fn parse(source: &str) -> Result<Declarations, String> {
                     };
                     let nullable = p.eat("?");
                     let mut attributes = Map::new();
+                    let mut deprecated = None;
                     while p.peek() == "@" && p.tokens.get(p.i + 1).is_some_and(|t| t.text != "@") {
                         p.need("@")?;
                         let attr = p.ident()?;
+                        if attr == "deprecated" {
+                            if deprecated.is_some() {
+                                return Err(p.err("duplicate field directive"));
+                            }
+                            deprecated = Some(p.deprecation()?);
+                            continue;
+                        }
                         if !["reference", "inverse", "requires"].contains(&attr.as_str()) {
                             return Err(p.err(format!("unsupported field directive {attr}")));
                         }
@@ -374,11 +452,13 @@ pub fn parse(source: &str) -> Result<Declarations, String> {
                         list,
                         nullable,
                         attributes,
+                        deprecated,
                         pos: directive_pos,
                     });
                 }
                 d.models.push(ModelDecl {
                     name,
+                    version,
                     identity,
                     fields,
                     unique,
@@ -404,19 +484,7 @@ pub fn parse(source: &str) -> Result<Declarations, String> {
                         if attr != "version" {
                             return Err(p.err(format!("unsupported mutation directive {attr}")));
                         }
-                        if version_seen {
-                            return Err(p.err("duplicate version"));
-                        }
-                        version_seen = true;
-                        p.need("(")?;
-                        version = p
-                            .take()
-                            .parse::<u64>()
-                            .map_err(|_| p.err("expected positive version"))?;
-                        if version == 0 || version > ahead_core::MAX_SAFE_INTEGER {
-                            return Err(p.err("version must be positive"));
-                        }
-                        p.need(")")?;
+                        version = p.version(&mut version_seen)?;
                         continue;
                     }
                     let slot = p.ident()?;
@@ -447,6 +515,18 @@ pub fn parse(source: &str) -> Result<Declarations, String> {
                     } else {
                         "single"
                     };
+                    let mut deprecated = None;
+                    while p.peek() == "@" && p.tokens.get(p.i + 1).is_some_and(|t| t.text != "@") {
+                        p.need("@")?;
+                        let attr = p.ident()?;
+                        if attr != "deprecated" {
+                            return Err(p.err(format!("unsupported slot directive {attr}")));
+                        }
+                        if deprecated.is_some() {
+                            return Err(p.err("duplicate deprecated"));
+                        }
+                        deprecated = Some(p.deprecation()?);
+                    }
                     slots.push(SlotDecl {
                         name: slot,
                         model,
@@ -454,6 +534,7 @@ pub fn parse(source: &str) -> Result<Declarations, String> {
                         cardinality: cardinality.into(),
                         allowed_patch_fields,
                         relation_bindings,
+                        deprecated,
                         pos: directive_pos,
                     });
                 }

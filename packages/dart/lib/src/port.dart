@@ -1,6 +1,9 @@
 /// Reads available on both a [Client] and a [Transaction].
 abstract interface class ReadPort {
-  Future<Map<String, dynamic>?> read(String model, Map<String, dynamic> identity);
+  Future<Map<String, dynamic>?> read(
+    String model,
+    Map<String, dynamic> identity,
+  );
   Future<List<Map<String, dynamic>>> querySpec(
     String model,
     Map<String, dynamic> query,
