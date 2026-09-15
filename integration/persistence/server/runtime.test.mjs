@@ -133,6 +133,21 @@ test('a handler that throws rejects only its mutation and reaches onError',async
  assert.equal((await db.$queryRawUnsafe("SELECT * FROM ahead_client WHERE client_id='crash'")).length,1,'the batch as a whole still committed');
  assert.equal(errors.length,1);assert.equal(errors[0].message,'business crash');
 });
+test('a handler whose SQL fails leaves an aborted transaction that the savepoint rollback recovers into one rejection',async()=>{
+ const errors=[];
+ const sqlBackend=createBackend({config,database:prisma(db),authenticate,onError:e=>errors.push(e),handlers:{async edit({input,tx}){
+  await write(tx,input.task.identity.id,input.task.patch.title);
+  // A PostgreSQL error (not a JavaScript one) marks the whole transaction aborted;
+  // only ROLLBACK TO SAVEPOINT can make it usable again for the next mutation.
+  if(input.task.patch.title==='sql')await tx.$executeRawUnsafe('INSERT INTO business_task(id,title) VALUES($1,$2)',input.task.identity.id,'duplicate');
+ }},loaders:{task:readTasks}});
+ const result=JSON.parse(await sqlBackend.push('alice',push('sql-fail',1,[mutation(1,'first','sql-a'),mutation(2,'sql','sql-b'),mutation(3,'third','sql-c')])));
+ assert.deepEqual(result.rejections,[{ordinal:2,code:'handler.failed'}]);
+ assert.deepEqual(result.records,[authority('sql-a',1,{title:'first'}),authority('sql-c',1,{title:'third'})]);
+ assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='sql-b'")).length,0,'the failed mutation rolled back its write');
+ assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id IN ('sql-a','sql-c')")).length,2,'the mutations around it committed');
+ assert.equal(errors.length,1);assert.match(String(errors[0].message??errors[0]),/23505|already exists/);
+});
 test('a loader that throws during readback rejects only that mutation',async()=>{
  const errors=[];
  const throwingBackend=createBackend({config,database:prisma(db),authenticate,onError:e=>errors.push(e),handlers:{async edit({input,tx}){await write(tx,input.task.identity.id,input.task.patch.title);}},loaders:{task:async call=>{if(call.ids.some(id=>id.id==='loader-throw-bad'))throw new Error('loader broke');return readTasks(call);}}});
