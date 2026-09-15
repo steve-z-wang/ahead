@@ -6,6 +6,9 @@ Generate emits one runtime descriptor per side and one typed surface per languag
 
 ## 3. Context and Scope
 
+- Input: `Validated` from [Validate](validate.md).
+- Output: the descriptor value `{schema, mutations, loaders, uniqueConstraints, inverses, requirements, prerequisites}` (`generate::descriptors`), of which `schema` (`generate::schema`) is the client descriptor; the emitters render the generated code from that value, and the CLI writes the files below after substituting the retained mutation versions from the history.
+
 Files written by the CLI, each through a temporary file and rename:
 
 | File | Content | Consumer |
@@ -24,12 +27,12 @@ The import specifiers for the runtime packages are configurable (`--backend-runt
 
 ## 5. Building Block View
 
-- **Source versus descriptor.** The `.model` text is the source of truth; the JSON descriptors are what the runtimes validate at load time; generated language code embeds the descriptor verbatim.
+- **Descriptors.** `descriptors` and `schema` are pure functions of `Validated`: the same schema renders the same value. The `.model` text is the source of truth; the JSON descriptors are what the runtimes validate at load time; generated language code embeds the descriptor verbatim. The emitters read the descriptor value rather than `Validated`; that keeps one shape between the descriptor files and the embedded schema.
 - **TypeScript.** Per model: `Name`, `NameIdentity`, `NamePatch`, decode and encode functions; `NameModel` with `get`, `query` (equality `where`, scalar `orderBy`, `limit`) and relation accessors; `NameLiveModel.watch`; `NameTxModel` with direct `create`, `update`, `delete`. Per mutation: a typed args interface and a builder that emits wire operations. Handler registration is one key per mutation, `lowerFirst(name)`, holding a `v<n>` member for every retained version; a mutation retaining only v1 also accepts a bare function ([Typed API / Server](../sdks/typed-api/server.md#9-architecture-decisions)). Input type names stay `NameInput` for the latest version and `NameV<n>Input` for older ones.
 - **Dart.** The same surface with `Present<T>` wrappers for patch and filter presence, named parameters for mutations, and a `libraryPath` requirement outside iOS.
 - **Dates.** Encoded with `toISOString()` / `toUtc().toIso8601String()`, decoded with `new Date` / `DateTime.parse` ([Types](../schema/types.md)).
 
-Code: descriptors assembled at the end of `validate` in [compiler/validate.rs](../../../../crates/compiler/src/validate.rs); emitters in [compiler/emit.rs](../../../../crates/compiler/src/emit.rs); file output in [compiler/main.rs](../../../../crates/compiler/src/main.rs).
+Code: `descriptors` and `schema` in [compiler/generate.rs](../../../../crates/compiler/src/generate.rs); emitters in [compiler/emit.rs](../../../../crates/compiler/src/emit.rs), re-exported by `generate`; file output in [compiler/main.rs](../../../../crates/compiler/src/main.rs).
 
 ## 9. Architecture Decisions
 
@@ -49,6 +52,7 @@ Generated APIs must carry the [version deprecation notices](../schema/mutations.
 
 ## 10. Quality Requirements
 
+- Descriptor generation is deterministic and separate from validation: the same `Validated` renders the same bytes, `descriptors(validate(parse(s)))` equals `compile(s)`, and the client descriptor loads in core. Evidence: [compiler/tests/parse.rs](../../../../crates/compiler/tests/parse.rs) `generate_is_a_pure_function_of_the_validated_schema`, `compile_is_parse_then_validate_then_generate_and_declarations_are_plain_data`; verified 2026-09-15 by compiling `fixtures/compiler/*.model` (each alone), the whole fixture directory and `examples/rust-round-trip/models` with the binaries before and after the split and diffing every output file (no differences).
 - Generated TypeScript and Dart compile against valid usage and forward calls unchanged to the runtime. Evidence: [compiler/tests/compiler.rs](../../../../crates/compiler/tests/compiler.rs) emitter tests; [integration/generated-api/test.ts](../../../../integration/generated-api/test.ts); [generated_test.dart](../../../../integration/generated-api/generated_test.dart).
 - Misuse is a TypeScript compile error: identity in a patch, disallowed patch field, wrong filter type, enum typo. Evidence: the `@ts-expect-error` block in `test.ts`. Dart negatives are not asserted.
 - Retained mutation versions are grouped under the mutation's handler key, with the bare-function shorthand only for a v1-only mutation. Evidence: `backend_emitter_groups_handler_versions_under_the_mutation_name`, `backend_emitter_accepts_a_bare_function_only_for_a_v1_only_mutation`; the `@ts-expect-error` negatives for a bare function and a `v3` key in [test.ts](../../../../integration/generated-api/test.ts). Executed 2026-09-15: `cargo test -p ahead-compiler --locked` (25 passed), `bash integration/generated-api/verify.sh` (passed).
