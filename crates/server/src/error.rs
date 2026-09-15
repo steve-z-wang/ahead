@@ -40,6 +40,9 @@ pub mod code {
     pub const PUBLISH_INVALID: &str = "publish.invalid";
     /// A live page does not continue the subscription it was produced for.
     pub const LIVE_INVALID_PAGE: &str = "live.invalid_page";
+    /// The host drove a live session with an event it cannot accept: an unknown
+    /// scope, a pull it was not asked for, or a session handle that is not open.
+    pub const LIVE_INVALID_EVENT: &str = "live.invalid_event";
     /// Encoding a response failed.
     pub const INTERNAL: &str = "internal";
 }
