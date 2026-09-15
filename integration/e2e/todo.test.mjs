@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createExample } from '../../examples/todo/server.mts';
 import { GeneratedClient } from '../../examples/todo/generated/node/client.ts';
-import { syncProtocol } from './protocol-fixture.mjs';
+import { declaredModels, syncProtocol } from './protocol-fixture.mjs';
 
 const CHANNEL = 'todo:demo';
 
@@ -235,7 +235,8 @@ test('a retried frozen request after a lost receipt runs the handler once and st
    if (!response.ok) throw Error(`HTTP ${response.status}: ${await response.text()}`);
    return response.text();
   };
-  await syncProtocol(alice.client, transport);
+  const models = declaredModels(ctx.app.schema);
+  await syncProtocol(alice.client, transport, models);
   assert.equal((await alice.models.todo.get({ id: 'seed-1' })).title, 'Buy milk');
   await addTodo(alice, { id: 'retry-1', title: 'Once', done: false, createdById: 'alice' });
   const before = ctx.app.handlerCalls;
@@ -244,11 +245,11 @@ test('a retried frozen request after a lost receipt runs the handler once and st
    const result = await transport(kind, body);
    if (kind === 'push' && !dropped) { dropped = true; throw Error('lost receipt after commit'); }
    return result;
-  }), /lost receipt/);
+  }, models), /lost receipt/);
   assert.equal(ctx.app.handlerCalls, before + 1, 'the first push committed');
   assert.deepEqual(await ctx.row('retry-1'), { id: 'retry-1', title: 'Once', done: false, createdById: 'alice' });
   assert.equal((await alice.status()).pending, 1, 'the request stays frozen until acknowledged');
-  await syncProtocol(alice.client, transport);
+  await syncProtocol(alice.client, transport, models);
   assert.equal(ctx.app.handlerCalls, before + 1, 'the replayed receipt does not run the handler again');
   assert.equal((await alice.status()).pending, 0);
   assert.deepEqual((await alice.status()).rejections, []);
