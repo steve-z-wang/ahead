@@ -1,37 +1,42 @@
 # Push
 
-Validate and deduplicate mutation batches, invoke handlers and produce receipts.
-
-Current code: [server/lib.rs](../../../../../crates/server/src/lib.rs) (`process_push`, `decode`, `Config::descriptor`, `valid_code`, `machine_name`).
-
 ## 1. Introduction and Goals
 
-- Execute each mutation of a batch at most once, in order, inside the application's transaction, and answer with a receipt that tells the client which channel positions prove the effects have been published.
+Server push executes a client's batch exactly once, in order, inside the application's transaction, and answers with a receipt that tells the client which channel positions prove the effects are published.
 
 ## 3. Context and Scope
 
-- Input: the owner (authenticated user id), the raw request bytes ([Protocol / Push](../../protocol/push.md)), a `Host`.
-- Output: the receipt text, also stored through `saveReceipt`; or an error string that aborts the transaction (`request.invalid:…`, `owner_mismatch`, `gap`, `overlap`, `mutation_version_unsupported:<ordinal>:<name>:<version>`, `storage client mismatch`, handler or persistence errors).
-- Callers: `api.push` in [server/index.mts](../../../../../packages/server/index.mts) via the Node binding, inside `database.transaction`.
+Input: the authenticated owner, the request bytes ([Protocol / Push](../../protocol/push.md)) and a host. Output: the receipt text, also stored for replay; or an error that aborts the transaction (`request.invalid:…`, `owner_mismatch`, `gap`, `overlap`, `mutation_version_unsupported:…`, or any handler or persistence error). The [connection](../connection/transport.md) maps these to HTTP statuses.
 
 ## 5. Building Block View
 
-- Order of work: `principal` → `PushRequest::decode` → `claim {owner, clientId}` (persistence locks the client row and returns `{clientId, owner, sequence, receipt}`) → owner check → sequence check (`== last` returns the stored receipt without running anything; `< last` is `overlap`; `≠ last+1` is `gap`) → version pre-check over every mutation (a known name with an unregistered version aborts before any handler) → per mutation: `decode` arguments (failure becomes a rejection with the decode code and no savepoint), `savepoint`, `handle`, on `{rejection}` validate the code and `rollback`, otherwise record the settlement channel, `release` → one `head` per distinct channel → receipt sorted by channel (UTF-16), legacy pair from the first checkpoint or `""`/`0` → `saveReceipt`.
-- Rejection codes: `mutation.invalid` (unknown mutation, wrong shape, missing required create field, empty patch), `<snake_name>.not_allowed` (known field outside `allowedPatchFields`, including fields the current schema no longer has but `knownFields` remembers), `<snake_name>.invalid` (binding mismatch), handler codes validated by `valid_code`.
-- Everything runs in the caller's transaction: business writes, publications, the client row and the receipt commit together or not at all (guarantee P6).
+The decoder that turns wire operations into handler arguments is described with the schema rules in [Mutations](../../schema/mutations.md). Everything else is the sequence in section 6.
+
+Code: `process_push` and `decode` in [server/lib.rs](../../../../../crates/server/src/lib.rs).
 
 ## 6. Runtime View
 
-- A retry after a lost receipt carries the same `batchSequence`; the locked client row returns the stored receipt and no handler runs (guarantee P1).
-- A batch that aborts leaves the client row untouched, so the next attempt is still `last+1`.
+1. **Lock the client.** `claim` locks the client's row and returns its owner, last sequence and stored receipt. A different owner is `owner_mismatch`.
+2. **Compare sequences.** The same sequence as last time returns the stored receipt without running anything (guarantee P1). A smaller one is `overlap`; anything but `last + 1` is `gap` (guarantee P2).
+3. **Check versions.** If any mutation names a known mutation at an unregistered version, the whole batch is refused before any handler runs (guarantee C4).
+4. **Run each mutation.** Decode its arguments; a decode failure becomes a rejection with the decode code and no handler call. Otherwise open a savepoint, call the handler, and either roll the savepoint back on a rejection or record the settlement channel, then release it.
+5. **Build the receipt.** Read the head of every settlement channel, sort by channel, fill the legacy pair from the first, list the rejections, store it with `saveReceipt` and return it.
+
+All of this happens in the transaction the application opened, so business writes, publications, the client row and the receipt commit or roll back together (guarantee P6). A batch that aborts leaves the client row untouched, and the client's retry is still `last + 1`.
 
 ## 10. Quality Requirements
 
-- P1, P2, P6, C4, A4: [crates/sim/tests/push.rs](../../../../../crates/sim/tests/push.rs) `p1_…`, `p2_…`, `p6_…`; [runtime.test.mjs](../../../../../integration/persistence/server/runtime.test.mjs) `push commits business + compacted publication + exact durable receipt together`, `concurrent same-client retry executes once under PostgreSQL lock`, `unsupported versions abort before handlers, invalid bodies settle with empty checkpoints`, `explicit rejection rolls back only mutation and its publication`, `an all-rejected batch settles with no checkpoints`; [server/tests/runtime.rs](../../../../../crates/server/tests/runtime.rs).
+- **A lost receipt is replayed without a second execution, including under concurrent retries** (guarantee P1). Evidence: [crates/sim/tests/push.rs](../../../../../crates/sim/tests/push.rs) `p1_lost_receipt_retry_executes_once`; [runtime.test.mjs](../../../../../integration/persistence/server/runtime.test.mjs) `concurrent same-client retry executes once under PostgreSQL lock`.
+- **Gaps and overlaps are refused with stable codes and nothing executes** (guarantee P2). Evidence: `p2_contiguous_sequence_and_server_refuses_gap_and_overlap`; `push commits business + compacted publication + exact durable receipt together`.
+- **An unsupported version aborts before handlers; an invalid body settles as a rejection with no checkpoints** (guarantee C4). Evidence: `unsupported versions abort before handlers, invalid bodies settle with empty checkpoints`.
+- **A handler failure aborts the batch and the client retries the same bytes** (guarantee P6). Evidence: `p6_handler_failure_aborts_the_batch_and_the_client_retries`.
+
+Tests read, not executed.
 
 ## 11. Risks and Technical Debt
 
-- **Confirmed contradiction with guarantee C1: deduplication ignores the request body.** A retry with the same `batchSequence` and a different body returns the stored receipt; `PushRequest::semantic_hash` is never called outside core tests and the `request_hash` column in [migration.sql](../../../../../packages/persistence-prisma/migration.sql) is never written. The test suite asserts the current behavior (`push('dedup',1,[mutation(1,'changed')])` returns the cached receipt). Evidence: `process_push`; [persistence-prisma/index.mts](../../../../../packages/persistence-prisma/index.mts) `claim`, `saveReceipt`. The C1 wording is corrected in [guarantees](../../../guarantees.md); whether to enforce the hash needs deciding.
-- **Confirmed limitation: no server-side byte cap; the count cap is a protocol constant.** `PushRequest::decode` enforces 20 mutations; the only size bound is the HTTP layer's 1 MiB body. Open: [#11](https://github.com/zanminwang/ahead/issues/11).
-- **Confirmed limitation: a client id is bound to its first owner forever.** `claim` inserts `(client_id, owner_id)` once; a later push from another authenticated user with the same client id is `owner_mismatch` (HTTP 403 `client.owner_mismatch`) with no reassignment path. Evidence: [persistence-prisma/index.mts](../../../../../packages/persistence-prisma/index.mts) `claim`. Relevant to shared devices; no issue.
-- Abort-and-retry with no client escape hatch is owned by [Client Push](../../client/engine/push/README.md).
+**Problem: guarantee C1 promises body detection that does not exist.** *Condition:* a client retries a batch sequence with a different body. *Consequence:* the stored receipt is returned; `PushRequest::semantic_hash` is never called outside core tests and the `request_hash` column in [migration.sql](../../../../../packages/persistence-prisma/migration.sql) is never written. The persistence test asserts the current behavior. *Status:* the guarantees page marks C1 partial with this note. **To confirm:** whether to enforce the hash or drop the clause.
+
+**Accepted limitation.** A client id is bound to the first owner that used it; a later push from another user with the same client id is `owner_mismatch` (HTTP 403) and there is no reassignment. Relevant to shared devices.
+
+**Accepted limitation (planned change).** The only size bound is the protocol's 20-mutation cap and the HTTP body limit; a server-side byte cap is part of [#11](https://github.com/zanminwang/ahead/issues/11). The lack of a client-side escape from a batch the server keeps failing is recorded under [Batching](../../client/engine/push/batching.md).

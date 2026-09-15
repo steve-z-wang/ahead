@@ -1,34 +1,31 @@
 # Transport
 
-Send and receive HTTP/WebSocket messages.
-
-Current code: [server/index.mts](../../../../../packages/server/index.mts) (`createHttpHandler`, `attachLive`, `listen`).
-
 ## 1. Introduction and Goals
 
-- Terminate HTTP and WebSocket traffic, authenticate each request once, enforce byte limits, and translate engine errors to statuses; no sync logic.
+The server transport terminates HTTP and WebSocket traffic, authenticates each request once, enforces size limits and turns engine errors into statuses. It contains no sync logic.
 
 ## 3. Context and Scope
 
-- `listen({port, host = "127.0.0.1"})` → `{url, close}`: one `node:http` server with the HTTP handler and an attached `ws` `WebSocketServer` (`noServer`, `maxPayload` 1 MiB).
-- HTTP routes: `POST /sync/mutations` and `POST /sync/pull` only; anything else is `404 not_found`; non-POST is `405 method_not_allowed` with `Allow: POST`.
-- WebSocket: upgrade on `/sync/live`; other paths are ignored (left to other upgrade listeners).
-- Upstream: `api.push`, `api.pull`, `api.negotiateLive`, `api.pullLive`, `api.onCommitted` ([Controller](controller.md), [Engine](../engine/README.md)).
+`backend.listen({port, host = "127.0.0.1"})` starts one Node HTTP server with two routes, `POST /sync/mutations` and `POST /sync/pull`, and a WebSocket upgrade on `/sync/live`. Other paths are `404`; other methods `405`. Bodies and frames are limited to 1 MiB.
 
 ## 5. Building Block View
 
-- Request pipeline: `authenticate` (`401 unauthenticated` when null or blank) → body read with a 1 MiB cap (`413 request_too_large`) → strict UTF-8 JSON object parse (`400 request.invalid`) → engine call → `200` with the engine's JSON text; responses carry `content-type: application/json; charset=utf-8` and `cache-control: no-store`.
-- Error mapping by message: `owner_mismatch` → `403 client.owner_mismatch`; `gap` / `overlap` → `409 {code}`; `mutation_version_unsupported:o:name:v` → `409 {code, ordinal, name, version}`; `request.invalid:*` → `400 request.invalid`; everything else → `onError(error)` and `500 server`.
-- Upgrade pipeline: refuse with a raw `503` while closing, `500` if `authenticate` throws (reported to `onError`), `401` when unauthenticated; then `handleUpgrade` and hand the socket to the live controller.
-- `close`: stop accepting upgrades, close every socket with `1001 closing`, close idle HTTP connections, then close the server.
+Request handling is a pipeline: `authenticate` (null or blank → `401 unauthenticated`), read the body under the size cap (`413`), parse strict UTF-8 JSON (`400 request.invalid`), call the engine inside a transaction, answer `200` with the engine's JSON. Engine errors map by message: `owner_mismatch` → `403 client.owner_mismatch`; `gap` and `overlap` → `409`; `mutation_version_unsupported` → `409` with ordinal, name and version; `request.invalid:*` → `400`; anything else → `onError` and `500 server`.
+
+The upgrade path authenticates before accepting the socket and refuses with a raw `401`, `500` (authenticate threw) or `503` (server closing). `close` stops upgrades, closes sockets with `1001`, then closes the server.
+
+Code: `createHttpHandler`, `attachLive`, `listen` in [server/index.mts](../../../../../packages/server/index.mts).
 
 ## 10. Quality Requirements
 
-- [runtime.test.mjs](../../../../../integration/persistence/server/runtime.test.mjs) `HTTP adapter authenticates and serves the real native persistence path`, `listen answers pull over HTTP with authentication and closes cleanly`, `onError captures server-side failures and HTTP responds with {code:"server"}`, `live transport negotiates, wakes only after commit, reconnects, and cleans up`.
-- End to end over a real backend: [round-trip.test.mjs](../../../../../integration/e2e/round-trip.test.mjs).
+- **Unauthenticated requests are refused, valid ones reach the native engine, malformed bodies are `400`, and server failures are `500 {code: "server"}` reported to `onError`.** Evidence: [runtime.test.mjs](../../../../../integration/persistence/server/runtime.test.mjs) `HTTP adapter authenticates and serves the real native persistence path`, `onError captures server-side failures and HTTP responds with {code:"server"}`, `listen answers pull over HTTP with authentication and closes cleanly`.
+
+Tests read, not executed.
 
 ## 11. Risks and Technical Debt
 
-- **Confirmed debt: status mapping keys on error message text.** The strings come from Rust and cross two boundaries unchanged; a message edit changes HTTP behavior silently. Owned by [SDKs / Bindings](../../sdks/bindings.md).
-- **Unresolved question: deployment assumptions are not written down.** There is no TLS, CORS, compression or proxy-header handling; the server binds `127.0.0.1` by default. A reverse proxy is implied but not documented, and browser origins cannot call the HTTP routes cross-site. Evidence: `createHttpHandler`, `listen`.
-- **Confirmed limitation: limits are fixed.** 1 MiB body, 1 MiB frame; `maxBodyBytes` and `maxPayloadBytes` exist on the internal functions but are not exposed through `listen`. Related: [#11](https://github.com/zanminwang/ahead/issues/11).
+**Technical debt.** Status mapping keys on error message text from Rust ([Bindings](../../sdks/bindings.md)).
+
+**To confirm.** Deployment assumptions are not written down: no TLS, CORS, compression or proxy-header handling, and the default bind address is loopback. A reverse proxy seems implied.
+
+**Accepted limitation.** The 1 MiB limits are fixed; the internal options exist but `listen` does not expose them ([#11](https://github.com/zanminwang/ahead/issues/11)).
