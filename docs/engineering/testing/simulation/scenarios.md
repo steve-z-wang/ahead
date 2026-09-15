@@ -37,7 +37,7 @@ Reviewed 2026-09-14 by reading the scenarios in [crates/sim/tests](../../../../c
 | D1 two clients converge | [distribution.rs](../../../../crates/sim/tests/distribution.rs) `d1_two_clients_on_one_channel_converge` | covered | none |
 | D2 delayed older page cannot regress newer content | `d2_delayed_page_from_another_channel_cannot_regress_newer_content` | covered | none |
 | D3 one stamp per publication, independent cursors | `d3_each_channel_publish_allocates_its_own_stamp` | covered through the client | Stamp allocation itself is the host's counter; the PostgreSQL suite proves the real adapter. |
-| D4 move between channels and back | `d4_move_between_channels_and_back` | covered for one record | Child membership following the parent is exercised only by `MoveMembership` in random runs; add a named parent-and-child move. |
+| D4 move between channels and back, including a declared child | `d4_move_between_channels_and_back`; `d4_parent_and_child_move_channels_with_delayed_source_and_destination` | covered | The parent-and-child scenario delays the source's deletes on the way out and the destination's upserts on the way back, and checks content and claims of both records after each move. |
 | D5 delete across channels with tombstone | `d5_delete_across_channels_keeps_a_tombstone_until_every_claim_confirms` | covered | none |
 | D6 unsubscribe keeps other claims; null load deletes | `d6_unsubscribe_keeps_what_other_channels_claim` | covered | none |
 | R1 offline writes then convergence | [resilience.rs](../../../../crates/sim/tests/resilience.rs) `r1_writes_continue_while_unreachable_and_converge_after` | covered | none |

@@ -2,7 +2,7 @@ mod common;
 use ahead_client::*;
 use ahead_sqlite::SqliteStore;
 use common::*;
-use serde_json::json;
+use serde_json::{Value, json};
 
 #[test]
 fn query_normalizes_filters_orders_nulls_and_resolves_relationships() {
@@ -144,4 +144,55 @@ fn transport_pulls_only_subscribed_channels_and_unawaitable_checkpoints_settle()
         cycle.next(&mut c).unwrap().is_none(),
         "the unsubscribed checkpoint channel is never pulled"
     );
+}
+
+/// Query shapes the engine refuses: predicates on list fields, ordering by a
+/// non-scalar field, and unknown fields in either position ([Queries]).
+#[test]
+fn unsupported_filter_and_order_shapes_are_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let schema = Schema::from_value(json!({"enums":[{"name":"Mood","values":["calm","busy"]}],"models":[{
+        "name":"Note","identity":["id"],"fields":[
+            {"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},
+            {"name":"mood","nullable":false,"type":{"kind":"enum","name":"Mood"}},
+            {"name":"tags","nullable":false,"type":{"kind":"list","element":{"kind":"scalar","name":"string"}}}
+        ]}]}))
+    .unwrap();
+    let mut c = Client::open(SqliteStore::open(dir.path().join("db")).unwrap(), schema).unwrap();
+    c.transaction(|tx| tx.direct(create("Note", "n", json!({"mood":"calm","tags":["a"]}))))
+        .unwrap();
+    let mut query = |spec: Value| {
+        let spec: QuerySpec = serde_json::from_value(spec).unwrap();
+        c.query_spec("Note", &spec)
+    };
+    assert_eq!(query(json!({"filter":{"mood":"calm"}})).unwrap().len(), 1);
+    assert_eq!(
+        query(json!({"orderBy":[{"field":"id","direction":"ascending"}]}))
+            .unwrap()
+            .len(),
+        1
+    );
+    for (spec, message) in [
+        (
+            json!({"filter":{"tags":["a"]}}),
+            "list predicates unsupported",
+        ),
+        (json!({"filter":{"missing":1}}), "unknown query field"),
+        (json!({"filter":{"mood":"angry"}}), "invalid enum value"),
+        (
+            json!({"orderBy":[{"field":"mood","direction":"ascending"}]}),
+            "ordering requires scalar field",
+        ),
+        (
+            json!({"orderBy":[{"field":"tags","direction":"ascending"}]}),
+            "ordering requires scalar field",
+        ),
+        (
+            json!({"orderBy":[{"field":"missing","direction":"ascending"}]}),
+            "unknown query field",
+        ),
+    ] {
+        let err = query(spec.clone()).unwrap_err();
+        assert!(err.to_string().contains(message), "{spec}: {err}");
+    }
 }
