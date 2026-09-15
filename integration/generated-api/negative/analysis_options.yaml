@@ -4,3 +4,8 @@
 analyzer:
   errors:
     unused_local_variable: ignore
+# Deprecated members generated from `@deprecated` are reported here so the
+# notices can be asserted; the rule is off by default for same-package use.
+linter:
+  rules:
+    - deprecated_member_use_from_same_package

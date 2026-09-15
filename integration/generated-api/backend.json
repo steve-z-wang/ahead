@@ -1,4 +1,24 @@
 {
+  "deprecations": [
+    {
+      "enum": "Status",
+      "kind": "enumValue",
+      "reason": "archive with RemoveEntries instead",
+      "value": "archived"
+    },
+    {
+      "field": "index",
+      "kind": "field",
+      "model": "Counter",
+      "reason": "counters are not indexed"
+    },
+    {
+      "kind": "slot",
+      "mutation": "RemoveEntries",
+      "reason": "use entries",
+      "slot": "maybe"
+    }
+  ],
   "inverses": [
     {
       "fields": [

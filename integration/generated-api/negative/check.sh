@@ -18,6 +18,9 @@ expected=(
   "The named parameter 'id' isn't defined"
   "The argument type 'Null' can't be assigned to the parameter type 'String'"
   "There's no constant named 'typo' in 'Status'"
+  "'archived' is deprecated and shouldn't be used. archive with RemoveEntries instead"
+  "'index' is deprecated and shouldn't be used. counters are not indexed"
+  "'maybe' is deprecated and shouldn't be used. use entries"
 )
 failed=0
 for message in "${expected[@]}"; do

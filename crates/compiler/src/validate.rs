@@ -21,6 +21,29 @@ pub struct Validated {
     pub requirements: Vec<Requirement>,
     pub prerequisites: Vec<Prerequisite>,
     pub mutations: Vec<Mutation>,
+    /// Every `@deprecated`, in source order. A generated-code notice only
+    /// ([#91](https://github.com/zanminwang/ahead/issues/91)): Generate keeps
+    /// it beside the descriptors, never inside them, so no runtime reads it.
+    pub deprecations: Vec<Deprecation>,
+}
+/// One `@deprecated(reason: "…")`, on a field, an enum value or a mutation slot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Deprecation {
+    EnumValue {
+        enum_name: String,
+        value: String,
+        reason: Option<String>,
+    },
+    Field {
+        model: String,
+        field: String,
+        reason: Option<String>,
+    },
+    Slot {
+        mutation: String,
+        slot: String,
+        reason: Option<String>,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Enum {
@@ -696,6 +719,41 @@ pub fn validate(d: &Declarations) -> Result<Validated, String> {
         requirements,
         prerequisites,
         mutations,
+        deprecations: {
+            let mut list = vec![];
+            for e in &d.enums {
+                for (value, reason) in &e.deprecated {
+                    list.push(Deprecation::EnumValue {
+                        enum_name: e.name.clone(),
+                        value: value.clone(),
+                        reason: reason.clone(),
+                    });
+                }
+            }
+            for m in &d.models {
+                for f in &m.fields {
+                    if let Some(reason) = &f.deprecated {
+                        list.push(Deprecation::Field {
+                            model: m.name.clone(),
+                            field: f.name.clone(),
+                            reason: reason.clone(),
+                        });
+                    }
+                }
+            }
+            for m in &d.mutations {
+                for s in &m.slots {
+                    if let Some(reason) = &s.deprecated {
+                        list.push(Deprecation::Slot {
+                            mutation: m.name.clone(),
+                            slot: s.name.clone(),
+                            reason: reason.clone(),
+                        });
+                    }
+                }
+            }
+            list
+        },
     };
     // Backstop: core validates the client descriptor Generate renders. Rules
     // reachable from source are checked above with a location; anything left

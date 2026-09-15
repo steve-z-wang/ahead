@@ -383,3 +383,51 @@ fn backend_emitter_groups_loader_versions_under_the_model_name() {
     );
     assert!(!ts.contains("TaskV1"), "{ts}");
 }
+
+#[test]
+fn deprecations_reach_every_generated_surface_and_leave_the_descriptors_alone() {
+    let v = compile("enum Status { active archived @deprecated(reason: \"use closed\") closed }\nmodel Task { id UUID name String @deprecated(reason: \"renamed to title\") title String legacy Int? @deprecated status Status @@id(id) }\nmutation Edit { task Task.update<title> old Task.update<name>? @deprecated(reason: \"use task\") }").unwrap();
+    // The runtime descriptors do not carry deprecation: it is a generated-code notice only.
+    assert!(
+        !v["schema"].to_string().contains("deprecat"),
+        "{}",
+        v["schema"]
+    );
+    assert!(!v["mutations"].to_string().contains("deprecat"));
+    assert_eq!(
+        v["deprecations"],
+        serde_json::json!([
+            {"kind":"enumValue","enum":"Status","value":"archived","reason":"use closed"},
+            {"kind":"field","model":"Task","field":"name","reason":"renamed to title"},
+            {"kind":"field","model":"Task","field":"legacy","reason":null},
+            {"kind":"slot","mutation":"Edit","slot":"old","reason":"use task"}
+        ])
+    );
+    let ts = ahead_compiler::typescript(&v);
+    assert!(ts.contains("export interface Task {\n id: string;\n /** @deprecated renamed to title */\n name: string;\n title: string;\n /** @deprecated */\n legacy: number | null;\n"), "{ts}");
+    assert!(
+        ts.contains(
+            "export interface TaskPatch {\n /** @deprecated renamed to title */\n name?: string;\n"
+        ),
+        "{ts}"
+    );
+    assert!(ts.contains("/** @deprecated \"archived\": use closed */\nexport type Status = \"active\" | \"archived\" | \"closed\";"), "{ts}");
+    assert!(ts.contains("export interface EditArgs {\n task: { identity:TaskIdentity; values:Pick<TaskPatch, \"title\"> };\n /** @deprecated use task */\n old?: { identity:TaskIdentity; values:Pick<TaskPatch, \"name\"> };\n}"), "{ts}");
+    let backend = ahead_compiler::backend_typescript(&v, "@ahead/server");
+    assert!(backend.contains("export interface EditInput {\n task: { identity: TaskIdentity; patch: Pick<TaskPatch, \"title\"> };\n /** @deprecated use task */\n old: { identity: TaskIdentity; patch: Pick<TaskPatch, \"name\"> } | null;\n}"), "{backend}");
+    let dart = ahead_compiler::dart(&v);
+    assert!(
+        dart.contains("enum Status { active, @Deprecated('use closed') archived, closed }"),
+        "{dart}"
+    );
+    assert!(dart.contains("class Task {\n final String id;\n @Deprecated('renamed to title')\n final String name;\n final String title;\n @Deprecated('')\n final int? legacy;\n"), "{dart}");
+    assert!(
+        dart.contains(
+            "class TaskPatch {\n @Deprecated('renamed to title')\n final Present<String>? name;\n"
+        ),
+        "{dart}"
+    );
+    assert!(dart.contains("class TaskFilter {\n final Present<String>? id;\n @Deprecated('renamed to title')\n final Present<String>? name;\n"), "{dart}");
+    assert!(dart.contains("Map<String,dynamic> edit({required EditTaskUpdate task,@Deprecated('use task') EditOldUpdate? old})"), "{dart}");
+    assert!(dart.contains(" Future<int> edit({required EditTaskUpdate task,@Deprecated('use task') EditOldUpdate? old})"), "{dart}");
+}

@@ -12,7 +12,7 @@ A model declares the records an application stores: the stored fields, the ident
 
 ## 5. Building Block View
 
-- **Fields.** `name Type[]?` with at most one each of the directives `@reference`, `@inverse` and `@requires`. Names are ASCII identifiers and unique within the model.
+- **Fields.** `name Type[]?` with at most one each of the directives `@reference`, `@inverse`, `@requires` and `@deprecated(reason: "…")` (the reason optional). Names are ASCII identifiers and unique within the model.
 - **Identity.** Exactly one `@@id(...)` naming non-nullable scalar fields. Its order is the primary-key order. A model without `@@id` is invalid.
 - **Unique constraints.** Any number of `@@unique(fields)` over existing, distinct fields. The client creates a unique index per constraint; the server never sees them.
 - **Version.** `@@version(n)` names the read contract: the record structure a loader of that version returns. It defaults to 1, must be a positive safe integer, and is independent of mutation versions and of record stamps. The compiler keeps every published version's `{name, version, identity, fields, enums}` in `history/models.json` beside the schema ([Generate](../compiler/generate.md#9-architecture-decisions)); the enums are copied as they were, so a later value never reaches an older contract. Within one version the only accepted change is an added nullable field; a required field, a renamed, removed or retyped field, or any change to a used enum's values needs a higher version, and the older snapshot stays as published. An identity change is refused at every version. The client's embedded schema carries the current version of each model; the retained contracts go to the backend ([Typed API / Server](../sdks/typed-api/server.md#9-architecture-decisions)).
@@ -34,7 +34,7 @@ Code: parsing in [compiler/parse.rs](../../../../crates/compiler/src/parse.rs); 
 
 **Renaming, removing or changing a field's type — agreed read contract.** Each is a breaking change and requires a model version bump. While supporting the old version, retain its definition and loader, returning the old field names and types. The application supplies the mapping or conversion; the compiler must not infer a rename or silently coerce values. This rule covers the public record contract, not permission to migrate identities, relations or persisted client data automatically.
 
-Model versions follow the same [deprecation lifecycle](mutations.md#9-architecture-decisions) as mutations. See [Typed API / Server](../sdks/typed-api/server.md#9-architecture-decisions) for loader registration and [Generate](../compiler/generate.md#9-architecture-decisions) for history storage. Contract history does not migrate existing local records; that belongs to [Reconciliation](../client/storage/reconciliation.md) and [#20](https://github.com/zanminwang/ahead/issues/20).
+A field marked `@deprecated` keeps its place in every contract; the notice is generated code only ([Mutations](mutations.md#9-architecture-decisions)). See [Typed API / Server](../sdks/typed-api/server.md#9-architecture-decisions) for loader registration and [Generate](../compiler/generate.md#9-architecture-decisions) for history storage. Contract history does not migrate existing local records; that belongs to [Reconciliation](../client/storage/reconciliation.md) and [#20](https://github.com/zanminwang/ahead/issues/20).
 
 ## 10. Quality Requirements
 

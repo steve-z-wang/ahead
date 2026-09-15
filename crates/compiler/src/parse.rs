@@ -143,6 +143,27 @@ impl Parser {
         self.need(")")?;
         Ok(version)
     }
+    /// The arguments of a `@deprecated` directive, GraphQL style: nothing, or
+    /// `(reason: "text")`.
+    fn deprecation(&mut self) -> Result<Option<String>, String> {
+        if !self.eat("(") {
+            return Ok(None);
+        }
+        if self.eat(")") {
+            return Ok(None);
+        }
+        if self.ident()? != "reason" {
+            return Err(self.err("deprecated accepts only reason"));
+        }
+        self.need(":")?;
+        if !self.peek().starts_with('"') {
+            return Err(self.err("deprecated reason must be a string"));
+        }
+        let reason: String =
+            serde_json::from_str(&self.take()).map_err(|_| self.err("invalid string"))?;
+        self.need(")")?;
+        Ok(Some(reason))
+    }
     fn names(&mut self, end: &str) -> Result<Vec<String>, String> {
         let mut n = vec![];
         while !self.eat(end) {
@@ -237,6 +258,8 @@ pub struct Declarations {
 pub struct EnumDecl {
     pub name: String,
     pub values: Vec<String>,
+    /// `value @deprecated(reason: "…")`: the value and its optional reason.
+    pub deprecated: Vec<(String, Option<String>)>,
     pub pos: Pos,
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -257,6 +280,8 @@ pub struct FieldDecl {
     pub nullable: bool,
     /// `@reference`, `@inverse` and `@requires` arguments, keyed by directive name.
     pub attributes: Map<String, Value>,
+    /// `@deprecated(reason: "…")`: `Some(reason)` when present, the reason itself optional.
+    pub deprecated: Option<Option<String>>,
     pub pos: Pos,
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -286,6 +311,8 @@ pub struct SlotDecl {
     pub allowed_patch_fields: Option<Vec<String>>,
     /// The `(relation: parentSlot, …)` arguments, as a JSON object.
     pub relation_bindings: Value,
+    /// `@deprecated(reason: "…")` on the slot.
+    pub deprecated: Option<Option<String>>,
     pub pos: Pos,
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -335,12 +362,31 @@ pub fn parse(source: &str) -> Result<Declarations, String> {
         p.need("{")?;
         match kind.as_str() {
             "enum" => {
-                let mut values = vec![];
+                let (mut values, mut deprecated) = (vec![], vec![]);
                 while !p.eat("}") {
-                    values.push(p.ident()?);
+                    let value = p.ident()?;
+                    let mut marked = false;
+                    while p.peek() == "@" && p.tokens.get(p.i + 1).is_some_and(|t| t.text != "@") {
+                        p.need("@")?;
+                        let attr = p.ident()?;
+                        if attr != "deprecated" {
+                            return Err(p.err(format!("unsupported enum value directive {attr}")));
+                        }
+                        if marked {
+                            return Err(p.err("duplicate deprecated"));
+                        }
+                        marked = true;
+                        deprecated.push((value.clone(), p.deprecation()?));
+                    }
+                    values.push(value);
                     p.eat(",");
                 }
-                d.enums.push(EnumDecl { name, values, pos });
+                d.enums.push(EnumDecl {
+                    name,
+                    values,
+                    deprecated,
+                    pos,
+                });
             }
             "model" => {
                 let (mut fields, mut identity, mut unique) = (vec![], vec![], vec![]);
@@ -381,9 +427,17 @@ pub fn parse(source: &str) -> Result<Declarations, String> {
                     };
                     let nullable = p.eat("?");
                     let mut attributes = Map::new();
+                    let mut deprecated = None;
                     while p.peek() == "@" && p.tokens.get(p.i + 1).is_some_and(|t| t.text != "@") {
                         p.need("@")?;
                         let attr = p.ident()?;
+                        if attr == "deprecated" {
+                            if deprecated.is_some() {
+                                return Err(p.err("duplicate field directive"));
+                            }
+                            deprecated = Some(p.deprecation()?);
+                            continue;
+                        }
                         if !["reference", "inverse", "requires"].contains(&attr.as_str()) {
                             return Err(p.err(format!("unsupported field directive {attr}")));
                         }
@@ -398,6 +452,7 @@ pub fn parse(source: &str) -> Result<Declarations, String> {
                         list,
                         nullable,
                         attributes,
+                        deprecated,
                         pos: directive_pos,
                     });
                 }
@@ -460,6 +515,18 @@ pub fn parse(source: &str) -> Result<Declarations, String> {
                     } else {
                         "single"
                     };
+                    let mut deprecated = None;
+                    while p.peek() == "@" && p.tokens.get(p.i + 1).is_some_and(|t| t.text != "@") {
+                        p.need("@")?;
+                        let attr = p.ident()?;
+                        if attr != "deprecated" {
+                            return Err(p.err(format!("unsupported slot directive {attr}")));
+                        }
+                        if deprecated.is_some() {
+                            return Err(p.err("duplicate deprecated"));
+                        }
+                        deprecated = Some(p.deprecation()?);
+                    }
                     slots.push(SlotDecl {
                         name: slot,
                         model,
@@ -467,6 +534,7 @@ pub fn parse(source: &str) -> Result<Declarations, String> {
                         cardinality: cardinality.into(),
                         allowed_patch_fields,
                         relation_bindings,
+                        deprecated,
                         pos: directive_pos,
                     });
                 }

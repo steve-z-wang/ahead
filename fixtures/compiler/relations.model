@@ -13,4 +13,4 @@ model Comment {
 }
 mutation AddBook { book Book.create }
 mutation AddComment { comment Comment.create }
-model Counter { id String index Int? @@id(id) }
+model Counter { id String index Int? @deprecated(reason: "counters are not indexed") @@id(id) }

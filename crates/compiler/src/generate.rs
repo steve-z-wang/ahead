@@ -2,7 +2,7 @@
 //! the emitters in [`crate::emit`]) to the typed SDK code. Pure functions of
 //! [`Validated`]: the same input renders the same bytes.
 pub use crate::emit::{backend_typescript, client_typescript, dart, typescript};
-use crate::validate::{FieldType, Mutation, Validated};
+use crate::validate::{Deprecation, FieldType, Mutation, Validated};
 use serde_json::{Value, json};
 
 /// The compiler output consumed by the emitters, the history and the CLI:
@@ -21,6 +21,11 @@ pub fn descriptors(v: &Validated) -> Value {
         })).collect::<Vec<_>>(),
         "requirements": requirements(v),
         "prerequisites": prerequisites(v),
+        "deprecations": v.deprecations.iter().map(|d| match d {
+            Deprecation::EnumValue { enum_name, value, reason } => json!({"kind":"enumValue","enum":enum_name,"value":value,"reason":reason}),
+            Deprecation::Field { model, field, reason } => json!({"kind":"field","model":model,"field":field,"reason":reason}),
+            Deprecation::Slot { mutation, slot, reason } => json!({"kind":"slot","mutation":mutation,"slot":slot,"reason":reason}),
+        }).collect::<Vec<_>>(),
     })
 }
 

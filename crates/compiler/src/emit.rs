@@ -6,6 +6,36 @@ fn arr<'a>(v: &'a Value, k: &str) -> &'a Vec<Value> {
 fn s<'a>(v: &'a Value, k: &str) -> &'a str {
     v[k].as_str().unwrap()
 }
+/// Deprecation notices are generated-code hints only ([#91](https://github.com/zanminwang/ahead/issues/91)):
+/// `Some(reason)` when the field, enum value or slot carries `@deprecated`.
+fn deprecation<'a>(v: &'a Value, kind: &str, keys: &[(&str, &str)]) -> Option<&'a Value> {
+    v["deprecations"]
+        .as_array()?
+        .iter()
+        .find(|d| d["kind"] == kind && keys.iter().all(|(k, x)| d[*k] == *x))
+        .map(|d| &d["reason"])
+}
+/// A JSDoc line for a deprecated member, or nothing.
+fn ts_deprecated(reason: Option<&Value>) -> String {
+    match reason {
+        None => String::new(),
+        Some(Value::String(r)) => format!(" /** @deprecated {r} */\n"),
+        Some(_) => " /** @deprecated */\n".into(),
+    }
+}
+/// A Dart `@Deprecated` annotation for a deprecated member, or nothing.
+fn dart_deprecated(reason: Option<&Value>, trailing: &str) -> String {
+    match reason {
+        None => String::new(),
+        Some(r) => format!(
+            "@Deprecated('{}'){trailing}",
+            r.as_str()
+                .unwrap_or("")
+                .replace('\\', "\\\\")
+                .replace('\'', "\\'")
+        ),
+    }
+}
 fn lower(s: &str) -> String {
     let mut c = s.chars();
     format!("{}{}", c.next().unwrap().to_lowercase(), c.as_str())
@@ -146,6 +176,18 @@ pub fn typescript(v: &Value) -> String {
     );
     writeln!(o, "export const schema = {} as const;", v["schema"]).unwrap();
     for en in arr(&v["schema"], "enums") {
+        for value in arr(en, "values") {
+            if let Some(reason) = deprecation(
+                v,
+                "enumValue",
+                &[("enum", s(en, "name")), ("value", value.as_str().unwrap())],
+            ) {
+                match reason {
+                    Value::String(r) => writeln!(o, "/** @deprecated {value}: {r} */").unwrap(),
+                    _ => writeln!(o, "/** @deprecated {value} */").unwrap(),
+                }
+            }
+        }
         writeln!(
             o,
             "export type {} = {};",
@@ -169,6 +211,11 @@ pub fn typescript(v: &Value) -> String {
                 if (filter == 1 && !id) || (filter == 2 && id) {
                     continue;
                 }
+                o.push_str(&ts_deprecated(deprecation(
+                    v,
+                    "field",
+                    &[("model", n), ("field", s(f, "name"))],
+                )));
                 writeln!(
                     o,
                     " {}{}: {};",
@@ -257,6 +304,11 @@ pub fn typescript(v: &Value) -> String {
                 }
             };
             let card = s(slot, "cardinality");
+            o.push_str(&ts_deprecated(deprecation(
+                v,
+                "slot",
+                &[("mutation", n), ("slot", s(slot, "name"))],
+            )));
             writeln!(
                 o,
                 " {}{}: {}{};",
@@ -461,6 +513,11 @@ pub fn backend_typescript(v: &Value, runtime: &str) -> String {
     for m in mutations {
         writeln!(o, "export interface {} {{", input_name(m)).unwrap();
         for slot in arr(m, "slots") {
+            o.push_str(&ts_deprecated(deprecation(
+                v,
+                "slot",
+                &[("mutation", s(m, "name")), ("slot", s(slot, "name"))],
+            )));
             writeln!(o, " {}: {};", s(slot, "name"), slot_input_type(slot)).unwrap();
         }
         o.push_str("}\n");
@@ -616,7 +673,18 @@ pub fn dart(v: &Value) -> String {
             s(en, "name"),
             arr(en, "values")
                 .iter()
-                .map(|x| x.as_str().unwrap())
+                .map(|x| format!(
+                    "{}{}",
+                    dart_deprecated(
+                        deprecation(
+                            v,
+                            "enumValue",
+                            &[("enum", s(en, "name")), ("value", x.as_str().unwrap())]
+                        ),
+                        " "
+                    ),
+                    x.as_str().unwrap()
+                ))
                 .collect::<Vec<_>>()
                 .join(", ")
         )
@@ -635,6 +703,12 @@ pub fn dart(v: &Value) -> String {
             let patch = suffix == "Patch";
             writeln!(o, "class {n}{suffix} {{").unwrap();
             for f in &fields {
+                if let Some(reason) =
+                    deprecation(v, "field", &[("model", n), ("field", s(f, "name"))])
+                {
+                    o.push(' ');
+                    o.push_str(&dart_deprecated(Some(reason), "\n"));
+                }
                 writeln!(
                     o,
                     " final {} {};",
@@ -757,6 +831,12 @@ pub fn dart(v: &Value) -> String {
                     .collect();
                 writeln!(o, "class {input} {{\n final {model}Identity identity;").unwrap();
                 for f in &fields {
+                    if let Some(reason) =
+                        deprecation(v, "field", &[("model", model), ("field", s(f, "name"))])
+                    {
+                        o.push(' ');
+                        o.push_str(&dart_deprecated(Some(reason), "\n"));
+                    }
                     writeln!(o, " final Present<{}>? {};", ft(f, true), s(f, "name")).unwrap();
                 }
                 writeln!(
@@ -787,12 +867,16 @@ pub fn dart(v: &Value) -> String {
                 model.to_string()
             };
             let card = s(slot, "cardinality");
+            let mark = dart_deprecated(
+                deprecation(v, "slot", &[("mutation", n), ("slot", key)]),
+                " ",
+            );
             params.push(if card == "list" {
-                format!("required List<{base}> {key}")
+                format!("{mark}required List<{base}> {key}")
             } else if card == "optional" {
-                format!("{base}? {key}")
+                format!("{mark}{base}? {key}")
             } else {
-                format!("required {base} {key}")
+                format!("{mark}required {base} {key}")
             });
         }
         writeln!(
@@ -953,6 +1037,11 @@ fn dart_query_types(v: &Value, o: &mut String) {
             .collect::<Vec<_>>();
         writeln!(o, "class {n}Filter {{").unwrap();
         for f in &fields {
+            if let Some(reason) = deprecation(v, "field", &[("model", n), ("field", s(f, "name"))])
+            {
+                o.push(' ');
+                o.push_str(&dart_deprecated(Some(reason), "\n"));
+            }
             writeln!(o, " final Present<{}>? {};", ft(f, true), s(f, "name")).unwrap();
         }
         writeln!(
