@@ -102,6 +102,8 @@ The Release app embedded `main.jsbundle` (1.5 MB, no Node built-ins, N-API binar
 | bob remote | Bob added a task while Alice was disconnected |
 | alice settle, bob observe | both converged to the six PostgreSQL rows with 0 pending |
 
+Product screen: with the same backend, Alice and Bob were each launched without a test phase on their own simulator (one at a time on a memory-limited host); both showed the avatar header (A on blue, B on green), the To-do heading, the same three seeded tasks, and only the checkbox rows, the add field and the plus button. The SDK harness scenario was also rerun on the final SDK commit and passed.
+
 Backend after the run: five handler executions (three adds, two completions) despite one deliberately dropped push response; Alice's and Bob's client IDs differed. Screenshots and JSON assertions were written to the printed evidence directory.
 
 Limits: arm64 iOS simulator, app in the foreground. Physical devices, Android, background delivery while iOS suspends the app, and the x86_64 simulator slice are not covered. The web version is tracked separately in #72.
