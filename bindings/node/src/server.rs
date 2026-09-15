@@ -7,7 +7,7 @@ impl ahead_server::Host for CallbackHost {
     fn call(
         &self,
         request: Value,
-    ) -> Pin<Box<dyn Future<Output = ahead_server::Result<Value>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = ahead_server::HostResult<Value>> + Send + '_>> {
         Box::pin(async move {
             let returned = self
                 .0
@@ -20,11 +20,25 @@ impl ahead_server::Host for CallbackHost {
         })
     }
 }
+/// The engine error crosses N-API as its JSON encoding in the reason string;
+/// the server SDK decodes it back into `{code, message, details}`.
+fn reason(error: ahead_server::Error) -> Error {
+    Error::from_reason(serde_json::to_string(&error).unwrap_or_else(|_| error.to_string()))
+}
+fn internal(error: impl std::fmt::Display) -> Error {
+    reason(ahead_server::Error::new(
+        ahead_server::code::INTERNAL,
+        error.to_string(),
+    ))
+}
 fn config(raw: &str) -> Result<ahead_server::Config> {
-    ahead_server::Config::decode(
-        serde_json::from_str(raw).map_err(|e| Error::from_reason(e.to_string()))?,
-    )
-    .map_err(Error::from_reason)
+    ahead_server::Config::decode(serde_json::from_str(raw).map_err(|e| {
+        reason(ahead_server::Error::new(
+            ahead_server::code::CONFIG_INVALID,
+            e.to_string(),
+        ))
+    })?)
+    .map_err(reason)
 }
 #[napi]
 pub fn validate_config(config_json: String) -> Result<()> {
@@ -44,7 +58,7 @@ pub async fn process_push(
         &CallbackHost(callback),
     )
     .await
-    .map_err(Error::from_reason)
+    .map_err(reason)
 }
 #[napi]
 pub async fn process_pull(
@@ -60,7 +74,7 @@ pub async fn process_pull(
         &CallbackHost(callback),
     )
     .await
-    .map_err(Error::from_reason)
+    .map_err(reason)
 }
 #[napi]
 pub async fn publish(
@@ -69,10 +83,14 @@ pub async fn publish(
     channels_json: String,
     callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
 ) -> Result<String> {
-    let changes =
-        serde_json::from_str(&changes_json).map_err(|e| Error::from_reason(e.to_string()))?;
-    let channels =
-        serde_json::from_str(&channels_json).map_err(|e| Error::from_reason(e.to_string()))?;
+    let publish_invalid = |e: serde_json::Error| {
+        reason(ahead_server::Error::new(
+            ahead_server::code::PUBLISH_INVALID,
+            e.to_string(),
+        ))
+    };
+    let changes = serde_json::from_str(&changes_json).map_err(publish_invalid)?;
+    let channels = serde_json::from_str(&channels_json).map_err(publish_invalid)?;
     ahead_server::publish(
         &config(&config_json)?,
         &changes,
@@ -81,7 +99,7 @@ pub async fn publish(
     )
     .await
     .map(|v| v.to_string())
-    .map_err(Error::from_reason)
+    .map_err(reason)
 }
 #[napi]
 pub async fn negotiate_live(
@@ -92,8 +110,8 @@ pub async fn negotiate_live(
     let result =
         ahead_server::live::negotiate(&owner, request_json.as_bytes(), &CallbackHost(callback))
             .await
-            .map_err(Error::from_reason)?;
-    serde_json::to_string(&result).map_err(|e| Error::from_reason(e.to_string()))
+            .map_err(reason)?;
+    serde_json::to_string(&result).map_err(internal)
 }
 #[napi]
 pub async fn pull_live(
@@ -108,7 +126,10 @@ pub async fn pull_live(
         || from_cursor < 0.0
         || from_cursor > 9_007_199_254_740_991.0
     {
-        return Err(Error::from_reason("invalid live cursor"));
+        return Err(reason(ahead_server::Error::new(
+            ahead_server::code::REQUEST_INVALID,
+            "invalid live cursor",
+        )));
     }
     let result = ahead_server::live::pull(
         &config(&config_json)?,
@@ -118,6 +139,6 @@ pub async fn pull_live(
         &CallbackHost(callback),
     )
     .await
-    .map_err(Error::from_reason)?;
-    serde_json::to_string(&result).map_err(|e| Error::from_reason(e.to_string()))
+    .map_err(reason)?;
+    serde_json::to_string(&result).map_err(internal)
 }

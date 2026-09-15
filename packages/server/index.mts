@@ -59,6 +59,91 @@ export function devAuth(): Authenticate {
     return id === "" ? null : id;
   };
 }
+/**
+ * A failure reported by the native engine. `code` is the stable machine name
+ * transports and applications should branch on; `message` is for people and
+ * may be reworded; `details` carries the fields a code promises (only
+ * `mutation_version_unsupported` has any: `ordinal`, `name`, `version`).
+ */
+export class EngineError extends Error {
+  readonly code: string;
+  readonly details: Record<string, unknown> | undefined;
+  constructor(
+    code: string,
+    message: string,
+    details?: Record<string, unknown>,
+  ) {
+    super(message);
+    this.name = "EngineError";
+    this.code = code;
+    this.details = details;
+  }
+}
+/** The native addon carries the engine error as JSON in the error message. */
+function engineError(error: unknown): unknown {
+  if (error instanceof EngineError) return error;
+  const text =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+  if (!text.startsWith("{")) return error;
+  try {
+    const parsed = JSON.parse(text);
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof parsed.code === "string" &&
+      typeof parsed.message === "string"
+    ) {
+      const details =
+        parsed.details && typeof parsed.details === "object"
+          ? (parsed.details as Record<string, unknown>)
+          : undefined;
+      return new EngineError(parsed.code, parsed.message, details);
+    }
+  } catch {
+    // Not an engine error; leave it as received.
+  }
+  return error;
+}
+/** Wrap every native function so its rejections surface as `EngineError`. */
+function typedNative(native: Native): Native {
+  const wrap =
+    <K extends Exclude<keyof Native, "validateConfig">>(key: K) =>
+    (...args: Parameters<Native[K]>): ReturnType<Native[K]> =>
+      (native[key] as (...a: Parameters<Native[K]>) => ReturnType<Native[K]>)(
+        ...args,
+      ).catch((error: unknown) => {
+        throw engineError(error);
+      }) as ReturnType<Native[K]>;
+  return {
+    validateConfig: (config) => {
+      try {
+        native.validateConfig(config);
+      } catch (error) {
+        throw engineError(error);
+      }
+    },
+    processPush: wrap("processPush"),
+    processPull: wrap("processPull"),
+    publish: wrap("publish"),
+    negotiateLive: wrap("negotiateLive"),
+    pullLive: wrap("pullLive"),
+  };
+}
+/**
+ * Engine codes with a client-visible HTTP status. Every other failure is a
+ * server-side defect: reported to `onError` and answered `500 {code: "server"}`.
+ */
+const HTTP_STATUS_BY_CODE: Readonly<Record<string, number>> = {
+  "request.invalid": 400,
+  "client.owner_mismatch": 403,
+  gap: 409,
+  overlap: 409,
+  mutation_version_unsupported: 409,
+};
 export class MutationRejected extends Error {
   readonly code: string;
   constructor(code: string) {
@@ -219,9 +304,10 @@ type MutationDescriptor = {
   slots?: MutationSlot[];
 };
 export function createBackend<T>(options: BackendOptions<T>) {
-  const native =
+  const native = typedNative(
     options.native ??
-    (require("../../bindings/node/ahead-node.node") as Native);
+      (require("../../bindings/node/ahead-node.node") as Native),
+  );
   const descriptor = options.config as {
     schema?: { models?: { name: string }[] };
     mutations?: MutationDescriptor[];
@@ -587,27 +673,12 @@ function createHttpHandler(options: {
         : options.backend.pull(owner, bytes));
       send(200, result);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message === "owner_mismatch") {
-        send(403, { code: "client.owner_mismatch" });
-        return;
-      }
-      if (/^(gap|overlap)$/.test(message)) {
-        send(409, { code: message });
-        return;
-      }
-      if (message.startsWith("mutation_version_unsupported:")) {
-        const parts = message.split(":");
-        send(409, {
-          code: "mutation_version_unsupported",
-          ordinal: Number(parts[1]),
-          name: parts.slice(2, -1).join(":"),
-          version: Number(parts.at(-1)),
-        });
-        return;
-      }
-      if (message.startsWith("request.invalid:")) {
-        send(400, { code: "request.invalid" });
+      const status =
+        error instanceof EngineError
+          ? HTTP_STATUS_BY_CODE[error.code]
+          : undefined;
+      if (error instanceof EngineError && status !== undefined) {
+        send(status, { code: error.code, ...(error.details ?? {}) });
         return;
       }
       options.onError?.(error);
@@ -816,15 +887,11 @@ async function serveLive(
     });
     stop();
   } catch (error) {
+    const invalid =
+      error instanceof EngineError && error.code === "request.invalid";
     if (connection.readyState === WebSocket.OPEN)
-      connection.close(
-        String((error as Error)?.message).includes("request.invalid")
-          ? 1002
-          : 1011,
-        "request.invalid",
-      );
-    if (!String((error as Error)?.message).includes("request.invalid"))
-      onError?.(error);
+      connection.close(invalid ? 1002 : 1011, "request.invalid");
+    if (!invalid) onError?.(error);
   } finally {
     for (const state of states) {
       state.closed = true;
