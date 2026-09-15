@@ -40,12 +40,12 @@ Inputs (`LiveEvent`):
 | --- | --- |
 | `start` | The lane's cycle began; the session snapshots the subscribed channels and the subscription generation (the same per-channel epochs [Pull](../../engine/pull.md) keeps). |
 | `opened` | The socket is open; the host may send the subscribe frame. |
-| `acknowledged { scopes }` | The server's acknowledgement arrived. |
+| `acknowledged { scopes }` | The server's acknowledgement arrived. Refined to `acknowledged { scopes, rejections }` below (item 1). |
 | `page { body }` | A streamed page arrived. |
 | `catchUp { channel, body }` | An HTTP catch-up response arrived for a request the session issued. |
 | `overflow` | The host's page buffer overflowed (treated as a gap). |
 | `subscriptionsChanged` | A subscribe or unsubscribe committed. |
-| `closed { failure: bool }` | The socket closed, or an HTTP request failed. |
+| `closed { failure: bool }` | The socket closed, or an HTTP request failed. `failure` refined from a bool to four values below (item 5). |
 | `pause`, `resume`, `stop` | Lane controls, as today. |
 
 Outputs (`LiveAction`), returned one at a time from `next()` until `idle`:
@@ -77,7 +77,7 @@ Rust owns: the snapshot of channels and generation; the epoch that invalidates e
 
 ### Vocabulary for the move (proposal, pending confirmation) ([#58](https://github.com/zanminwang/ahead/issues/58))
 
-Every item below is a **proposal, pending confirmation**. It fills in detail the decision above leaves open and changes none of it: the connection model, the ownership split and the migration steps stand as decided. Each item states the behavior it preserves and cites the code it was derived from. Where the two SDKs behave differently, both are recorded and the difference is marked; nothing is picked silently.
+Every item below is a **proposal, pending confirmation**. It fills in detail the decision above leaves open; the connection model, the ownership split and the migration steps stand as decided. Two decided payloads are *refined* rather than merely filled in — `acknowledged` gains `rejections` (item 1) and `closed`'s `failure` becomes four values instead of a bool (item 5) — and a third, `opened`, is given a precise meaning (item 1); each is marked where it occurs and back-referenced from the event table above. Everything else states the behavior it preserves and cites the code it was derived from. Where the two SDKs behave differently, both are recorded and the difference is marked; nothing is picked silently.
 
 #### 1. Session states and transitions
 
@@ -88,7 +88,7 @@ Every item below is a **proposal, pending confirmation**. It fills in detail the
 | `Idle` | `start`, snapshot has no channels | `Idle` | `idle` — the cycle ends successfully and the lane waits for a subscribe |
 | `Idle` | `start`, snapshot has channels | `Opening` | `open { subscribe }` |
 | `Opening` | `opened` | `Subscribing` | `idle` — the frame from `open` is already sent |
-| `Subscribing` | `acknowledged { scopes, rejections }` equal to the snapshot | `CatchingUp { first }` | `request { channel, body }` |
+| `Subscribing` | `acknowledged { scopes, rejections }` (refined; see below) equal to the snapshot | `CatchingUp { first }` | `request { channel, body }` |
 | `Subscribing` | `acknowledged` differing from the snapshot | `Closing` | `close { reason: protocol }` |
 | `CatchingUp { c }` | `catchUp { channel: c, body }`, page continues or recovers | `CatchingUp { c }` | `apply`, then `request` for `c` |
 | `CatchingUp { c }` | `catchUp { channel: c, body }`, page ends | `CatchingUp { next }` or `Streaming` | `apply`, then `request` or `idle` |
@@ -101,6 +101,11 @@ Every item below is a **proposal, pending confirmation**. It fills in detail the
 | `Opening`…`Closing` | `closed { failure }` | `Idle` | `retry { millis }` for a failure, `idle` otherwise |
 | `Idle` | `resume`, `opened`, `page`, `catchUp`, `overflow`, `acknowledged` | `Idle` | `idle` — a leftover from an older session is dropped by the epoch |
 
+Two refinements of decided events appear in the table:
+
+- **`acknowledged { scopes, rejections }`.** The decided event is `acknowledged { scopes }`. Both hosts today also require the acknowledgement's `rejections` array to be present and empty (`packages/client-js/live.mts:112-122`, `packages/dart/lib/src/live.dart:194-206`), so Rust needs the field to keep that check when it takes it over.
+- **`opened` means the frame is already sent.** The decided text reads "the host may send the subscribe frame"; both hosts send it as soon as the socket is open — TypeScript from the `open` handler, Dart right after `WebSocket.connect` resolves — with the frame the `open` action supplied (`packages/client-js/live.mts:102-107`, `packages/dart/lib/src/live.dart:157`). The table therefore treats `opened` as "socket open, frame sent" and answers `idle`. A host that prefers to wait for `opened` before sending sees no difference, since `open` already carries the frame.
+
 Two rules the table depends on:
 
 - **A streamed page is not delivered while a `request` is outstanding.** The host's buffer already guarantees this (`drain` runs one thing at a time in [client-js/live.mts](../../../../../../packages/client-js/live.mts) and [dart/live.dart](../../../../../../packages/dart/lib/src/live.dart)), which is why `page` appears only in `Streaming` above. *Open for confirmation:* whether a `page` during `CatchingUp` is a host contract violation (`close { reason: protocol }`) or is simply applied through the same path, where the cursor gate makes it harmless.
@@ -110,7 +115,7 @@ Two rules the table depends on:
 
 `apply { disposition, continues }` — exactly today's `DownlinkProgress` from `receive_downlink` in [client/transport.rs](../../../../../../crates/client/src/transport.rs). `disposition` is `covered`, `applied` or `recover`; `continues` is true when the page carried the full 50 changes.
 
-- **No settlement flag.** Whether a settlement happened is not observable in Rust today: `apply_current_page` calls `Engine::settle`, which returns nothing, and both SDKs emit the work event on `disposition === "applied"` alone. Reporting a real settlement would narrow the wake and therefore change behavior; it needs `settle` to report whether a push settled, which is a separate change. Until then `applied` is the wake condition, and the decision's phrase "whether a settlement happened" reads as "a page was applied, so a settlement may have happened".
+- **No settlement flag.** Whether a settlement happened is not observable in Rust today: `apply_current_page` calls `Engine::settle`, which returns `Result<()>`, and its own `ApplyReport { applied, skipped, stale, conflicts, diagnostics }` (`crates/client/src/downlink.rs:95`, `crates/client/src/lib.rs:86-92`) is discarded by `receive_downlink` (`crates/client/src/transport.rs:133`) rather than carried out. Both SDKs therefore emit the work event on `disposition === "applied"` alone. Reporting a real settlement would narrow the wake and therefore change behavior; it needs `settle` to report whether a push settled, which is a separate change. Until then `applied` is the wake condition, and the decision's phrase "whether a settlement happened" reads as "a page was applied, so a settlement may have happened".
 - **`continues` stays** even though Rust now owns the catch-up loop, so the action and `DownlinkProgress` remain one type and the host can still log progress.
 - **Record changes stay on the envelope.** Every binding reply already carries `changed`, `changedTables` and `generation` ([bindings/common/src/lib.rs](../../../../../../bindings/common/src/lib.rs)); that is what raises the change event, not the `apply` payload.
 
@@ -132,14 +137,14 @@ One `live` command family shaped like the existing `connection` op in [bindings/
 | --- | --- | --- |
 | `start` | — | the next action |
 | `opened` | — | the next action |
-| `acknowledged` | `scopes`, `rejections` | the next action |
+| `acknowledged` | `scopes`, `rejections` (a refinement; see item 1) | the next action |
 | `page` | `body` (the page JSON) | the next action |
 | `catchUp` | `channel`, `body` (the page JSON) | the next action |
 | `overflow`, `subscriptionsChanged`, `pause`, `resume`, `stop` | — | the next action |
 | `closed` | `failure` (see 5) | the next action |
 | `next` | — | the next action |
 
-`now` and `entropy` accompany every event, as they do for `connection`, because `retry { millis }` is produced by the live lane's existing `ConnectionDriver`: the session reports the cycle outcome to it and returns the delay it computes, so backoff keeps one implementation. The op belongs in the arm that refuses to run while a client transaction is open, next to `connection`, `startSync` and `next`.
+Unlike `connection`, which answers with a value only for `event: "next"` and `null` otherwise, every `live` event answers with the next action. The asymmetry is deliberate: `connection` events mutate a driver the host then polls, while a live event usually *is* the thing that produces the next action, and a mandatory second round trip per event would double the calls through the exclusive queue. `next` stays in the family for a host that has no event to report. `now` and `entropy` accompany every event, as they do for `connection`, because `retry { millis }` is produced by the live lane's existing `ConnectionDriver`: the session reports the cycle outcome to it and returns the delay it computes, so backoff keeps one implementation. The op belongs in the arm that refuses to run while a client transaction is open, next to `connection`, `startSync` and `next`.
 
 **`LiveSession` lives in `Entry`**, beside `cycle`, `connection` and `live_connection`. It has to: the epoch, the channel snapshot and the subscription generation exist to invalidate work from an *earlier* session, which is only meaningful if the state outlives the session that created it. A session recreated per cycle would have to be handed its predecessor's epoch by the host, putting back the duplicated state this change removes.
 
@@ -152,7 +157,7 @@ One `live` command family shaped like the existing `connection` op in [bindings/
 | `none` | The host closed the session on the session's own `close` action | `finish()` with no error resolves `stream` | `finish()` with no error completes `done` |
 | `auth` | 401 on the upgrade, the catch-up or a push | `error.status === 401`, from `httpTransport` or the `unexpected-response` handler | `AuthenticationExpired`, from the status check or `WebSocketException.httpStatusCode` |
 | `protocol` | An acknowledgement that does not match, a frame that is not a page, or a page Rust refuses | `Error("invalid live subscription acknowledgement")`, `Error("invalid live page")`, errors thrown by `downlinkPage` | `FormatException` with the same two messages, plus errors thrown by `downlinkPage` |
-| `transport` | Socket close or error, non-401 HTTP failure | `Error("live disconnected: …")`, `Error("live failed: <status>")`, `Error("pull failed: <status> …")` | `StateError('live disconnected: …')`, `HttpException` |
+| `transport` | Socket close or error, non-401 HTTP failure, an abandoned request | `Error("live disconnected: …")`, `Error("live failed: <status>")`, `Error("pull failed: <status> …")`, `Error("connection_closed")` | `StateError('live disconnected: …')`, `HttpException`, a rethrown `WebSocketException` for a non-401 upgrade failure, `StateError('connection_paused_or_closed')` for an abandoned pull |
 
 Two differences between the SDKs, neither resolved here:
 
@@ -170,6 +175,8 @@ Today every kind except `none` behaves identically (report through `onError`, re
 | `pages` | 64 | 128 |
 | `bytes` | unbounded in aggregate; 8 MiB per frame through the socket's `maxPayload` | 8 MiB in aggregate, counted with the encoded page length, and 8 MiB per frame |
 | On overflow | clear the buffer, keep the arriving page, request recovery | clear the buffer, drop the arriving page, request recovery |
+
+The two "8 MiB" figures are not the same unit: `ws` applies `maxPayload` to the frame in bytes, while Dart accumulates `jsonEncode(page).length` and compares against the raw frame's `text.length`, both of which count UTF-16 code units, so non-ASCII content reaches Dart's bound later than it reaches the socket's. A shared parameter has to state which one `bytes` means.
 
 **Rust does not need the bound.** Overflow reaches the session as an event and is treated as a gap, so the session never reasons about buffer capacity. Keeping the bound in the host is also what lets a platform with different memory pick a different number without a Rust change.
 
