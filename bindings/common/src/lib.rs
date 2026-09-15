@@ -262,6 +262,20 @@ impl RuntimeHost {
                         e.client.record_status(&key)?
                     }
                     "tasks" => json!(e.client.pending_tasks()?),
+                    "task" => {
+                        let handlers: Vec<String> =
+                            serde_json::from_value(request["handlers"].clone())?;
+                        json!(e.client.next_task(&handlers)?)
+                    }
+                    "outcome" => {
+                        let error = match &request["error"] {
+                            Value::Null => None,
+                            Value::String(reason) => Some(reason.as_str()),
+                            _ => return Err(invalid("outcome error must be a string or null")),
+                        };
+                        e.client.outcome(text(&request, "key")?, error)?;
+                        Value::Null
+                    }
                     "status" => {
                         json!({"clientId":e.client.client_id(),"pending":e.client.pending_count()?,"beforeImages":e.client.before_image_count()?,"cursors":e.client.subscriptions()?.into_iter().collect::<BTreeMap<_,_>>(),"channels":e.client.desired_channels()?,"rejections":e.client.rejections()?})
                     }

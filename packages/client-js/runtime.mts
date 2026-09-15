@@ -279,21 +279,24 @@ export function createClient<
       handlers: Record<string, (arguments_: RecordValue) => Promise<void>>,
     ): Promise<void> {
       if (this.#tasks) return this.#tasks;
+      // Rust picks the task and settles it; this loop only calls the handler.
+      const names = Object.keys(handlers);
       const run = async () => {
         for (;;) {
-          const task = (await this.pendingTasks()).find(
-            (task) => task.state === "pending",
+          const task = await this.#exclusive(() =>
+            this.#send({ op: "task", handlers: names }),
           );
-          if (!task) return;
-          const handler = handlers[String(task.name)];
-          if (!handler)
-            throw Error(`Missing prerequisite handler: ${task.name}`);
+          if (task === null) return;
+          let error: string | null = null;
           try {
-            await handler(task.arguments as RecordValue);
-            await this.setReadiness(String(task.key), "ready");
-          } catch (error) {
-            await this.setReadiness(String(task.key), "failed");
+            await handlers[String(task.name)]!(task.arguments as RecordValue);
+          } catch (thrown) {
+            error = reason(thrown);
           }
+          await this.#exclusive(() =>
+            this.#send({ op: "outcome", key: task.key, error }),
+          );
+          this.#events.emit("work");
         }
       };
       this.#tasks = run().finally(() => {
@@ -385,4 +388,10 @@ export function createClient<
       });
     }
   };
+}
+
+/** The text a failed prerequisite keeps: the error's message, or the thrown value. */
+function reason(thrown: unknown): string {
+  if (thrown instanceof Error && thrown.message) return thrown.message;
+  return String(thrown);
 }
