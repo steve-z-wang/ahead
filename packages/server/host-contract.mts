@@ -104,7 +104,15 @@ export type Invalidation = {
 };
 /** The answer to `publish`. */
 export type Published = { cursor: number; stamp: number };
-/** The answer to `handle`: a settlement channel or a rejection code, never both. */
+/**
+ * The answer to `handle`: a settlement channel or a rejection code, never both.
+ *
+ * "Never both" is not something this union can enforce. TypeScript only applies
+ * its excess-property check to object literals, so a value that reaches here
+ * through a variable satisfies the union with both keys set. Rust enforces it
+ * on decode (`HandledWire` in crates/server/src/host.rs), which refuses such an
+ * answer with `handler.invalid` rather than reading it as a rejection.
+ */
 export type Handled = { channel: string } | { rejection: string };
 /** The answer to `load`: one entry per identity, `null` for a record the channel cannot see. */
 export type Loaded = (Record<string, unknown> | null)[];

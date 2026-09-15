@@ -59,16 +59,33 @@ Code: the operation contract in [server/host.rs](../../../../crates/server/src/h
 | `handle` | `name`, `version`, `arguments`, `owner`, `ordinal` | `Handled::Settled { channel }` or `Handled::Rejected { rejection }` |
 | `load` | `model`, `identities`, `owner`, `channel` | `Vec<Option<Value>>` (one entry per identity) |
 
-`HostRequest` derives `Serialize`/`Deserialize` with `#[serde(tag = "op", rename_all = "camelCase")]` and `deny_unknown_fields`; each response is a struct or enum with `deny_unknown_fields`. The engine constructs requests as enum values and decodes responses into these types, so a malformed response fails at the boundary with `host.invalid` and the field name, instead of somewhere later with `unwrap`.
+`HostRequest` derives `Serialize`/`Deserialize` with `#[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]` and `deny_unknown_fields`; each response is a struct or enum with `deny_unknown_fields`. The engine constructs requests as enum values and decodes responses into these types, so a malformed response fails at the boundary, naming the operation and the offending field, instead of somewhere later with `unwrap`.
+
+The code it fails with is the one that operation already used (`invalid_code` in `host.rs`), so no refusal changes its code:
+
+| Code | Operations |
+| --- | --- |
+| `storage.invalid` | `claim`, `saveReceipt`, `scan` |
+| `handler.invalid` | `handle` |
+| `loader.invalid` | `load` |
+| `host.invalid` | `head`, `savepoint`, `rollback`, `release`, `publish` |
 
 **How each side consumes it.**
 
 - *Rust engine.* `process_push`, `process_pull`, `publish` and `live` build `HostRequest` values; a small `Host` extension (`call_typed<R: DeserializeOwned>(&self, request: HostRequest) -> Result<R>`) does the serialize/deserialize once. `Host::call` keeps its `Value → HostResult<Value>` shape so existing implementers compile during the migration.
 - *TypeScript host.* `packages/server/host-contract.mts` declares the request and response types (one `type HostRequest = …` union and the response interfaces) and `packages/server/index.mts` narrows on `request.op` with an exhaustive `switch`; `persistence-prisma` implements the persistence half against the same types. The file is hand-written, because the two languages have no shared code generator today.
-- *Conformance fixture.* A Rust test serializes one example of every request and one valid response per operation into `fixtures/protocol/host-operations.json`. Rust checks that every request decodes back to the enum and every response into its type; a Node test feeds each request through the TypeScript host with a fake persistence and checks the produced response decodes in Rust (through the same fixture, in the persistence suite). A field added on one side without the other fails one of the two.
+- *Conformance fixture.* A Rust test serializes one example of every request and one valid response per operation into `fixtures/protocol/host-operations.json`. Rust checks that every request decodes back to the enum and every response into its type; a Node test feeds each request through the TypeScript host with a fake persistence and compares the answers, in JavaScript, against the responses the same fixture records (in the persistence suite). A field added on one side without the other fails one of the two.
 - *Simulation and test hosts.* `MemHost` and the `Fixed` test host match on `HostRequest` (deserialized from the `Value` they receive) and return the response types serialized, so an unknown or malformed operation is a compile error in Rust rather than an `unwrap` in a match arm.
 
-**Consequences.** Adding an operation or a field means editing `host.rs`, the fixture and `host-contract.mts`; the Rust compiler and the two conformance tests enforce the rest. Responses that used to be tolerated loosely (a `handle` returning `{}` with no channel) become explicit `host.invalid` errors with the same abort semantics as today's "invalid handler settlement". The boundary keeps JSON strings, so no binding change is needed.
+**Consequences.** Adding an operation or a field means editing `host.rs`, the fixture and `host-contract.mts`; the Rust compiler and the two conformance tests enforce the rest. The boundary keeps JSON strings, so no binding change is needed.
+
+Three answers a host could get away with before are now refused. Each keeps its operation's code and the abort semantics that code already had:
+
+- A response carrying fields beyond the contract is refused (`deny_unknown_fields`), where the extra fields used to be ignored.
+- `saveReceipt`, `savepoint`, `rollback` and `release` must answer exactly `null`, which is what every host already returns.
+- A `handle` answer carrying both `channel` and `rejection` is refused with `handler.invalid`, where it used to be read as a rejection and the channel silently dropped.
+
+A `handle` returning `{}` with no channel was already a refusal before this change and keeps both its `handler.invalid` code and its wording ("invalid handler settlement"). The simulation host depends on that refusal: `Handled` cannot express "no settlement", so `MemHost` still answers `{}` and lets the decoder abort the batch.
 
 **Migration steps.** Each step was independently shippable and kept every existing test green; all four have landed.
 

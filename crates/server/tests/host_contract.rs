@@ -213,6 +213,15 @@ fn a_handle_response_carries_a_channel_or_a_rejection_and_never_both() {
     .unwrap_err()
     .to_string();
     assert!(both.contains("not both"), "{both}");
+    // `Handled` cannot express "no settlement", so the simulation host still
+    // answers `{}` when a handler names no channel and relies on the decoder to
+    // refuse it (`a4_handler_without_a_channel_aborts_the_batch`). Pin the
+    // wording here, where the refusal is produced, rather than only where a
+    // test hands `invalid_response` that string by hand.
+    let none = serde_json::from_value::<Handled>(json!({}))
+        .unwrap_err()
+        .to_string();
+    assert!(none.contains("invalid handler settlement"), "{none}");
     for refused in [
         json!({}),
         json!({"channel": null}),
