@@ -30,4 +30,4 @@ Because streaming starts at the head, the client catches up over HTTP from its d
 
 ## 11. Risks and Technical Debt
 
-- **Accepted limitation:** `rejections` is vestigial since channel authorization was removed in [#22](https://github.com/zanminwang/ahead/issues/22); it is always empty and clients require it to be.
+- **Decision needed ([#63](https://github.com/zanminwang/ahead/issues/63)): whether to retire the acknowledgement's `rejections`.** It is vestigial since channel authorization was removed in [#22](https://github.com/zanminwang/ahead/issues/22). Inventory (2026-09-14, code inspection): the only emitter is `negotiate` in [server/live.rs](../../../../crates/server/src/live.rs), always `[]`; the consumers are the two SDK handshakes, which end the session unless the field is an empty array ([client-js/live.mts](../../../../packages/client-js/live.mts), [dart/live.dart](../../../../packages/dart/lib/src/live.dart)); test fixtures echo it. Retiring it needs the SDKs to accept an absent field before the server stops sending it, or an old client would refuse a new server's acknowledgement. Waits for the decision.

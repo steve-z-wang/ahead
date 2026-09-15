@@ -2,7 +2,7 @@ mod common;
 use ahead_client::*;
 use ahead_sqlite::SqliteStore;
 use common::*;
-use serde_json::json;
+use serde_json::{Value, json};
 
 fn receipt(channel: &str, cursor: u64) -> PushReceipt {
     PushReceipt {
@@ -170,7 +170,7 @@ fn failed_prerequisite_stays_optimistic_independent_work_can_overtake() {
 }
 
 #[test]
-fn lifecycle_dependency_waits_for_parent_ack_but_sequence_can_share_batch() {
+fn lifecycle_dependency_waits_for_parent_ack() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = open(&dir.path().join("db"));
     subscribe(&mut c, "book");
@@ -272,7 +272,7 @@ fn byte_budget_skips_large_candidate_but_always_allows_one() {
 }
 
 #[test]
-fn schema_sequence_relationship_blocks_dependent_but_not_independent_work() {
+fn schema_sequence_relationship_freezes_dependent_with_its_predecessor() {
     let dir = tempfile::tempdir().unwrap();
     let mut value = serde_json::to_value(family_schema()).unwrap();
     value["clientPolicies"] = json!([
@@ -400,4 +400,238 @@ fn record_status_reports_phases_and_duplicate_ack_is_idempotent() {
         c.acknowledge(7, receipt("book", 1)).is_err(),
         "unknown push"
     );
+}
+
+/// Batching bounds: at most 20 mutations per batch, and a zero byte budget freezes
+/// nothing and assigns nothing ([Batching]).
+#[test]
+fn batch_holds_at_most_twenty_mutations_and_zero_budget_freezes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    subscribe(&mut c, "book");
+    c.apply_page(page("book", 0, 1, Some("A"))).unwrap();
+    c.transaction(|tx| {
+        for i in 0..21 {
+            tx.enqueue(mutation(&format!("v{i}")))?;
+        }
+        Ok(())
+    })
+    .unwrap();
+    assert!(c.freeze_with_limit(0).unwrap().is_none());
+    assert_eq!(c.pending_count().unwrap(), 21);
+    let status = c.record_status(&key()).unwrap();
+    assert!(
+        status["pending"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|m| m["phase"] == "queued"),
+        "a zero budget assigns no push: {status}"
+    );
+    let first = PushRequest::decode(&c.freeze().unwrap().unwrap()).unwrap();
+    assert_eq!(
+        first
+            .mutations
+            .iter()
+            .map(|m| m.ordinal)
+            .collect::<Vec<_>>(),
+        (1..=20).collect::<Vec<u64>>()
+    );
+    assert_eq!(
+        PushRequest::decode(&c.freeze().unwrap().unwrap())
+            .unwrap()
+            .batch_sequence,
+        1,
+        "the in-flight batch is returned again, not a second one"
+    );
+    c.acknowledge(1, receipt("book", 1)).unwrap();
+    let second = PushRequest::decode(&c.freeze().unwrap().unwrap()).unwrap();
+    assert_eq!(second.batch_sequence, 2);
+    assert_eq!(
+        second
+            .mutations
+            .iter()
+            .map(|m| m.ordinal)
+            .collect::<Vec<_>>(),
+        vec![21]
+    );
+}
+
+/// A frozen mutation cannot be dropped (its outcome is unknown or accepted); an
+/// unfrozen one can, and leaves a `dropped` rejection. A dependency on an unknown
+/// ordinal is refused at enqueue.
+#[test]
+fn frozen_mutations_cannot_be_dropped_and_unknown_dependencies_are_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    subscribe(&mut c, "book");
+    c.apply_page(page("book", 0, 1, Some("A"))).unwrap();
+    c.transaction(|tx| tx.enqueue(mutation("B")).map(|_| ()))
+        .unwrap();
+    c.freeze().unwrap().unwrap();
+    let err = c.drop_mutation(1).unwrap_err();
+    assert!(err.to_string().contains("cannot drop"), "{err}");
+    assert_eq!(c.pending_count().unwrap(), 1);
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
+    for unknown in [
+        {
+            let mut m = mutation("C");
+            m.lifecycle_dependencies.push(99);
+            m
+        },
+        {
+            let mut m = mutation("C");
+            m.sequence_dependencies.push(99);
+            m
+        },
+    ] {
+        let err = c
+            .transaction(|tx| tx.enqueue(unknown).map(|_| ()))
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("unknown mutation dependency"),
+            "{err}"
+        );
+    }
+    assert_eq!(
+        c.pending_count().unwrap(),
+        1,
+        "a refused enqueue leaves no row"
+    );
+    c.transaction(|tx| tx.enqueue(mutation("C")).map(|_| ()))
+        .unwrap();
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "C");
+    c.drop_mutation(2).unwrap();
+    assert_eq!(c.pending_count().unwrap(), 1);
+    assert_eq!(
+        c.read(&key()).unwrap().unwrap()["text"],
+        "B",
+        "dropping replays the remaining edit"
+    );
+    let rejections = c.rejections().unwrap();
+    assert_eq!(rejections.len(), 1);
+    assert_eq!(
+        (rejections[0].ordinal, rejections[0].code.as_str()),
+        (2, "dropped")
+    );
+    c.drop_mutation(42).unwrap();
+}
+
+/// P4 across a supported schema change: reopening a populated queue after an
+/// additive reconciliation keeps the frozen bytes, the pending operations and the
+/// visible records ([Reconciliation]).
+#[test]
+fn populated_queue_survives_additive_reconciliation_with_frozen_bytes_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut c = open(&path);
+    subscribe(&mut c, "book");
+    c.apply_page(page("book", 0, 1, Some("A"))).unwrap();
+    c.transaction(|tx| tx.enqueue(mutation("B")).map(|_| ()))
+        .unwrap();
+    let frozen = c.freeze().unwrap().unwrap();
+    c.transaction(|tx| {
+        tx.enqueue(Mutation::new(
+            "Create",
+            vec![create("Entry", "n", json!({"text":"new","note":null}))],
+        ))
+        .map(|_| ())
+    })
+    .unwrap();
+    drop(c);
+    let mut wider = serde_json::to_value(schema()).unwrap();
+    wider["models"][0]["fields"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"extra","nullable":true,"type":{"kind":"scalar","name":"string"}}));
+    let mut c = Client::open(
+        SqliteStore::open(&path).unwrap(),
+        Schema::from_value(wider).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(c.pending_count().unwrap(), 2);
+    assert_eq!(
+        c.freeze().unwrap().unwrap(),
+        frozen,
+        "the in-flight batch keeps its bytes across reconciliation"
+    );
+    let row = c.read(&key()).unwrap().unwrap();
+    assert_eq!(row["text"], "B");
+    assert_eq!(row["extra"], Value::Null, "the added column reads as null");
+    let created = schema().record_key("Entry", &json!({"id":"n"})).unwrap();
+    assert_eq!(c.read(&created).unwrap().unwrap()["text"], "new");
+    c.acknowledge(1, receipt("book", 1)).unwrap();
+    let next = PushRequest::decode(&c.freeze().unwrap().unwrap()).unwrap();
+    assert_eq!(next.mutations.len(), 1);
+    assert_eq!(
+        next.mutations[0].raw["operations"][0]["values"],
+        json!({"text":"new","note":null}),
+        "queued operations are sent as enqueued, without the new field"
+    );
+}
+
+/// A5 on the immediate path (issue #53): a receipt with nothing awaitable must not
+/// settle its batch ahead of an earlier batch that is still waiting on a cursor.
+#[test]
+fn immediately_settleable_batch_waits_for_the_earlier_waiting_batch() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut c = open(&path);
+    subscribe(&mut c, "book");
+    c.apply_page(page("book", 0, 1, Some("A"))).unwrap();
+    c.transaction(|tx| tx.enqueue(mutation("B")).map(|_| ()))
+        .unwrap();
+    c.freeze().unwrap().unwrap();
+    c.acknowledge(1, receipt("book", 5)).unwrap();
+    c.transaction(|tx| tx.enqueue(mutation("C")).map(|_| ()))
+        .unwrap();
+    c.freeze().unwrap().unwrap();
+    // Batch 2's only checkpoint is on a channel this client does not follow.
+    c.acknowledge(2, receipt("other", 3)).unwrap();
+    assert_eq!(
+        c.pending_count().unwrap(),
+        2,
+        "batch 2 is acknowledged but must wait for batch 1"
+    );
+    assert_eq!(
+        c.read(&key()).unwrap().unwrap()["text"],
+        "C",
+        "both pending edits stay replayed over the base"
+    );
+    let status = c.record_status(&key()).unwrap();
+    assert_eq!(status["pending"].as_array().unwrap().len(), 2);
+    assert!(
+        status["pending"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|m| m["phase"] == "accepted"),
+        "both batches are acknowledged, neither in flight: {status}"
+    );
+    // A duplicate receipt for batch 2 is idempotent, and one with different
+    // checkpoints is refused, exactly as for a batch with stored checkpoints.
+    c.acknowledge(2, receipt("other", 3)).unwrap();
+    assert!(c.acknowledge(2, receipt("book", 9)).is_err());
+    assert_eq!(c.pending_count().unwrap(), 2);
+
+    // The acknowledged state is durable: after reopen nothing is re-sent and
+    // batch 2 still waits behind batch 1.
+    drop(c);
+    let mut c = open(&path);
+    assert_eq!(c.pending_count().unwrap(), 2);
+    assert!(
+        c.freeze().unwrap().is_none(),
+        "neither batch is in flight after reopen"
+    );
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "C");
+
+    // Batch 1's cursor arrives: batch 1 settles, then batch 2 behind it.
+    c.apply_page(page("book", 1, 5, Some("B"))).unwrap();
+    assert_eq!(c.pending_count().unwrap(), 0);
+    assert!(
+        c.read(&key()).unwrap().is_some(),
+        "the record survives settlement"
+    );
+    // What batch 2's record shows once it settles without authority from a
+    // subscribed channel is decided under #52; not asserted here.
 }

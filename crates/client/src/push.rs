@@ -12,6 +12,20 @@ use std::collections::{BTreeMap, BTreeSet};
 
 const MAX_MUTATIONS: usize = 20;
 
+/// A checkpoint row on this channel marks a batch whose receipt named nothing the
+/// client can await. Its cursor is 0, which every channel has reached, so the
+/// ordered walk settles the batch as soon as every earlier batch has settled
+/// (guarantee A5) and never before. Without the row the batch would read as in
+/// flight and be sent again.
+pub(crate) const NOTHING_AWAITED: &str = "";
+
+fn nothing_awaited() -> ChannelCheckpoint {
+    ChannelCheckpoint {
+        channel: NOTHING_AWAITED.into(),
+        cursor: 0,
+    }
+}
+
 fn keys_of<'a>(
     schema: &ahead_core::Schema,
     ops: impl Iterator<Item = &'a Operation>,
@@ -129,7 +143,13 @@ impl<S: ClientStore> Engine<'_, S> {
             .collect();
         let existing = self.checkpoints(push)?;
         if !existing.is_empty() {
-            if self.awaitable(&receipt.required_checkpoints)? != existing {
+            let awaited = self.awaitable(&receipt.required_checkpoints)?;
+            let same = if existing == [nothing_awaited()] {
+                awaited.is_empty()
+            } else {
+                awaited == existing
+            };
+            if !same {
                 return Err(invalid("receipt changed"));
             }
             return Ok(());
@@ -147,14 +167,17 @@ impl<S: ClientStore> Engine<'_, S> {
         }
         self.remove_rejected(&receipt.rejections)?;
         let remaining = self.queued()?.into_iter().any(|q| q.push == Some(push));
-        let awaited = self.awaitable(&receipt.required_checkpoints)?;
-        if awaited.is_empty() || !remaining {
-            if remaining {
-                self.settle_push(push)?;
-            }
+        if !remaining {
             return Ok(());
         }
-        self.insert_checkpoints(push, &awaited)?;
+        let awaited = self.awaitable(&receipt.required_checkpoints)?;
+        if awaited.is_empty() {
+            // Nothing to wait for, but the batch still settles in sequence order
+            // behind any earlier batch that is waiting (guarantee A5).
+            self.insert_checkpoints(push, &[nothing_awaited()])?;
+        } else {
+            self.insert_checkpoints(push, &awaited)?;
+        }
         self.settle()
     }
     /// The checkpoints this client can ever meet: only a subscribed channel has a

@@ -315,3 +315,61 @@ fn a5_batches_settle_in_accepted_prefix_order() {
     assert_eq!(sim.client(0).pending_count().unwrap(), 0);
     sim.check().unwrap();
 }
+
+/// A5 on the immediate path (issue #53): batch 2's receipt names only a channel the
+/// client does not follow, so it has nothing to await; it must still wait for batch 1,
+/// which is waiting on a `slow` cursor.
+#[test]
+fn a5_immediately_settleable_batch_waits_for_the_earlier_batch() {
+    let mut sim = Sim::new(53, 1);
+    sim.apply(Action::Subscribe {
+        client: 0,
+        channel: "slow".into(),
+    })
+    .unwrap();
+    sim.host.set_membership(&entry_key("s"), &["slow"]);
+    sim.host.set_membership(&entry_key("n"), &["other"]);
+    sim.apply(Action::Enqueue {
+        client: 0,
+        mutation: MutationSpec::CreateEntry {
+            id: "s".into(),
+            text: "1".into(),
+        },
+    })
+    .unwrap();
+    sim.apply(Action::Freeze { client: 0 }).unwrap();
+    sim.apply(Action::Deliver).unwrap(); // batch 1 executed, receipt 1 queued
+    sim.apply(Action::Deliver).unwrap(); // receipt 1 acknowledged, waits on slow
+    sim.apply(Action::Enqueue {
+        client: 0,
+        mutation: MutationSpec::CreateEntry {
+            id: "n".into(),
+            text: "2".into(),
+        },
+    })
+    .unwrap();
+    sim.apply(Action::Freeze { client: 0 }).unwrap();
+    sim.apply(Action::Deliver).unwrap(); // batch 2 executed, receipt 2 queued
+    sim.apply(Action::Deliver).unwrap(); // receipt 2: only an `other` checkpoint
+    assert!(
+        sim.clients[0].receipts[&2]
+            .required_checkpoints
+            .iter()
+            .all(|cp| cp.channel == "other"),
+        "batch 2's receipt names nothing the client can await"
+    );
+    assert_eq!(
+        sim.client(0).pending_count().unwrap(),
+        2,
+        "batch 2 has nothing to await but must wait for batch 1"
+    );
+    sim.check().unwrap();
+    sim.apply(Action::Pull {
+        client: 0,
+        channel: "slow".into(),
+    })
+    .unwrap();
+    sim.drain();
+    assert_eq!(sim.client(0).pending_count().unwrap(), 0);
+    sim.check().unwrap();
+}

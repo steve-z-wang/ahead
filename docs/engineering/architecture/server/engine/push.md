@@ -16,7 +16,7 @@ Code: `process_push` and `decode` in [server/lib.rs](../../../../../crates/serve
 
 ## 6. Runtime View
 
-1. **Lock the client.** `claim` locks the client's row and returns its owner, last sequence and stored receipt. A different owner is `owner_mismatch`.
+1. **Lock the client.** `claim` locks the client's row and returns its owner, last sequence and stored receipt. A different owner is the `client.owner_mismatch` error.
 2. **Compare sequences.** The same sequence as last time returns the stored receipt without running anything (guarantee P1). A smaller one is `overlap`; anything but `last + 1` is `gap` (guarantee P2).
 3. **Check versions.** If any mutation names a known mutation at an unregistered version, the whole batch is refused before any handler runs.
 4. **Run each mutation.** Decode its arguments; a decode failure becomes a rejection with the decode code and no handler call. Otherwise open a savepoint, call the handler, and either roll the savepoint back on a rejection or record the settlement channel, then release it.
@@ -37,6 +37,6 @@ Tests read, not executed.
 
 **To confirm: whether retries must validate request bodies.** *Condition:* a client retries a batch sequence with a different body. *Consequence:* the stored receipt is returned; `PushRequest::semantic_hash` is never called outside core tests and the `request_hash` column in [migration.sql](../../../../../packages/persistence-prisma/migration.sql) is never written. The persistence test asserts the current behavior. *Status:* codec hash tests do not establish server enforcement. Whether retries should require matching request hashes remains a contract decision owned here.
 
-**Accepted limitation.** A client id is bound to the first owner that used it; a later push from another user with the same client id is `owner_mismatch` (HTTP 403) and there is no reassignment. Relevant to shared devices.
+**Accepted limitation.** A client id is bound to the first owner that used it; a later push from another user with the same client id is `client.owner_mismatch` (HTTP 403) and there is no reassignment. Relevant to shared devices.
 
 **Accepted limitation (planned change).** The only size bound is the protocol's 20-mutation cap and the HTTP body limit; a server-side byte cap is part of [#11](https://github.com/zanminwang/ahead/issues/11). The lack of a client-side escape from a batch the server keeps failing is recorded under [Batching](../../client/engine/push/batching.md).
