@@ -218,3 +218,131 @@ fn unsubscribing_settles_its_checkpoint_and_later_pages_are_dropped() {
     );
     assert_eq!(table_count(&mut c, "Entry"), entries);
 }
+
+/// A2: a page answering a pull issued before the channel was unsubscribed and
+/// subscribed again is stale, not a gap, on every incoming path (issue #32). A page
+/// the client never requested that starts beyond its cursor is still a gap.
+#[test]
+fn page_from_a_previous_subscription_is_stale_not_a_gap() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    subscribe(&mut c, "a");
+    c.apply_page(page("a", 0, 1, Some("A"))).unwrap();
+    let in_flight = c.downlink_request("a").unwrap();
+    assert!(in_flight.contains("\"fromCursor\":1"));
+    c.transaction(|tx| tx.set_channel("a".into(), false))
+        .unwrap();
+    c.transaction(|tx| tx.set_channel("a".into(), true))
+        .unwrap();
+    assert_eq!(c.cursor("a").unwrap(), 0);
+
+    // apply_page: the answer to the old request is dropped, the cursor stays at 0.
+    let report = c.apply_page(page("a", 1, 2, Some("B"))).unwrap();
+    assert!(report.stale, "{report:?}");
+    assert_eq!(report.applied, 0);
+    assert_eq!(c.cursor("a").unwrap(), 0);
+    assert!(c.read(&key()).unwrap().is_none());
+    // The same page with no request behind it is a genuine gap for direct callers.
+    assert!(c.apply_page(page("a", 1, 2, Some("B"))).is_err());
+    // A fresh pull from the reset cursor delivers everything.
+    let fresh = c.downlink_request("a").unwrap();
+    assert!(fresh.contains("\"fromCursor\":0"));
+    assert_eq!(c.apply_page(page("a", 0, 2, Some("B"))).unwrap().applied, 1);
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
+
+    // receive_downlink: covered rather than recover, so the SDK does not re-catch-up.
+    let request = PullRequest::decode(c.downlink_request("a").unwrap().as_bytes()).unwrap();
+    assert_eq!(request.from_cursor, 2);
+    c.transaction(|tx| tx.set_channel("a".into(), false))
+        .unwrap();
+    c.transaction(|tx| tx.set_channel("a".into(), true))
+        .unwrap();
+    let progress = c
+        .receive_downlink(page("a", 2, 3, Some("C")), Some(request))
+        .unwrap();
+    assert_eq!(progress.disposition, "covered");
+    assert_eq!(c.cursor("a").unwrap(), 0);
+    // The SDK's late-catch-up shape: the old request is still outstanding when the
+    // new subscription issues its own request from the same cursor; the fresh
+    // answer applies, and the obsolete answer is then dropped.
+    let old = PullRequest::decode(c.downlink_request("a").unwrap().as_bytes()).unwrap();
+    c.transaction(|tx| tx.set_channel("a".into(), false))
+        .unwrap();
+    c.transaction(|tx| tx.set_channel("a".into(), true))
+        .unwrap();
+    let fresh = PullRequest::decode(c.downlink_request("a").unwrap().as_bytes()).unwrap();
+    assert_eq!((old.from_cursor, fresh.from_cursor), (0, 0));
+    let progress = c
+        .receive_downlink(page("a", 0, 1, Some("fresh")), Some(fresh))
+        .unwrap();
+    assert_eq!(progress.disposition, "applied");
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "fresh");
+    let progress = c
+        .receive_downlink(page("a", 0, 1, Some("obsolete")), Some(old))
+        .unwrap();
+    assert_eq!(progress.disposition, "covered");
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "fresh");
+    // Back to a clean channel for the SyncCycle steps below.
+    c.transaction(|tx| tx.set_channel("a".into(), false))
+        .unwrap();
+    c.transaction(|tx| tx.set_channel("a".into(), true))
+        .unwrap();
+    // An unrequested page beyond the cursor is still a gap to recover from.
+    let progress = c
+        .receive_downlink(page("a", 2, 3, Some("C")), None)
+        .unwrap();
+    assert_eq!(progress.disposition, "recover");
+
+    // SyncCycle: completing the old pull after a resubscribe is not an error.
+    let mut cycle = SyncCycle::default();
+    cycle.restart();
+    let action = cycle.next(&mut c).unwrap().unwrap();
+    assert_eq!(action.kind, "pull");
+    c.transaction(|tx| tx.set_channel("a".into(), false))
+        .unwrap();
+    c.transaction(|tx| tx.set_channel("a".into(), true))
+        .unwrap();
+    cycle
+        .complete(&mut c, &page("a", 0, 1, Some("old")).encode().unwrap())
+        .unwrap();
+    assert_eq!(
+        c.cursor("a").unwrap(),
+        0,
+        "the stale answer did not move the cursor"
+    );
+    assert!(c.read(&key()).unwrap().is_none());
+
+    // Subscribing another channel does not make channel a's pull stale.
+    cycle.restart();
+    let action = cycle.next(&mut c).unwrap().unwrap();
+    assert_eq!(action.kind, "pull");
+    c.transaction(|tx| tx.set_channel("b".into(), true))
+        .unwrap();
+    cycle
+        .complete(&mut c, &page("a", 0, 1, Some("kept")).encode().unwrap())
+        .unwrap();
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "kept");
+}
+
+#[test]
+fn older_subscription_response_cannot_discard_a_fresh_response() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    subscribe(&mut c, "a");
+    let old = PullRequest::decode(c.downlink_request("a").unwrap().as_bytes()).unwrap();
+    c.transaction(|tx| tx.set_channel("a".into(), false))
+        .unwrap();
+    c.transaction(|tx| tx.set_channel("a".into(), true))
+        .unwrap();
+    let fresh = PullRequest::decode(c.downlink_request("a").unwrap().as_bytes()).unwrap();
+    // The requests have identical wire identities. Receiving the old answer
+    // first must not consume the fresh request and discard its later answer.
+    c.receive_downlink(stamped("a", 0, 1, 1, Some("old")), Some(old))
+        .unwrap();
+    let fresh_progress = c
+        .receive_downlink(stamped("a", 0, 2, 2, Some("fresh")), Some(fresh))
+        .unwrap();
+    assert_eq!(fresh_progress.disposition, "applied");
+    assert_eq!(c.cursor("a").unwrap(), 2);
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "fresh");
+}
