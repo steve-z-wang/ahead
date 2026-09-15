@@ -29,5 +29,6 @@ export AHEAD_DART_LIBRARY="$AHEAD_LIBRARY"
 (cd packages/dart && dart pub get && dart analyze && dart test)
 bash integration/generated-api/verify.sh
 bash integration/e2e/run.sh
+node --test integration/e2e/todo-ui.test.mjs
 bash integration/e2e/todo-run.sh
 python3 website/scripts/check_examples.py

@@ -25,7 +25,8 @@ export function useTodos(config: LaunchConfig): TodoState {
 
   useEffect(() => {
     let disposed = false;
-    let unwatch = () => {};
+    let unwatchTodos = () => {};
+    let unwatchUser = () => {};
     let loaded = false;
     const connectionFailed = () => {
       // A transport failure never means a local write was lost; it only matters before the first load.
@@ -52,15 +53,6 @@ export function useTodos(config: LaunchConfig): TodoState {
         return;
       }
       opened.current = session;
-      const refreshUser = async () => {
-        const row = await session.user();
-        if (disposed) return;
-        if (row) {
-          loaded = true;
-          setUser(row);
-          setPhase("ready");
-        }
-      };
       const checkRejections = async () => {
         const rejections = await session.rejections();
         if (disposed || rejections.length === 0) return;
@@ -70,21 +62,33 @@ export function useTodos(config: LaunchConfig): TodoState {
         for (const rejection of rejections) await session.dismiss(rejection.ordinal);
       };
       recheck.current = checkRejections;
-      unwatch = session.session.watch(
+      unwatchUser = session.client.models.user.watch(
+        { where: { id: config.user } },
+        (rows) => {
+          if (disposed) return;
+          const row = rows[0] ?? null;
+          setUser(row);
+          if (row) {
+            loaded = true;
+            setPhase("ready");
+          }
+        },
+        (failure) => console.log("user watch:", String(failure)),
+      );
+      unwatchTodos = session.session.watch(
         (rows) => {
           if (disposed) return;
           setTodos(rows);
-          void refreshUser();
           void checkRejections();
         },
         (failure) => console.log("watch:", String(failure)),
       );
-      await refreshUser();
     })();
     return () => {
       disposed = true;
       recheck.current = async () => {};
-      unwatch();
+      unwatchTodos();
+      unwatchUser();
       const session = opened.current;
       opened.current = null;
       void session?.session.close();
