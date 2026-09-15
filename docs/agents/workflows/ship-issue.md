@@ -29,7 +29,12 @@ gh issue comment N --body "[start] branch codex/<name>, worktree .worktrees/<nam
 
 Follow [using-git-worktrees](../skills.md#git-workflow). Create `.worktrees/<name>` on branch `codex/<name>` from `main`. Set up test prerequisites per [running tests](../../engineering/testing/running.md).
 
-### 3. Confirm the design
+### 3. Choose the path by issue type
+
+- Issue carries `bug`: follow step 3b, then continue at step 6.
+- Otherwise: follow steps 3a, 4 and 5.
+
+### 3a. Confirm the design
 
 Follow [brainstorming](../skills.md#design-and-planning).
 
@@ -42,6 +47,21 @@ gh issue comment N --body "[design] ..."
 gh issue edit N --remove-label decision
 ```
 
+### 3b. Reproduce and diagnose
+
+Follow [systematic-debugging](../skills.md#development-and-debugging).
+
+- Write a failing test that reproduces the reported behavior before changing any code. Comment `[repro]` with the test name and the observed failure.
+- Find the root cause. Comment `[cause]` with the cause and the intended fix. If the cause is a design gap rather than a defect, stop and treat the issue as a feature: swap `bug` for `enhancement` and go back to step 3a.
+- Fix it, then confirm the reproducing test passes and no other test changed.
+
+```sh
+gh issue comment N --body "[repro] test <name> fails with ..."
+gh issue comment N --body "[cause] ..."
+```
+
+No plan file is needed for a bug. Write `[change]`, `[blocked]` and `[scope]` comments as in step 5 when they apply.
+
 ### 4. Plan
 
 Follow [writing-plans](../skills.md#design-and-planning). Keep the plan under `docs/superpowers/plans/`; do not paste it into the issue. Comment `[plan]` with a link to the plan file on the branch.
@@ -52,7 +72,7 @@ Follow [executing-plans](https://github.com/obra/superpowers/tree/main/skills/ex
 
 Write back to the issue when any of these happen:
 
-- `[change]` the design changes from what `[design]` said. Append a new comment; do not edit the old one.
+- `[change]` the approach changes from what `[design]` or `[cause]` said. Append a new comment; do not edit the old one.
 - `[blocked]` progress stops on something outside the issue. Say what, and whether a new issue was opened.
 - `[scope]` the work grows beyond the issue. Split the remainder into a new issue and link it.
 
