@@ -62,10 +62,7 @@ pub(crate) async fn read_back(
             return Ok(Outcome::Refused(code::MODEL_VERSION_UNSUPPORTED.into()));
         };
         if config.contract(&key.model, *version).is_none() {
-            return Err(internal(format!(
-                "model {} v{version} is not retained",
-                key.model
-            )));
+            return Ok(Outcome::Refused(code::MODEL_VERSION_UNSUPPORTED.into()));
         }
         versions.insert(&key.model, *version);
     }
@@ -107,9 +104,9 @@ pub(crate) async fn read_back(
         let rows = match loaded {
             Loaded::Refused { rejection } => return Ok(Outcome::Refused(rejection)),
             Loaded::Rows(rows) => rows,
-            // A loader failure aborts the whole delivery, same as a thrown
-            // error; mapping it to a rejection is [#95](https://github.com/zanminwang/ahead/issues/95).
-            Loaded::Failed { error } => return Err(Error::host(error)),
+            // A thrown loader error rejects only this mutation; it never
+            // aborts the rest of the batch.
+            Loaded::Failed { .. } => return Ok(Outcome::Refused(code::LOADER_FAILED.into())),
         };
         if rows.len() != encoded_keys.len() {
             return Err(Error::new(code::LOADER_INVALID, "misaligned loader result"));
