@@ -1,5 +1,10 @@
 # Handoff: mobile To-do demo (#31)
 
+## Status 2026-09-15
+
+Implemented on branch `codex/todo-mobile` (worktree `.worktrees/todo-mobile`), stacked on `codex/react-native` (#100). The To-do backend and its 15 real-backend e2e scenarios pass (`bash integration/e2e/todo-run.sh`), the Expo app builds with embedded JavaScript, and `bash integration/platform/run_todo_ios_smoke.sh` passed on two iOS 26.5 simulators: live add/done both ways, one dropped push response retried without a duplicate handler run, offline add-then-done, process termination and relaunch with the same client identity, Bob's independent add, reconnect and convergence of both phones with PostgreSQL. `examples/rust-round-trip` moved to `integration/e2e/fixtures/round-trip`; the website quickstart points at `examples/todo`. Evidence and limits: `examples/todo/README.md`. Neither branch is pushed or merged.
+
+
 ## Copyable agent prompt
 
 **Scope correction:** Work is split into two issues. [React Native support #100](https://github.com/zanminwang/ahead/issues/100) blocks [To-do demo #31](https://github.com/zanminwang/ahead/issues/31). Complete #100 using `docs/superpowers/plans/2026-09-15-react-native-support.md` first. If already working from the original handoff, preserve current changes and separate SDK work under #100; do not continue treating both as one demo issue.

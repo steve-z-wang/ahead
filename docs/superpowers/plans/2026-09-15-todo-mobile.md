@@ -141,7 +141,7 @@ Insert through `tx.todo.create`; translate only a proven task-primary-key confli
 ## Task 4: Verify demo integration with the supported SDK
 
 - [x] Generate the Todo mobile client against #100's runtime entry point and typecheck/bundle the app.
-- [ ] Run a local open/query/close through the installed SDK and verify the generated mutation imports resolve.
+- [x] Run a local open/query/close through the installed SDK and verify the generated mutation imports resolve.
 - [x] If a missing SDK behavior prevents integration, report it against #100; do not silently expand this demo into SDK development.
 
 ## Task 5: Implement the minimal screen on the real client
@@ -184,7 +184,7 @@ async function submit() {
 
 Bind the checkbox to `session.setDone(todo.id, !todo.done)`. Use an accessible checkbox role/state and native keyboard submission. Keep task state sourced from local watch callbacks. Avoid component snapshot tests that merely mirror JSX; verify empty/long titles, keyboard overlap, and touch targets in the running app.
 - [x] Wire initial load, cached offline start, local commit error, and persisted rejection feedback. Use actual engine status/rejections; do not treat every transport error as a failed task write or display internal machine codes to the user. Keep technical logs in the harness.
-- [ ] Run the app with Alice and Bob against the same backend. Add on Alice, complete on Bob; observe updates in both. Check that no assignment/reply/delete controls exist. Commit the screen and domain adapter.
+- [x] Run the app with Alice and Bob against the same backend. Add on Alice, complete on Bob; observe updates in both. Check that no assignment/reply/delete controls exist. Commit the screen and domain adapter.
 
 ## Task 6: Prove two-phone offline recovery and document the runnable demo
 
@@ -194,11 +194,11 @@ Bind the checkbox to `session.setDone(todo.id, !todo.done)`. Use an accessible c
 
 **Produces:** a reproducible runner that fails on incorrect results and records device/build/version evidence. Diagnostic commands live outside the normal UI and use the same generated client/session as the screen.
 
-- [ ] Build a simulator app with embedded JS. Install the same app independently on two disposable simulators. Accept UDIDs as runner arguments, verify they differ, select separate user launch configuration, and verify distinct stored `clientId` values. Do not assume a fixed simulator model or Xcode version.
-- [ ] Drive the named sequence: seed/load → Alice add → Bob done → disconnect Alice → Alice add and done → Bob independent add → terminate/relaunch Alice offline → reconnect → assert all three stores agree and no pending mutations remain. Include a backend restart with persistent PostgreSQL and a lost-response retry in automated integration coverage.
-- [ ] Make the per-client disconnect real for at least one run, using an isolated proxy/process or network fault harness scoped to that simulator's backend route. SDK pause/resume is a useful additional test, but does not establish network-loss handling. Do not alter the user's system-wide firewall or unrelated network sessions.
-- [ ] Use `xcrun simctl terminate` / `launch` for process restart and capture screenshots from both devices at online, offline/relaunch, and settled stages. Await explicit diagnostic assertions with a timeout; timeout is a test failure. Clean up only simulators/processes created by the runner.
-- [ ] Document exact executable commands implemented by the earlier tasks:
+- [x] Build a simulator app with embedded JS. Install the same app independently on two disposable simulators. Accept UDIDs as runner arguments, verify they differ, select separate user launch configuration, and verify distinct stored `clientId` values. Do not assume a fixed simulator model or Xcode version.
+- [x] Drive the named sequence: seed/load → Alice add → Bob done → disconnect Alice → Alice add and done → Bob independent add → terminate/relaunch Alice offline → reconnect → assert all three stores agree and no pending mutations remain. Include a backend restart with persistent PostgreSQL and a lost-response retry in automated integration coverage.
+- [x] Make the per-client disconnect real for at least one run, using an isolated proxy/process or network fault harness scoped to that simulator's backend route. SDK pause/resume is a useful additional test, but does not establish network-loss handling. Do not alter the user's system-wide firewall or unrelated network sessions.
+- [x] Use `xcrun simctl terminate` / `launch` for process restart and capture screenshots from both devices at online, offline/relaunch, and settled stages. Await explicit diagnostic assertions with a timeout; timeout is a test failure. Clean up only simulators/processes created by the runner.
+- [x] Document exact executable commands implemented by the earlier tasks:
 
 ```sh
 bash examples/todo/generate.sh
