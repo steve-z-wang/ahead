@@ -52,6 +52,6 @@ Verified 2026-09-14: `cargo test -p ahead-sim --locked` passed with the two L4 s
 
 ## 11. Risks and Technical Debt
 
-**Potential risk: a failed replay is silent.** *Condition:* a queued operation no longer applies to the current before image. *Consequence:* the visible row shows the before image while the mutation stays queued and will still be sent; nothing reports the divergence. *Evidence:* the `failed` branch of `rebuild`. No test covers it. **To confirm:** whether this case should be surfaced.
+**Potential risk: a failed replay is silent.** *Condition:* a queued operation no longer applies to the current before image. *Consequence:* the visible row shows the before image while the mutation stays queued and will still be sent; nothing reports the divergence. *Evidence:* the `failed` branch of `rebuild`. No test covers it. **To confirm:** whether this case should be surfaced ([#55](https://github.com/zanminwang/ahead/issues/55)).
 
 **Potential risk: cost grows with queue length.** Extending queued deletes to new children re-scans the whole queue and recomputes descendants on every delivered record. Not measured; performance work is [#12](https://github.com/zanminwang/ahead/issues/12).

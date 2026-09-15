@@ -28,6 +28,6 @@
 
 ## 11. Risks and Technical Debt
 
-- A deterministic handler failure can block later batches: retries preserve the failed batch, and sent mutations cannot be dropped. Evidence: [Client::drop_mutation](../../../../../../crates/client/src/lib.rs) and [Server Push](../../../server/engine/push.md).
+- A deterministic handler failure can block later batches: retries preserve the failed batch, and sent mutations cannot be dropped. Evidence: [Client::drop_mutation](../../../../../../crates/client/src/lib.rs) and [Server Push](../../../server/engine/push.md). Recovery from a permanently failing frozen batch is [#56](https://github.com/zanminwang/ahead/issues/56).
 - The count cap is fixed at 20; the default byte budget is 256 KiB. Limit configuration is tracked in [#11](https://github.com/zanminwang/ahead/issues/11).
 - Each size check re-encodes the candidate batch. Its cost grows with batch size; measurement belongs to [#12](https://github.com/zanminwang/ahead/issues/12).

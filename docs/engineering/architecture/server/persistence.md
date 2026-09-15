@@ -35,6 +35,6 @@ Tests read, not executed.
 
 ## 11. Risks and Technical Debt
 
-**Technical debt.** The `request_hash` column is never written or read ([Server Push](engine/push.md)).
+**Technical debt.** The `request_hash` column is never written or read; its fate follows the retry-validation decision in [Server Push](engine/push.md) ([#47](https://github.com/zanminwang/ahead/issues/47)).
 
-**Accepted limitations.** PostgreSQL via Prisma is the only adapter; the SQL is PostgreSQL-specific. The framework tables are installed from a raw SQL file with no migration tooling. Rows are never pruned: client rows live forever and invalidation rows grow with records × channels. The isolation requirement on an application-supplied runner is stated in prose only.
+**Accepted limitations.** PostgreSQL via Prisma is the only adapter; the SQL is PostgreSQL-specific. The framework tables are installed from a raw SQL file with no migration tooling. Rows are never pruned: client rows live forever and invalidation rows grow with records × channels ([#61](https://github.com/zanminwang/ahead/issues/61)). The isolation requirement on an application-supplied runner is stated in prose only.

@@ -39,4 +39,4 @@ Tests read, not executed.
 
 **Accepted limitation.** `self` is the only argument expression. The compiler message says "currently"; no issue tracks an extension. Stated for authors in the [schema reference](../../../../website/docs/schema/reference.md#mutations).
 
-**Potential risk.** The Rust API accepts opaque prerequisite keys; a non-JSON key has no `name`, so the SDK runner throws `Missing prerequisite handler` and stops. Affects only Rust callers that also use the SDK runner.
+**Potential risk.** The Rust API accepts opaque prerequisite keys; a non-JSON key has no `name`, so the SDK runner throws `Missing prerequisite handler` and stops. Affects only Rust callers that also use the SDK runner. Key validation across Rust and the generated runners is [#65](https://github.com/zanminwang/ahead/issues/65).
