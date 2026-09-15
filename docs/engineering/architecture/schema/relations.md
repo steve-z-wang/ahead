@@ -23,7 +23,7 @@ Behavior the runtimes give a relation:
 - **Dependencies.** A queued create of a record another operation references becomes a lifecycle dependency ([Dependencies](../client/engine/push/dependencies.md)).
 - **Navigation.** `related` follows a reference (null when a reference field is null); `referencing` filters the referencing model by the reference fields ([Queries](../client/engine/local-operations/queries.md)).
 
-Code: resolution in [compiler/lib.rs](../../../../crates/compiler/src/lib.rs); descriptor checks in [core/schema.rs](../../../../crates/core/src/schema.rs); cascade in [client/mutate.rs](../../../../crates/client/src/mutate.rs) (`descendants`).
+Code: resolution in [compiler/validate.rs](../../../../crates/compiler/src/validate.rs); descriptor checks in [core/schema.rs](../../../../crates/core/src/schema.rs); cascade in [client/mutate.rs](../../../../crates/client/src/mutate.rs) (`descendants`).
 
 ## 10. Quality Requirements
 

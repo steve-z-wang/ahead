@@ -25,7 +25,7 @@ A **task key** is what ties them to the queue. When a wire operation carries a n
 
 The SDK runner walks the pending tasks, calls `handlers[name](arguments)`, and marks the task ready on success or failed on exception. A failed task is retried only after the application resets it to pending, so a permanent failure does not spin.
 
-Code: compiler checks in [compiler/lib.rs](../../../../crates/compiler/src/lib.rs); key derivation in [client/policies.rs](../../../../crates/client/src/policies.rs); rows in [client/queue.rs](../../../../crates/client/src/queue.rs); the runner in [client-js/index.mts](../../../../packages/client-js/index.mts) and [dart/client.dart](../../../../packages/dart/lib/src/client.dart).
+Code: compiler checks in [compiler/validate.rs](../../../../crates/compiler/src/validate.rs); key derivation in [client/policies.rs](../../../../crates/client/src/policies.rs); rows in [client/queue.rs](../../../../crates/client/src/queue.rs); the runner in [client-js/index.mts](../../../../packages/client-js/index.mts) and [dart/client.dart](../../../../packages/dart/lib/src/client.dart).
 
 ## 10. Quality Requirements
 
