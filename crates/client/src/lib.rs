@@ -106,6 +106,78 @@ pub struct Client<S: ClientStore> {
     watchers: Vec<(BTreeSet<String>, Sender<()>)>,
     session: Option<Session>,
     last_changed: BTreeSet<String>,
+    pulls: PullLedger,
+}
+
+/// Marker a transaction leaves in its changed set when it subscribes or
+/// unsubscribes a channel; stripped before the set reaches watchers.
+const SUBSCRIPTION_MARK: &str = "ahead_subscription:";
+
+/// In-memory memory of the pulls this client issued and of how many times each
+/// channel's subscription changed since open. A page whose request predates the
+/// channel's current subscription is stale, not a gap: the resubscribe reset the
+/// cursor, and the next pull from that cursor delivers everything. Nothing here
+/// is durable; a process restart cannot have a request in flight.
+#[derive(Default)]
+struct PullLedger {
+    epochs: BTreeMap<String, u64>,
+    issued: std::collections::VecDeque<IssuedPull>,
+}
+struct IssuedPull {
+    channel: String,
+    from_cursor: u64,
+    epoch: u64,
+}
+impl PullLedger {
+    const CAPACITY: usize = 1024;
+    fn epoch(&self, channel: &str) -> u64 {
+        self.epochs.get(channel).copied().unwrap_or(0)
+    }
+    /// Apply the subscription changes a committed transaction recorded.
+    fn absorb(&mut self, changed: &mut BTreeSet<String>) {
+        let marks: Vec<String> = changed
+            .iter()
+            .filter(|t| t.starts_with(SUBSCRIPTION_MARK))
+            .cloned()
+            .collect();
+        for mark in marks {
+            changed.remove(&mark);
+            *self
+                .epochs
+                .entry(mark[SUBSCRIPTION_MARK.len()..].to_string())
+                .or_insert(0) += 1;
+        }
+    }
+    fn issue(&mut self, channel: &str, from_cursor: u64) {
+        if self.issued.len() == Self::CAPACITY {
+            self.issued.pop_front();
+        }
+        self.issued.push_back(IssuedPull {
+            channel: channel.to_string(),
+            from_cursor,
+            epoch: self.epoch(channel),
+        });
+    }
+    /// Whether the page answering `(channel, from_cursor)` was requested under an
+    /// earlier subscription of the channel. Consumes the matching request. A page
+    /// this client never requested is not judged here.
+    fn stale(&mut self, channel: &str, from_cursor: u64) -> bool {
+        let current = self.epoch(channel);
+        let matches = |p: &IssuedPull| p.channel == channel && p.from_cursor == from_cursor;
+        if let Some(i) = self
+            .issued
+            .iter()
+            .position(|p| matches(p) && p.epoch == current)
+        {
+            self.issued.remove(i);
+            return false;
+        }
+        if let Some(i) = self.issued.iter().position(matches) {
+            self.issued.remove(i);
+            return true;
+        }
+        false
+    }
 }
 
 impl<S: ClientStore> Client<S> {
@@ -149,6 +221,7 @@ impl<S: ClientStore> Client<S> {
             watchers: vec![],
             session: None,
             last_changed: BTreeSet::new(),
+            pulls: PullLedger::default(),
         })
     }
     pub fn client_id(&self) -> &str {
@@ -168,7 +241,8 @@ impl<S: ClientStore> Client<S> {
         self.watchers.push((tables, tx));
         rx
     }
-    fn notify(&mut self, changed: BTreeSet<String>) {
+    fn notify(&mut self, mut changed: BTreeSet<String>) {
+        self.pulls.absorb(&mut changed);
         self.watchers.retain(|(tables, sender)| {
             if tables.iter().any(|t| changed.contains(t)) {
                 sender.send(()).is_ok()
@@ -561,9 +635,17 @@ impl<S: ClientStore> ClientTransaction<'_, S> {
         if subscribed {
             if self.engine.cursor(&channel)?.is_none() {
                 self.engine.set_cursor(&channel, 0)?;
+                self.engine
+                    .changed
+                    .insert(format!("{SUBSCRIPTION_MARK}{channel}"));
             }
             Ok(())
         } else {
+            if self.engine.cursor(&channel)?.is_some() {
+                self.engine
+                    .changed
+                    .insert(format!("{SUBSCRIPTION_MARK}{channel}"));
+            }
             self.engine.unsubscribe(&channel)
         }
     }

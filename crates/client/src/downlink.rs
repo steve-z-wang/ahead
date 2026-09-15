@@ -78,6 +78,21 @@ impl<S: ClientStore> Client<S> {
     /// Per-change commits; a failing change is skipped and the cursor still advances (reference behavior).
     pub fn apply_page(&mut self, page: PullPage) -> Result<ApplyReport> {
         page.validate()?;
+        // A page answering a pull issued before the channel was unsubscribed and
+        // subscribed again was built against a cursor this subscription no longer
+        // has; it is stale, not a gap, and the next pull from the reset cursor
+        // delivers everything.
+        if self.stale_subscription_page(&page) {
+            return Ok(ApplyReport {
+                stale: true,
+                ..Default::default()
+            });
+        }
+        self.apply_current_page(page)
+    }
+    /// `apply_page` after the subscription-epoch check; the check consumes the
+    /// matching request, so each incoming page runs it exactly once.
+    pub(crate) fn apply_current_page(&mut self, page: PullPage) -> Result<ApplyReport> {
         // A subscription row exists iff the client is subscribed. Applying a page for
         // any other channel would insert one through `set_cursor` and re-claim every
         // record it carries, so a page for an unsubscribed channel - a pull still in

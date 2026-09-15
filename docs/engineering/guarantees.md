@@ -32,7 +32,7 @@ Channel cursors order delivery within a subscription. Record stamps order author
 | ID | Required behavior |
 | --- | --- |
 | A1 | Delivered server values replace settled optimism; later pending edits replay over the authoritative base. |
-| A2 | Within a subscription, the cursor never decreases. Covered pages do nothing; overlapping pages apply only their unseen suffix. A page starting beyond the local cursor cannot skip the gap. |
+| A2 | Within a subscription, the cursor never decreases. Covered pages do nothing; overlapping pages apply only their unseen suffix. A page starting beyond the local cursor cannot skip the gap. A page answering a pull issued under an earlier subscription of the channel is stale, not a gap: it is dropped and the cursor stays where the resubscribe put it. |
 | A3 | Accepted optimism waits for all required checkpoints on subscribed channels, whether pages or the receipt arrive first. Checkpoints outside the subscriptions are not awaited. |
 | A4 | Required checkpoints come from channels notified by the handler. Missing or ambiguous selection for an accepted mutation aborts the batch. |
 | A5 | Accepted batches settle in sequence order; a later ready batch must not pass an earlier waiting batch. |

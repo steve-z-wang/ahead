@@ -7,7 +7,7 @@ use crate::{
     schema,
 };
 use ahead_client::{Client, Operation, OperationKind};
-use ahead_core::{PullPage, PullRequest, PushReceipt, PushRequest, RecordKey};
+use ahead_core::{PullPage, PushReceipt, PushRequest, RecordKey};
 use ahead_sqlite::SqliteStore;
 use serde_json::json;
 use std::{
@@ -339,14 +339,12 @@ impl Sim {
                 {
                     return Ok(());
                 }
-                let from_cursor = c.cursor(&channel).map_err(|e| e.to_string())?;
-                let bytes = PullRequest {
-                    channel: channel.clone(),
-                    client_id: c.client_id().to_string(),
-                    from_cursor,
-                }
-                .encode()
-                .map_err(|e| e.to_string())?;
+                // Issued through the client so it can tell a page from an earlier
+                // subscription of the channel apart from a gap (A2).
+                let bytes = c
+                    .downlink_request(&channel)
+                    .map_err(|e| e.to_string())?
+                    .into_bytes();
                 self.net.send(Message::Pull {
                     client,
                     channel,

@@ -180,16 +180,11 @@ fn a4_handler_without_a_channel_aborts_the_batch() {
     sim.check().unwrap();
 }
 
-/// A2 (open): a page pulled from channel "a" before an Unsubscribe/Subscribe cycle
-/// can still be in flight when the resubscribe resets the channel's cursor to 0; it
-/// must be dropped as stale, a page from a previous subscription, rather than
-/// treated as a gap or applied against the reset cursor. No reproduction of this
-/// existed in the repo; this is the nine-action repro from issue #32.
+/// A2: a page pulled from channel "a" before an Unsubscribe/Subscribe cycle can
+/// still be in flight when the resubscribe resets the channel's cursor to 0; it is
+/// dropped as stale, a page from a previous subscription, rather than treated as a
+/// gap or applied against the reset cursor. The nine-action repro from issue #32.
 #[test]
-#[ignore = "issue #32: a page from a previous subscription of the same channel is not \
-recognized as stale; it can be delivered after Unsubscribe/Subscribe resets the cursor to \
-0 and either errors as a gap or is wrongly applied, instead of being dropped. See A2 in \
-docs/engineering/guarantees.md."]
 fn a2_page_from_a_previous_subscription_is_stale_not_a_gap() {
     let mut sim = Sim::new(36, 1);
     sim.apply(Action::Subscribe {
