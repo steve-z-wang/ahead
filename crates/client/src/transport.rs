@@ -68,7 +68,7 @@ impl SyncCycle {
             if page.channel != request.channel || page.from_cursor != request.from_cursor {
                 return Err(invalid("response does not match pull request"));
             }
-            let end = page.changes.len() < 50;
+            let end = !page.continues();
             client.apply_page(page)?;
             if end {
                 self.completed.insert(request.channel);
@@ -115,10 +115,7 @@ impl<S: ClientStore> Client<S> {
         {
             return Err(invalid("response does not match pull request"));
         }
-        let continues = page.changes.len() == 50;
-        if continues && page.to_cursor <= page.from_cursor {
-            return Err(invalid("pull page did not advance"));
-        }
+        let continues = page.continues();
         let cursor = self.cursor(&page.channel)?;
         let disposition = if self.stale_subscription_page(&page)
             || !self.desired_channels()?.contains(&page.channel)

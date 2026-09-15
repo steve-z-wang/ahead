@@ -4,6 +4,21 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
+/// Limits both sides enforce without negotiating them on the wire. Every
+/// consumer reads them from here; making them configurable is
+/// [#11](https://github.com/zanminwang/ahead/issues/11). Host resource
+/// limits (HTTP body and WebSocket frame sizes, page buffers) are not
+/// protocol rules and stay with each transport.
+pub mod limits {
+    /// A push batch carries between one and this many mutations.
+    pub const PUSH_MUTATIONS: usize = 20;
+    /// The client freezes a batch only while its canonical bytes stay under this.
+    pub const PUSH_BYTES: usize = 256 * 1024;
+    /// A pull page carries at most this many changes. A page holding exactly
+    /// this many continues: the channel may hold more beyond `toCursor`.
+    pub const PULL_CHANGES: usize = 50;
+}
+
 pub fn counter(value: u64) -> Result<u64> {
     if value <= MAX_SAFE_INTEGER {
         Ok(value)
@@ -45,8 +60,11 @@ impl PushRequest {
         let acts = raw["mutations"]
             .as_array()
             .ok_or_else(|| invalid("mutations must be array"))?;
-        if acts.is_empty() || acts.len() > 20 {
-            return Err(invalid("batch must contain 1..20 mutations"));
+        if acts.is_empty() || acts.len() > limits::PUSH_MUTATIONS {
+            return Err(invalid(format!(
+                "batch must contain 1..{} mutations",
+                limits::PUSH_MUTATIONS
+            )));
         }
         let mut seen = BTreeSet::new();
         let mut mutations = vec![];
@@ -208,11 +226,23 @@ impl PullPage {
         p.validate()?;
         Ok(p)
     }
+    /// Whether the channel may hold changes beyond `toCursor`: a full page
+    /// ends at its last change, a shorter one reaches the channel head
+    /// ([Protocol / Pull](../../../docs/engineering/architecture/protocol/pull.md)).
+    pub fn continues(&self) -> bool {
+        self.changes.len() == limits::PULL_CHANGES
+    }
     pub fn validate(&self) -> Result<()> {
         counter(self.from_cursor)?;
         counter(self.to_cursor)?;
         if self.to_cursor < self.from_cursor {
             return Err(invalid("page moves backwards"));
+        }
+        if self.changes.len() > limits::PULL_CHANGES {
+            return Err(invalid(format!(
+                "page exceeds {} changes",
+                limits::PULL_CHANGES
+            )));
         }
         let mut previous = self.from_cursor;
         for change in &self.changes {
@@ -235,5 +265,117 @@ impl PullPage {
     pub fn encode(&self) -> Result<Vec<u8>> {
         self.validate()?;
         Ok(canonical_json(&serde_json::to_value(self)?)?.into_bytes())
+    }
+}
+
+/// The one client frame of a live session: `{"type":"subscribe","scopes":[…]}`.
+/// Scopes are normalized on decode and on construction: deduplicated and
+/// sorted by UTF-16 code units, the order the acknowledgement echoes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SubscribeRequest {
+    pub scopes: Vec<String>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SubscribeWire {
+    #[serde(rename = "type")]
+    kind: String,
+    scopes: Vec<String>,
+}
+fn normalize_scopes(scopes: Vec<String>) -> Result<Vec<String>> {
+    if scopes.is_empty() {
+        return Err(invalid("subscribe requires at least one scope"));
+    }
+    if scopes.iter().any(String::is_empty) {
+        return Err(invalid("scope must not be empty"));
+    }
+    let mut scopes: Vec<_> = scopes
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    scopes.sort_by(|left, right| left.encode_utf16().cmp(right.encode_utf16()));
+    Ok(scopes)
+}
+impl SubscribeRequest {
+    pub fn new(scopes: Vec<String>) -> Result<Self> {
+        Ok(Self {
+            scopes: normalize_scopes(scopes)?,
+        })
+    }
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let wire: SubscribeWire = serde_json::from_slice(bytes)?;
+        if wire.kind != "subscribe" {
+            return Err(invalid("expected one subscribe frame with scopes"));
+        }
+        Self::new(wire.scopes)
+    }
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        Ok(
+            canonical_json(&serde_json::json!({"type":"subscribe","scopes":self.scopes}))?
+                .into_bytes(),
+        )
+    }
+}
+
+/// The server's answer to a subscribe frame. `rejections` is vestigial and
+/// must be an empty array ([#63](https://github.com/zanminwang/ahead/issues/63));
+/// unknown fields are ignored so a newer server can extend the frame.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SubscriptionAck {
+    pub scopes: Vec<String>,
+}
+#[derive(Deserialize)]
+struct AckWire {
+    #[serde(rename = "type")]
+    kind: String,
+    scopes: Vec<String>,
+    rejections: Vec<Value>,
+}
+impl SubscriptionAck {
+    pub fn new(scopes: Vec<String>) -> Result<Self> {
+        Ok(Self {
+            scopes: normalize_scopes(scopes)?,
+        })
+    }
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let wire: AckWire = serde_json::from_slice(bytes)
+            .map_err(|_| invalid("invalid live subscription acknowledgement"))?;
+        if wire.kind != "subscribed" || !wire.rejections.is_empty() {
+            return Err(invalid("invalid live subscription acknowledgement"));
+        }
+        Self::new(wire.scopes)
+    }
+    /// Whether the server acknowledged exactly the requested channel set.
+    pub fn confirms(&self, request: &SubscribeRequest) -> bool {
+        self.scopes == request.scopes
+    }
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        Ok(canonical_json(
+            &serde_json::json!({"type":"subscribed","scopes":self.scopes,"rejections":[]}),
+        )?
+        .into_bytes())
+    }
+}
+
+/// A frame the server sends on a live socket: the acknowledgement carries a
+/// `type`, a page never does ([Protocol / Subscriptions](../../../docs/engineering/architecture/protocol/subscriptions.md)).
+#[derive(Clone, Debug, PartialEq)]
+pub enum LiveMessage {
+    Acknowledged(SubscriptionAck),
+    Page(PullPage),
+}
+impl LiveMessage {
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let value: Value = serde_json::from_slice(bytes)?;
+        if !value.is_object() {
+            return Err(invalid("invalid live frame"));
+        }
+        if value.get("type").is_some() {
+            return Ok(Self::Acknowledged(SubscriptionAck::decode(bytes)?));
+        }
+        PullPage::decode(bytes)
+            .map(Self::Page)
+            .map_err(|e| invalid(format!("invalid live page: {e}")))
     }
 }

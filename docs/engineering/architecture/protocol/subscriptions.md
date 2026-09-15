@@ -12,12 +12,12 @@ Engine behavior: [Client / Connection / Controller](../client/connection/control
 
 ## 5. Building Block View
 
-- Scopes must be non-empty strings and at least one is required.
+- Scopes must be non-empty strings and at least one is required. `SubscribeRequest` normalizes them (deduplicated, UTF-16 order) and `SubscriptionAck` carries the same normalized list; `LiveMessage` tells an acknowledgement (it has a `type`) from a page (it has none).
 - The acknowledgement is produced inside the negotiating transaction, which also reads each channel's head; that head is where streaming starts.
 - Clients validate the acknowledgement strictly: the same scope set and an empty `rejections` array, otherwise the session ends.
 - Each streamed page is checked against the subscriber's expected scope and cursor before it is sent.
 
-Code: [server/live.rs](../../../../crates/server/src/live.rs); clients in [client-js/live.mts](../../../../packages/client-js/live.mts) and [dart/live.dart](../../../../packages/dart/lib/src/live.dart).
+Code: [core/protocol.rs](../../../../crates/core/src/protocol.rs) (`SubscribeRequest`, `SubscriptionAck`, `LiveMessage`); the server decodes and answers through them in [server/live.rs](../../../../crates/server/src/live.rs). The clients still check the acknowledgement themselves in [client-js/live.mts](../../../../packages/client-js/live.mts) and [dart/live.dart](../../../../packages/dart/lib/src/live.dart) until the live session moves to Rust ([#58](https://github.com/zanminwang/ahead/issues/58)).
 
 ## 6. Runtime View
 
@@ -25,6 +25,7 @@ Because streaming starts at the head, the client catches up over HTTP from its d
 
 ## 10. Quality Requirements
 
+- Subscribe and acknowledgement frames decode, normalize and refuse as the shared fixture says; a frame is either an acknowledgement or a page. Evidence: [core/tests/contracts.rs](../../../../crates/core/tests/contracts.rs) `live_frames_decode_as_acknowledgement_or_page_and_scopes_normalize` over [fixtures/protocol/live-messages.json](../../../../fixtures/protocol/live-messages.json).
 - Only one subscribe frame is accepted, scopes are normalized, and a subscribe carrying `cursors` is refused. Evidence: [server/tests/runtime.rs](../../../../crates/server/tests/runtime.rs) `live_subscribe_requires_one_subscribe_frame_and_normalizes_scopes`; [server/tests/stamp.rs](../../../../crates/server/tests/stamp.rs) `live_negotiation_establishes_current_heads_and_rejects_cursor_modes`.
 - Both clients complete the handshake and receive pages; a second client frame closes the socket with `1002`. Evidence: [live.test.mjs](../../../../integration/bindings/client-js/live.test.mjs), [dart/test/live_test.dart](../../../../packages/dart/test/live_test.dart), [runtime.test.mjs](../../../../integration/persistence/server/runtime.test.mjs) `live transport negotiates, wakes only after commit, reconnects, and cleans up`.
 

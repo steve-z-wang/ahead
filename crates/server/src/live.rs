@@ -1,16 +1,7 @@
 use crate::{Error, Host, Result, code, head, principal, process_pull};
-use ahead_core::read_counter;
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
-use std::collections::BTreeSet;
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Subscribe {
-    #[serde(rename = "type")]
-    kind: String,
-    scopes: Vec<String>,
-}
+use ahead_core::{PullPage, SubscribeRequest, SubscriptionAck};
+use serde::Serialize;
+use serde_json::json;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,26 +24,12 @@ pub struct PageProgress {
     pub continues: bool,
 }
 
+/// The subscribe frame's shape and scope normalization are protocol rules
+/// ([`SubscribeRequest`]); this maps their refusal to the request code.
 pub fn decode_subscribe(bytes: &[u8]) -> Result<Vec<String>> {
-    let request: Subscribe = serde_json::from_slice(bytes)
-        .map_err(|e| Error::new(code::REQUEST_INVALID, e.to_string()))?;
-    if request.kind != "subscribe" || request.scopes.is_empty() {
-        return Err(Error::new(
-            code::REQUEST_INVALID,
-            "expected one subscribe frame with scopes",
-        ));
-    }
-    if request.scopes.iter().any(|scope| scope.is_empty()) {
-        return Err(Error::new(code::REQUEST_INVALID, "scope must not be empty"));
-    }
-    let mut scopes: Vec<_> = request
-        .scopes
-        .into_iter()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    scopes.sort_by(|left, right| left.encode_utf16().cmp(right.encode_utf16()));
-    Ok(scopes)
+    SubscribeRequest::decode(bytes)
+        .map(|request| request.scopes)
+        .map_err(|e| Error::new(code::REQUEST_INVALID, e.to_string()))
 }
 
 pub async fn negotiate(owner: &str, bytes: &[u8], host: &impl Host) -> Result<Negotiation> {
@@ -63,12 +40,11 @@ pub async fn negotiate(owner: &str, bytes: &[u8], host: &impl Host) -> Result<Ne
         let from_cursor = head(host, &scope).await?;
         accepted.push(Subscription { scope, from_cursor });
     }
-    let response = serde_json::to_string(&json!({
-        "type":"subscribed",
-        "scopes":accepted.iter().map(|entry| &entry.scope).collect::<Vec<_>>(),
-        "rejections":[],
-    }))
-    .map_err(|error| Error::new(code::INTERNAL, error.to_string()))?;
+    let ack = SubscriptionAck::new(accepted.iter().map(|entry| entry.scope.clone()).collect())
+        .and_then(|ack| ack.encode())
+        .map_err(|error| Error::new(code::INTERNAL, error.to_string()))?;
+    let response =
+        String::from_utf8(ack).map_err(|error| Error::new(code::INTERNAL, error.to_string()))?;
     Ok(Negotiation {
         response,
         subscriptions: accepted,
@@ -80,24 +56,19 @@ pub fn page_progress(
     expected_scope: &str,
     expected_cursor: u64,
 ) -> Result<PageProgress> {
-    let invalid = |m: &str| Error::new(code::LIVE_INVALID_PAGE, m);
-    let value: Value = serde_json::from_str(page).map_err(|_| invalid("invalid live page"))?;
-    if value["scope"] != expected_scope {
-        return Err(invalid("invalid live page scope"));
+    let invalid = |m: String| Error::new(code::LIVE_INVALID_PAGE, m);
+    let decoded = PullPage::decode(page.as_bytes())
+        .map_err(|e| invalid(format!("invalid live page: {e}")))?;
+    if decoded.channel != expected_scope {
+        return Err(invalid("invalid live page scope".into()));
     }
-    let from_cursor =
-        read_counter(&value["fromCursor"], false).map_err(|e| invalid(&e.to_string()))?;
-    let to_cursor = read_counter(&value["toCursor"], false).map_err(|e| invalid(&e.to_string()))?;
-    let changes = value["changes"]
-        .as_array()
-        .ok_or_else(|| invalid("invalid live page"))?;
-    if from_cursor != expected_cursor || to_cursor < from_cursor || changes.len() > 50 {
-        return Err(invalid("invalid live page progression"));
+    if decoded.from_cursor != expected_cursor {
+        return Err(invalid("invalid live page progression".into()));
     }
     Ok(PageProgress {
         page: page.into(),
-        to_cursor,
-        continues: changes.len() == 50,
+        to_cursor: decoded.to_cursor,
+        continues: decoded.continues(),
     })
 }
 

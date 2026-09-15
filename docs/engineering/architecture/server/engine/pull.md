@@ -17,7 +17,7 @@ Code: `process_pull` in [server/lib.rs](../../../../../crates/server/src/lib.rs)
 ## 6. Runtime View
 
 1. Read the channel head; a request beyond it is refused, so a client cannot skip ahead.
-2. Scan up to 50 invalidation rows after the client's cursor, in cursor order, and check each: same channel, strictly increasing, within the head, a registered model, a canonical identity key, a positive stamp.
+2. Scan up to `limits::PULL_CHANGES` (50) invalidation rows after the client's cursor, in cursor order, and check each: same channel, strictly increasing, within the head, a registered model, a canonical identity key, a positive stamp.
 3. Group the rows by model and call each loader once with all identities for that model. Normalize each returned row (identity may be included, nullable fields may be omitted); `null` becomes a delete.
 4. Set the page end: the last row's cursor if the scan was full, otherwise the head, so a client does not stall behind positions that compaction emptied.
 
@@ -43,6 +43,6 @@ Tests read, not executed.
 
 **Problem: a loader failure aborts unrelated reads in the page.** `process_pull` propagates loader errors as request errors without isolating and reporting the affected read, contrary to target D7. No tests establishing D7 have been run for this documentation change. Track the protocol, recovery and cursor design in [#95](https://github.com/zanminwang/ahead/issues/95), alongside malformed-record handling in [#51](https://github.com/zanminwang/ahead/issues/51).
 
-**Accepted limitation (planned changes).** Page size is a fixed 50 with count-based completion ([#11](https://github.com/zanminwang/ahead/issues/11)); bootstrap is a cursor walk from zero over every model ([#14](https://github.com/zanminwang/ahead/issues/14) proposes snapshots).
+**Accepted limitation (planned changes).** Page size is the protocol's fixed 50 with count-based completion ([#11](https://github.com/zanminwang/ahead/issues/11)); bootstrap is a cursor walk from zero over every model ([#14](https://github.com/zanminwang/ahead/issues/14) proposes snapshots).
 
 **Accepted limitation, worth stating.** The loader is the only visibility control: a loader that ignores `userId` and `channel` exposes every record in the channel to any authenticated user.

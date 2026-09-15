@@ -520,7 +520,7 @@ impl<S: ClientStore> Client<S> {
         })
     }
     pub fn freeze(&mut self) -> Result<Option<Vec<u8>>> {
-        self.freeze_with_limit(256 * 1024)
+        self.freeze_with_limit(limits::PUSH_BYTES)
     }
     pub fn freeze_with_limit(&mut self, max_bytes: usize) -> Result<Option<Vec<u8>>> {
         self.write(|e| e.freeze(max_bytes))
