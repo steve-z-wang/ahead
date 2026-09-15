@@ -33,17 +33,24 @@ if(false){
  const bad:Entry={...row,status:'typo'};
 
  type Tx={rows:Map<string,object>};
- const shorthand:Handlers<Tx>['addBook']=async({input,notify})=>{notify({channel:'c',records:[input.book]})};
+ const shorthand:Handlers<Tx>['addBook']=async({input,tx,changes,publish})=>{tx.rows.set(input.book.id,input.book);changes.add(input.book);publish({channel:'c'})};
  const grouped:Handlers<Tx>['editEntry']={
-  async v1({input,notify}){notify({channel:'c',records:[input.target]})},
-  async v2({input,notify}){notify({channel:'c',records:[input.entry]})},
+  async v1({input,publish}){publish({channel:'c',records:[input.target]})},
+  // A record added after the publication call still joins the default publication; explicit records may name an empty set.
+  async v2({input,changes,publish}){publish({channel:'c'});changes.add(input.entry);publish({channel:'audit',records:[]});changes.records.map(r=>r.model)},
   // @ts-expect-error v3 is not a retained version of EditEntry
   async v3(){},
  };
  // @ts-expect-error a mutation with two retained versions cannot register a bare function
  const bare:Handlers<Tx>['editEntry']=async()=>{};
  // @ts-expect-error every retained version must be registered
- const partial:Handlers<Tx>['editEntry']={v2:async({input,notify})=>{notify({channel:'c',records:[input.entry]})}};
+ const partial:Handlers<Tx>['editEntry']={v2:async({input,publish})=>{publish({channel:'c',records:[input.entry]})}};
+ // @ts-expect-error handlers publish through `publish`; there is no notify and no return value
+ const legacy:Handlers<Tx>['addBook']=async({notify})=>{notify({channel:'c',records:[]})};
+ // @ts-expect-error a handler has no return value to select a channel with
+ const returned:Handlers<Tx>['addBook']=async()=>({channel:'c'});
+ // @ts-expect-error loaders receive no channel
+ const channelled:Loaders<Tx>['book']=async({ids,channel})=>ids.map(id=>({...id,title:String(channel)}));
 
  // Loaders follow the same shape; a retained older contract has its own record type.
  const v1Row:EntryV1={id:row.id,title:'old',note:null,at:row.at,status:'active'};
