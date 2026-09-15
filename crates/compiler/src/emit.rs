@@ -435,6 +435,10 @@ pub fn backend_typescript(v: &Value, runtime: &str) -> String {
         backend["mutations"] = history.clone();
         backend.as_object_mut().unwrap().remove("backendMutations");
     }
+    if let Some(history) = v.get("backendModels") {
+        backend["models"] = history.clone();
+        backend.as_object_mut().unwrap().remove("backendModels");
+    }
     writeln!(o, "const schema = {} as const;", backend).unwrap();
     let mutations = arr(&backend, "mutations");
     let latest = |name: &str| {

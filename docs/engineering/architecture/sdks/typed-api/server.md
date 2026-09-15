@@ -46,7 +46,7 @@ Handlers receive generated input types for their mutation version; loaders retur
 
 Handler registration implements this decision. Generated `Handlers<Tx>` holds one key per mutation, `lowerFirst(name)`, whose value carries a `v<n>` member for every retained version; a mutation retaining only v1 also accepts the bare function. The runtime refuses at startup: a bare function whenever the retained versions are not exactly v1, a missing version, an unknown `v<n>` key and a non-function value, each naming the mutation and version. Dispatch stays keyed by name and version, so a request never falls back to another version.
 
-Loader registration is still by model name only and has no version dispatch; it waits on [model versions](../../schema/models.md#9-architecture-decisions).
+Loader registration is still by model name only and has no version dispatch. The retained read contracts it will dispatch on are already generated: `backend.json` and the embedded config carry `models`, one `{name, version, identity, fields, enums}` per retained [model version](../../schema/models.md#9-architecture-decisions).
 
 ## 10. Quality Requirements
 

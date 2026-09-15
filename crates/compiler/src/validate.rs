@@ -30,6 +30,10 @@ pub struct Enum {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Model {
     pub name: String,
+    /// The read-contract version declared by `@@version(n)`; 1 when omitted.
+    /// Parse enforces the range and uniqueness rules it shares with the
+    /// mutation directive; the history compares versions across compiles.
+    pub version: u64,
     pub identity: Vec<String>,
     /// Stored fields only; relation fields live in `relations`.
     pub fields: Vec<Field>,
@@ -401,6 +405,7 @@ pub fn validate(d: &Declarations) -> Result<Validated, String> {
         }
         models.push(Model {
             name: m.name.clone(),
+            version: m.version,
             identity: m.identity.clone(),
             fields,
             relations,

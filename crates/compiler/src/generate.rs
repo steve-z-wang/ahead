@@ -33,6 +33,7 @@ pub fn schema(v: &Validated) -> Value {
         .map(|m| {
             json!({
                 "name": m.name,
+                "version": m.version,
                 "identity": m.identity,
                 "fields": m.fields.iter().map(|f| json!({"name":f.name,"nullable":f.nullable,"type":field_type(&f.ty)})).collect::<Vec<_>>(),
                 "relations": m.relations.iter().map(|r| json!({

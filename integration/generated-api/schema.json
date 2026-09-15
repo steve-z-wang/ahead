@@ -460,7 +460,8 @@
       ],
       "name": "Entry",
       "relations": [],
-      "unique": []
+      "unique": [],
+      "version": 2
     },
     {
       "fields": [
@@ -486,7 +487,8 @@
       ],
       "name": "Book",
       "relations": [],
-      "unique": []
+      "unique": [],
+      "version": 1
     },
     {
       "fields": [
@@ -532,7 +534,8 @@
           ]
         }
       ],
-      "unique": []
+      "unique": [],
+      "version": 1
     },
     {
       "fields": [
@@ -558,7 +561,8 @@
       ],
       "name": "Counter",
       "relations": [],
-      "unique": []
+      "unique": [],
+      "version": 1
     }
   ],
   "prerequisites": [],

@@ -26,7 +26,7 @@ Application-facing contracts ([Typed API / Server](../sdks/typed-api/server.md) 
 
 ## 5. Building Block View
 
-Startup validates the compiled config and requires a handler for every retained mutation version and a loader for every model; otherwise `createBackend` throws. A mutation's handler key is `lowerFirst(name)` and its value holds a `v<n>` member per retained version; a mutation retaining only v1 also accepts the bare function ([Typed API / Server](../sdks/typed-api/server.md#9-architecture-decisions)).
+Startup validates the compiled config and requires a handler for every retained mutation version and a loader for every model; otherwise `createBackend` throws. The config's `models` list (every retained model read contract) is carried but not yet consulted; loaders are keyed by model name until versioned dispatch lands ([#91](https://github.com/zanminwang/ahead/issues/91)). A mutation's handler key is `lowerFirst(name)` and its value holds a `v<n>` member per retained version; a mutation retaining only v1 also accepts the bare function ([Typed API / Server](../sdks/typed-api/server.md#9-architecture-decisions)).
 
 At runtime the host function shapes handler input from the engine's decoded arguments: a create slot becomes `{…identity, …data}`, an update becomes `{identity, patch}`, a delete becomes `{identity}`; list slots are arrays and optional slots may be `null`. Each value is tagged with its record reference so `notify` accepts it.
 

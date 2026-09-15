@@ -1,7 +1,7 @@
 use ahead_compiler::validate::{Cardinality, FieldType, OnDelete, Operation, Scalar};
 use ahead_compiler::{Pos, compile, generate, parse, validate};
 
-const SOURCE: &str = "prerequisite Uploaded(key String)\nenum Status { active archived }\nmodel Parent {\n id UUID\n children Child[]\n @@id(id)\n @@unique(id)\n}\nmodel Child {\n id UUID\n parentId UUID\n label String @requires(Uploaded(key: self))\n parent Parent @reference(via: [parentId], onTargetDelete: delete)\n @@id(id)\n}\nmutation Add {\n parent Parent.create\n children Child.create(parent: parent)[]\n @@version(2)\n @@sequence(after: [Rename(parent: parent)])\n}\nmutation Rename { parent Parent.update<> }\n";
+const SOURCE: &str = "prerequisite Uploaded(key String)\nenum Status { active archived }\nmodel Parent {\n id UUID\n children Child[]\n @@id(id)\n @@unique(id)\n @@version(2)\n}\nmodel Child {\n id UUID\n parentId UUID\n label String @requires(Uploaded(key: self))\n parent Parent @reference(via: [parentId], onTargetDelete: delete)\n @@id(id)\n}\nmutation Add {\n parent Parent.create\n children Child.create(parent: parent)[]\n @@version(2)\n @@sequence(after: [Rename(parent: parent)])\n}\nmutation Rename { parent Parent.update<> }\n";
 
 fn pos(line: usize, col: usize) -> Pos {
     Pos { line, col }
@@ -27,9 +27,11 @@ fn parse_keeps_every_declaration_with_its_position() {
     assert_eq!(parent.fields[1].pos, pos(5, 2));
     assert_eq!(parent.unique[0].fields, vec!["id"]);
     assert_eq!(parent.unique[0].pos, pos(7, 2));
+    assert_eq!(parent.version, 2);
     let child = &d.models[1];
+    assert_eq!(child.version, 1, "a model without @@version is version 1");
     let label = &child.fields[2];
-    assert_eq!(label.pos, pos(12, 2));
+    assert_eq!(label.pos, pos(13, 2));
     assert_eq!(
         label.attributes["requires"],
         serde_json::json!({"0":{"name":"Uploaded","arguments":{"key":"self"}}})
@@ -41,19 +43,52 @@ fn parse_keeps_every_declaration_with_its_position() {
     let add = &d.mutations[0];
     assert_eq!(
         (add.name.as_str(), add.version, add.pos),
-        ("Add", 2, pos(16, 1))
+        ("Add", 2, pos(17, 1))
     );
-    assert_eq!(add.slots[0].pos, pos(17, 2));
+    assert_eq!(add.slots[0].pos, pos(18, 2));
     assert_eq!(add.slots[1].cardinality, "list");
     assert_eq!(
         add.slots[1].relation_bindings,
         serde_json::json!({"parent":"parent"})
     );
     let sequence = add.sequence.as_ref().unwrap();
-    assert_eq!(sequence.pos, pos(20, 2));
+    assert_eq!(sequence.pos, pos(21, 2));
     assert_eq!(sequence.arguments["after"][0]["name"], "Rename");
     assert_eq!(d.mutations[1].slots[0].allowed_patch_fields, Some(vec![]));
-    assert_eq!(d.end, pos(23, 1));
+    assert_eq!(d.end, pos(24, 1));
+}
+
+#[test]
+fn model_version_follows_the_mutation_rules() {
+    // The same declaration, the same range and the same duplicate refusal as a mutation.
+    for (source, message) in [
+        (
+            "model A { id UUID @@id(id) @@version(0) }",
+            "version must be positive",
+        ),
+        (
+            "model A { id UUID @@id(id) @@version(x) }",
+            "expected positive version",
+        ),
+        (
+            "model A { id UUID @@id(id) @@version(9007199254740992) }",
+            "version must be positive",
+        ),
+        (
+            "model A { id UUID @@id(id) @@version(1) @@version(2) }",
+            "duplicate version",
+        ),
+    ] {
+        let e = parse(source).unwrap_err();
+        assert!(e.contains(message), "{source}: {e}");
+    }
+    assert_eq!(
+        parse("model A { id UUID @@id(id) @@version(9007199254740991) }")
+            .unwrap()
+            .models[0]
+            .version,
+        9007199254740991
+    );
 }
 
 #[test]
@@ -89,6 +124,7 @@ fn validate_resolves_declarations_into_typed_data_without_descriptors() {
     assert_eq!(v.enums[0].values, vec!["active", "archived"]);
     let child = &v.models[1];
     assert_eq!(child.name, "Child");
+    assert_eq!((v.models[0].version, child.version), (2, 1));
     // Relation fields leave the stored fields and resolve to their target.
     assert_eq!(
         child
