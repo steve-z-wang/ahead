@@ -399,6 +399,69 @@
           }
         ],
         "version": 1
+      },
+      "2": {
+        "input": {
+          "enums": [],
+          "models": [
+            {
+              "fields": [
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "uuid"
+                  }
+                },
+                {
+                  "name": "note",
+                  "nullable": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "identity": [
+                "id"
+              ],
+              "name": "Entry"
+            }
+          ]
+        },
+        "knownFields": {
+          "Entry": [
+            "id",
+            "title",
+            "note",
+            "at",
+            "tags",
+            "status"
+          ]
+        },
+        "name": "RemoveEntries",
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "slots": [
+          {
+            "cardinality": "list",
+            "model": "Entry",
+            "name": "entries",
+            "operation": "delete"
+          },
+          {
+            "allowedPatchFields": [
+              "note"
+            ],
+            "cardinality": "optional",
+            "model": "Entry",
+            "name": "maybe",
+            "operation": "update"
+          }
+        ],
+        "version": 2
       }
     }
   }

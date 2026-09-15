@@ -133,7 +133,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 **Interfaces:**
 - Produces: `RemoveEntries` v2 with slots `entries Entry.delete[]` and `maybe Entry.update<note>?`; v1 retained in history.
 
-- [ ] **Step 1: Edit the fixture**
+- [x] **Step 1: Edit the fixture**
 
 Replace the line
 
@@ -147,12 +147,12 @@ with
 mutation RemoveEntries { entries Entry.delete[] maybe Entry.update<note>? @deprecated(reason: "use entries") @@version(2) }
 ```
 
-- [ ] **Step 2: Run the compiler tests again**
+- [x] **Step 2: Run the compiler tests again**
 
 Run: `cargo test -p ahead-compiler`
 Expected: all PASS. If a test asserts the old `maybe` shape (a `delete` optional) in generated output, update that assertion to the update slot; the `@deprecated` slot notice must still appear.
 
-- [ ] **Step 3: Regenerate the generated-API fixtures**
+- [x] **Step 3: Regenerate the generated-API fixtures**
 
 Run (from the worktree root, after `npm ci && bash scripts/build.sh` once):
 
@@ -163,7 +163,7 @@ git status --short
 
 Expected: `fixtures/compiler/history/mutations.json` gains a `RemoveEntries` `"2"` entry and keeps `"1"`; the five generated files change. If the compiler refuses with `incompatible input change; increase @@version`, the `@@version(2)` did not parse; check the fixture line.
 
-- [ ] **Step 4: Register the v2 handler in the hand-written backends**
+- [x] **Step 4: Register the v2 handler in the hand-written backends**
 
 Open `integration/generated-api/backend-complete.ts` and `integration/generated-api/backend-missing.ts`. The generated `backend.ts` now types `removeEntries` as `{ v1(call): Promise<void>; v2(call): Promise<void> }` (grep `removeEntries:` in `backend.ts` for the exact type). Change each bare function to the versioned object, keeping the existing body as `v1` and adding `v2`:
 
@@ -176,11 +176,11 @@ Open `integration/generated-api/backend-complete.ts` and `integration/generated-
 
 (`backend-missing.ts` deliberately omits one mutation so it fails to typecheck; keep whichever mutation it omits, and only convert `removeEntries` if it is present there.)
 
-- [ ] **Step 5: Fix the Dart negative fixture if its expected error moved**
+- [x] **Step 5: Fix the Dart negative fixture if its expected error moved**
 
 `integration/generated-api/negative/misuse.dart` calls `tx.mutate.removeEntries(entries: const [], maybe: EntryIdentity(id: row.id))`. With v2, `maybe` is an update slot, so the misuse it checks may now be a different type error. Run `bash integration/generated-api/negative/check.sh` and read its expectations (the script or a neighbouring expected-output file). Keep the negative case a genuine misuse of `maybe` (for example passing an `EntryIdentity` where the generated update argument type is expected) and update the expected diagnostic to what `dart analyze` prints.
 
-- [ ] **Step 6: Run the whole generated-API runner**
+- [x] **Step 6: Run the whole generated-API runner**
 
 ```bash
 cargo build -p ahead-dart
@@ -191,7 +191,7 @@ bash integration/generated-api/verify.sh
 
 Expected: exits 0. `node integration/generated-api/test.ts` still checks `RemoveEntries({entries:[]}).operations.length===0`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add fixtures/compiler integration/generated-api

@@ -11,4 +11,4 @@ model Entry {
 }
 mutation CreateEntry { entry Entry.create }
 mutation EditEntry { entry Entry.update<title,note,at> @@version(2) }
-mutation RemoveEntries { entries Entry.delete[] maybe Entry.delete? @deprecated(reason: "use entries") }
+mutation RemoveEntries { entries Entry.delete[] maybe Entry.update<note>? @deprecated(reason: "use entries") @@version(2) }
