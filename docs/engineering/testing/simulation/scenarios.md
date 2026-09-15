@@ -10,7 +10,7 @@ cargo test -p ahead-sim --test authority --locked
 
 Choose a minimal model, channel and client setup. Apply the relevant actions, then assert visible records, pending work or checkpoints according to the promise. Run invariant checks at meaningful intermediate states as well.
 
-Next review: connect each overall guarantee to named assertions and identify clauses not exercised by the existing scenarios.
+The coverage review below records what the existing tests assert; missing tests are tracked in [#68](https://github.com/zanminwang/ahead/issues/68).
 
 ## Coverage review
 

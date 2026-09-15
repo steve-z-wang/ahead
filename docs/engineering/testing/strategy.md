@@ -30,6 +30,6 @@ Detailed compiler, SDK, storage and connection rules belong in their [component 
 
 Use named scenarios for known cases and generated sequences to explore interactions. Preserve a minimized regression when a generated run exposes a defect. Do not treat test counts, a fixed percentage split or a passing run as a complete coverage assessment.
 
-[Coverage review](review.md) records the starting gaps for the next testing issue. That work must inspect assertions and define required checks per change; measured run times should be recorded only after execution.
+[Coverage review](review.md) records the gaps found by reading assertions; [#68](https://github.com/zanminwang/ahead/issues/68) tracks the tests to add. That work must inspect assertions and define required checks per change; measured run times should be recorded only after execution.
 
 Background: [ISTQB's test levels](https://astqb.org/2-2-test-levels-and-test-types/) distinguish component and system scopes; [FoundationDB's testing approach](https://apple.github.io/foundationdb/testing.html) combines simulation with live performance and hardware failure tests. Ahead's directory groups are a project-specific choice.

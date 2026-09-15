@@ -10,7 +10,7 @@ cargo test -p ahead-sim --test resilience --locked
 
 A generated failure reports its seed, step, error and traces. Keep the commit, client count, run settings and trace when reporting it. [Replay and shrinking](../../../../crates/sim/src/shrink.rs) replay an action list and remove actions while preserving the failure identity.
 
-Preserve a minimal failing trace as a named regression before fixing its cause. Next review: inspect crash-boundary coverage and ensure minimized traces still expose the original defect.
+Preserve a minimal failing trace as a named regression before fixing its cause. The coverage review below records what the existing tests assert; missing tests are tracked in [#68](https://github.com/zanminwang/ahead/issues/68).
 
 ## Coverage review
 

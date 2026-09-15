@@ -10,7 +10,7 @@ cargo test -p ahead-compiler --locked
 
 Add a small schema fixture with an assertion on the resulting descriptor, generated output or diagnostic. When the claim is that generated code typechecks or runs, use [SDK integration tests](../integration/bindings.md) as well.
 
-Next review: map individual compiler requirements to assertions, especially error locations and generated-language negative cases.
+The coverage review below records what the existing tests assert; missing tests are tracked in [#68](https://github.com/zanminwang/ahead/issues/68).
 
 ## Coverage review
 
@@ -18,7 +18,7 @@ Reviewed 2026-09-14 against [Parse](../../architecture/compiler/parse.md), [Vali
 
 | Behavior | Existing tests | Coverage | Gap and next step |
 | --- | --- | --- | --- |
-| A syntax error reports its line | [compiler.rs](../../../../crates/compiler/tests/compiler.rs) `rejects_unknown_with_location` | covered (syntax only) | Semantic errors (relations, bindings, sequences, descriptor rules) report the end of input; this is a *defect* recorded in Validate §11. A test that asserts the offending line for a semantic error will fail today; write it as the regression for the fix. |
+| A syntax error reports its line | [compiler.rs](../../../../crates/compiler/tests/compiler.rs) `rejects_unknown_with_location` | covered (syntax only) | Semantic errors (relations, bindings, sequences, descriptor rules) report the end of input; this is a *defect* recorded in Validate §11 ([#48](https://github.com/zanminwang/ahead/issues/48)). A test that asserts the offending line for a semantic error will fail today; write it as the regression for the fix. |
 | Multi-file input maps a line back to its file | none found | missing | [cli.rs](../../../../crates/compiler/tests/cli.rs) uses one file. Add a two-file directory with an error in the second file. |
 | Structural validation refuses bad identities, unknown prerequisites, duplicate versions, ambiguous inverses | `rejects_invalid_identity`, `rejects_dependency_typos`, `singular_inverse_requires_a_unique_foreign_key` | partial | Many refusal branches (unknown reference argument, sequence path mismatch, binding parent not single, invalid patch field) have no assertion. Prioritize the ones a schema author is likely to hit. |
 | History and fence ([Mutations](../../architecture/schema/mutations.md)) | [history.rs](../../../../crates/compiler/tests/history.rs); `cli_retains_history_and_does_not_overwrite_on_break` | covered | `--initialize-mutation-history` refusal paths (existing history, non-1 versions) and a missing explicit history file are not asserted. |

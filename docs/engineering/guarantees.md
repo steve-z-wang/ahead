@@ -37,7 +37,9 @@ Channel cursors order delivery within a subscription. Record stamps order author
 | A4 | Required checkpoints come from channels notified by the handler. Missing or ambiguous selection for an accepted mutation aborts the batch. |
 | A5 | Accepted batches settle in sequence order; a later ready batch must not pass an earlier waiting batch. |
 
-A3's current non-subscribed-channel behavior rebuilds from existing authority: an update can revert and a local create can disappear until delivered through a subscribed channel. Whether to retain this behavior needs a decision in [Settlement](architecture/client/engine/settlement.md).
+A3's current non-subscribed-channel behavior rebuilds from existing authority: an update can revert and a local create can disappear until delivered through a subscribed channel. Whether to retain this behavior is decided in [#52](https://github.com/zanminwang/ahead/issues/52); see [Settlement](architecture/client/engine/settlement.md).
+
+A5 describes the required order. The current implementation settles a batch immediately, outside that order, when none of its receipt's checkpoints can be awaited; reconciling the two is [#53](https://github.com/zanminwang/ahead/issues/53).
 
 ## D. Distribution
 

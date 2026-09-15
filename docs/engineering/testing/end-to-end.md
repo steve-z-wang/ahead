@@ -12,7 +12,7 @@ bash integration/e2e/run.sh
 
 The runner builds native artifacts, generates the example APIs and starts a temporary PostgreSQL cluster. Assert user-visible state through the client, including rejected writes and resumed sync.
 
-Next review: identify which full paths need a release gate and which cases are better isolated in component or integration tests. Device startup is separately exercised by [platform smoke tests](../../../integration/platform/README.md).
+Device startup is separately exercised by [platform smoke tests](../../../integration/platform/README.md).
 
 ## Coverage review
 
@@ -25,4 +25,4 @@ Reviewed 2026-09-14; tests read, not executed. The suite runs a real backend ove
 | Built-in live sync in both languages | third test with [dart_live_client.dart](../../../integration/e2e/dart_live_client.dart) | multi-page catch-up (56 records), a commit during a held catch-up is not missed, watch fires, dependent pushes settle from streamed pages without polling, offline reconnect resumes from the persisted cursor, Dart repeats the flow including unsubscribe and resubscribe | Timing assertions use polling with fixed timeouts; a slow host can produce false failures rather than false passes. |
 | iOS device startup | [platform smoke](../../../integration/platform/run_ios_simulator_smoke.sh) | the native library loads and the app starts on a simulator | Manual, outside the host gate. |
 
-The suite is the only place the real TypeScript backend, the real PostgreSQL adapter and a real generated client meet. It should stay small; each of its assertions is also covered at a lower level except the wiring itself and the `backend.notify(tx, …)` shortcut used by the example server, which relies on catch-up rather than a wake ([Notify §11](../architecture/server/engine/notify.md)).
+The suite is the only place the real TypeScript backend, the real PostgreSQL adapter and a real generated client meet. It should stay small; each of its assertions is also covered at a lower level except the wiring itself and the `backend.notify(tx, …)` shortcut used by the example server, which relies on catch-up rather than a wake ([#50](https://github.com/zanminwang/ahead/issues/50), [Notify §11](../architecture/server/engine/notify.md)).

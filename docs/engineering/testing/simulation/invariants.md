@@ -14,7 +14,7 @@ The [runner](../../../../crates/sim/tests/invariants.rs) defaults to 60 seeds an
 SIM_SEEDS=5000 SIM_STEPS=300 cargo test -p ahead-sim --test invariants --locked
 ```
 
-At this base, the random test including direct writes is explicitly ignored for [#33](https://github.com/zanminwang/ahead/issues/33). Raising the seed count does not enable it. Next review: re-check ignored cases after rebase, and examine whether the checker observes all relevant states without duplicating engine logic.
+At this base, the random test including direct writes is explicitly ignored for [#33](https://github.com/zanminwang/ahead/issues/33). Raising the seed count does not enable it. The coverage review below records what the existing tests assert; missing tests are tracked in [#68](https://github.com/zanminwang/ahead/issues/68).
 
 ## Coverage review
 

@@ -16,7 +16,7 @@ bash integration/persistence/server/run.sh
 bash integration/persistence/transaction-probe/run.sh
 ```
 
-Use the real database and assert what survives a commit, rollback or reopen. Next review: isolation assumptions, simultaneous clients and schema changes with a non-empty pending queue.
+Use the real database and assert what survives a commit, rollback or reopen. The coverage review below records what the existing tests assert; missing tests are tracked in [#68](https://github.com/zanminwang/ahead/issues/68).
 
 ## Coverage review
 
@@ -44,4 +44,4 @@ Reviewed 2026-09-14; tests read, not executed.
 | Head, scan and load coherent under concurrent publication | `repeatable-read runner keeps head, scan, and loader coherent…` | covered at RepeatableRead | Serialization-failure retry in `prismaTransactions` (`P2034`, `40001`, `40P01`) is never triggered by a test. |
 | BigInt narrowing to safe integers | `loader safely converts PostgreSQL BigInt scalar and list values…` | covered | none |
 | Unawaited or failed callbacks prevent commit | `pending unawaited publication prevents outer transaction commit`, `external transaction binding retains swallowed publication failure…` | covered | none |
-| `request_hash` column | none | not applicable | Dead schema ([Persistence §11](../../architecture/server/persistence.md)); nothing to test until the hash decision is made. |
+| `request_hash` column | none | not applicable | Dead schema ([Persistence §11](../../architecture/server/persistence.md)); nothing to test until the hash decision in [#47](https://github.com/zanminwang/ahead/issues/47) is made. |

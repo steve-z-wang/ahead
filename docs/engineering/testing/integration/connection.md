@@ -13,7 +13,7 @@ bash integration/persistence/server/run.sh
 
 Assert that obsolete responses cannot affect the current session and that overlapping catch-up/stream pages preserve local state. Test the existing connection model: HTTP catch-up with WebSocket updates.
 
-Next review: map cancellation, overflow, auth and reconnect scenarios across both clients, including teardown and resource cleanup.
+The coverage review below records what the existing tests assert; missing tests are tracked in [#68](https://github.com/zanminwang/ahead/issues/68).
 
 ## Coverage review
 
@@ -21,7 +21,7 @@ Reviewed 2026-09-14; tests read, not executed. Client-side tests use a real WebS
 
 | Behavior | Existing tests | Coverage | Gap and next step |
 | --- | --- | --- | --- |
-| Handshake and acknowledgement; cancellation ends stalled tokens, in-flight requests and opening handshakes ([Transport](../../architecture/client/connection/transport.md)) | [live.test.mjs](../../../../integration/bindings/client-js/live.test.mjs) first five tests; [live_test.dart](../../../../packages/dart/test/live_test.dart) first five tests | covered in both languages | none |
+| Handshake and acknowledgement; cancellation ends stalled tokens, in-flight requests and opening handshakes ([Transport](../../architecture/client/connection/transport.md)) | [live.test.mjs](../../../../integration/bindings/client-js/live.test.mjs) `internal stream establishes listeners…`, `live transport cancellation does not wait for a stalled token`, `invalid WebSocket credentials reject the session…`, `close cancels opening handshake…`, `client close abandons a stalled live token…`; [live_test.dart](../../../../packages/dart/test/live_test.dart) `cancellation ends a stalled WebSocket token`, `WebSocket establishes listeners without cursor catch-up mode`, `cancel push before token resolution…`, `HTTP catch-up cancellation ends stalled token and in-flight response`, `close during an opening handshake cancels its socket` | covered in both languages | none |
 | Catch-up starts only after the acknowledgement; steady-state streaming does not poll HTTP ([Live session](../../architecture/client/connection/controller/live-session.md)) | `unified connection acknowledges listeners then catches up through HTTP before live delivery`; Dart `HTTP catch-up pages after ack, queues overlap, and rejects obsolete HTTP completion` | covered | none |
 | Duplicates covered, overlaps applied without HTTP, gaps recovered | `one incoming page path covers duplicates, applies overlap directly and recovers genuine gaps`; Dart `native subscription changes discard old pages and HTTP recovers live gaps` | covered | none |
 | Subscription changes invalidate the session and pending authentication; obsolete pages and late catch-ups are discarded | `client replaces subscriptions…`, `late HTTP catch-up after unsubscribe and resubscribe…`, `subscription invalidation cancels pending authentication…`; Dart `unsubscribe invalidates a pending token before a held transaction drains` | covered | none |
