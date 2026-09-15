@@ -1,8 +1,8 @@
 import { createRequire } from 'node:module';
-const { runProbe } = createRequire(import.meta.url)('./ahead-node.node');
+const { runProbe } = createRequire(import.meta.url)('../../../bindings/node/ahead-node-probe.node');
 const scopes = new WeakMap();
 
-/** Spike capability: only an active caller-owned transaction can bind it. */
+/** Test fixture over the probe-only addon build; only an active caller-owned transaction can bind it. */
 export class TransactionProbe {
   #tx; #scope; #closed = false; #failed = false; #pending = 0; #beforeCallback;
   constructor(tx, {beforeCallback = async () => {}} = {}) {

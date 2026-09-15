@@ -6,7 +6,7 @@ if [[ -x "$root/.tools/cargo/bin/cargo" ]]; then
   export CARGO_HOME="$root/.tools/cargo" RUSTUP_HOME="$root/.tools/rustup"
   export PATH="$CARGO_HOME/bin:$PATH"
 fi
-node "$root/bindings/node/build.mjs"
+node "$root/bindings/node/build.mjs" --probe
 cd "$root/integration/bindings/node"
 npm ci
 npm run generate

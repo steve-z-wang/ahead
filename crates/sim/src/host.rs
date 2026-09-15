@@ -256,7 +256,8 @@ impl MemHost {
             owner,
             bytes,
             self,
-        ));
+        ))
+        .map_err(|e| e.to_string());
         if result.is_err() {
             // An aborted batch is a rolled-back transaction: nothing it did survives.
             // A `handle` error short-circuits process_push after `savepoint` but before
@@ -287,6 +288,7 @@ impl MemHost {
             bytes,
             self,
         ))
+        .map_err(|e| e.to_string())
     }
 }
 
@@ -412,7 +414,7 @@ impl Host for MemHost {
     fn call(
         &self,
         r: Value,
-    ) -> Pin<Box<dyn Future<Output = ahead_server::Result<Value>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = ahead_server::HostResult<Value>> + Send + '_>> {
         Box::pin(async move {
             let mut s = self.0.lock().unwrap();
             let op = r["op"].as_str().unwrap_or("");

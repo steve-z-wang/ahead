@@ -64,7 +64,7 @@ The receipt's checkpoint is chosen from what was notified: if exactly one channe
 
 ## Errors
 
-`onError?: (error) => void` on `BackendOptions` is called for server-side failures that clients only see as `{ code: "server" }` over HTTP: `authenticate` throws, persistence faults, checkpoint errors, and live drain failures.
+`onError?: (error) => void` on `BackendOptions` is called for server-side failures that clients only see as `{ code: "server" }` over HTTP: `authenticate` throws, persistence faults, checkpoint errors, and live drain failures. A failure raised by the native engine arrives as an `EngineError` with a stable `code` and a readable `message`; branch on the code, never on the message. See [Errors](api.md#errors) for the codes that map to HTTP statuses.
 
 ## Background jobs
 
