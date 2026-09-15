@@ -18,6 +18,46 @@ SocketEvents events({
   closed: closed ?? (_, _) {},
 );
 
+/// The stamps a fake server hands out, monotonically, across its receipts.
+class FakeStamps {
+  int next = 0;
+}
+
+/// A push receipt in the wire shape the client accepts: it answers the batch it
+/// was asked (clientId and batchSequence echoed) and carries the authoritative
+/// state of every record the batch's wire operations target, once per record,
+/// at the next stamp. The "server" normalizes text by trimming it, so a test
+/// can tell the receipt's content from the client's prediction.
+Map<String, Object?> receiptFor(Map body, FakeStamps stamps) {
+  final records = <String, Map<String, Object?>>{};
+  for (final mutation in body['mutations'] as List) {
+    final operations = (mutation as Map)['operations'] as List? ?? const [];
+    for (final entry in operations) {
+      final operation = entry as Map;
+      final values = operation['values'] as Map?;
+      final state = operation['op'] == 'delete'
+          ? null
+          : {
+              'text': (values?['text'] ?? '').toString().trim(),
+              'note': values?['note'],
+            };
+      final key = '${operation['model']}|${jsonEncode(operation['identity'])}';
+      records[key] = {
+        'model': operation['model'],
+        'identity': operation['identity'],
+        'stamp': ++stamps.next,
+        'state': state,
+      };
+    }
+  }
+  return {
+    'clientId': body['clientId'],
+    'batchSequence': body['batchSequence'],
+    'rejections': <Object>[],
+    'records': records.values.toList(),
+  };
+}
+
 void main() {
   test('cancellation ends a stalled WebSocket token', () async {
     final cancel = Completer<void>();
@@ -373,6 +413,10 @@ void main() {
         throw StateError('condition timed out: $errors');
       }
 
+      // A resubscribed channel restarts at cursor 0 while the record it
+      // delivered before is retained at its stamp, so pages of the fresh
+      // session carry newer stamps than the first session's did.
+      var stampBase = 0;
       Map<String, dynamic> page(String text, int cursor) => {
         'scope': 'scope',
         'fromCursor': cursor,
@@ -382,7 +426,7 @@ void main() {
             'syncId': cursor + 1,
             'model': 'Entry',
             'identity': {'id': 'live'},
-            'stamp': cursor + 1,
+            'stamp': stampBase + cursor + 1,
             'state': {'text': text, 'note': null},
           },
         ],
@@ -450,8 +494,16 @@ void main() {
         await remove;
         await restore;
         await until(() => handshakes.length >= 2);
-        expect(await client.read('Entry', {'id': 'live'}), isNull);
+        expect(
+          (await client.read('Entry', {'id': 'live'}))?['text'],
+          'first',
+          reason:
+              'unsubscribing retains the downloaded record; the queued obsolete page is dropped, not applied',
+        );
         expect(handshakes.last.containsKey('cursors'), isFalse);
+        // The resubscribed channel restarts at cursor 0, but the record is
+        // retained at stamp 1: the fresh session's pages need newer stamps.
+        stampBase = 10;
         sockets.last.add(jsonEncode(page('fresh', 0)));
         await until(
           () async =>
@@ -525,6 +577,10 @@ void main() {
       var entered = Completer<void>();
       var held = true;
       var version = 'initial';
+      // A resubscribed channel restarts at cursor 0 while the records it
+      // delivered before are retained at their stamps, so the "fresh" catch-up
+      // carries newer stamps than the "initial" one did.
+      var stampBase = 0;
       Map<String, dynamic> page(int from, int to, String text) => {
         'scope': 'scope',
         'fromCursor': from,
@@ -535,7 +591,7 @@ void main() {
               'syncId': cursor,
               'model': 'Entry',
               'identity': {'id': 'e$cursor'},
-              'stamp': cursor,
+              'stamp': stampBase + cursor,
               'state': {'text': text, 'note': null},
             },
         ],
@@ -615,11 +671,17 @@ void main() {
         expect(requests.last, 56);
         await client.unsubscribe('scope');
         version = 'fresh';
+        stampBase = 100;
         await client.subscribe('scope');
         hold.complete();
-        await until(() async => (await client.query('Entry')).length == 55);
+        await until(
+          () async =>
+              (await client.read('Entry', {'id': 'e55'}))?['text'] == 'fresh',
+        );
         expect((await client.read('Entry', {'id': 'e1'}))?['text'], 'fresh');
-        expect(await client.read('Entry', {'id': 'e56'}), isNull);
+        // The record only the earlier session delivered is retained as it was.
+        expect((await client.read('Entry', {'id': 'e56'}))?['text'], 'live');
+        expect((await client.query('Entry')).length, 56);
         expect(errors, isEmpty);
         await connection.close();
       } finally {
@@ -655,24 +717,16 @@ void main() {
       );
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       var requests = 0;
+      final stamps = FakeStamps();
       final entered = Completer<void>(), token = Completer<String>();
       final errors = <Object>[];
       server.listen((request) async {
         requests++;
         expect(request.uri.path, '/sync/mutations');
         expect(WebSocketTransformer.isUpgradeRequest(request), isFalse);
-        await request.drain<void>();
+        final body = jsonDecode(await utf8.decoder.bind(request).join()) as Map;
         request.response.headers.contentType = ContentType.json;
-        request.response.write(
-          jsonEncode({
-            'requiredScope': 'scope',
-            'requiredSyncId': 1,
-            'requiredCheckpoints': [
-              {'scope': 'scope', 'syncId': 1},
-            ],
-            'rejections': [],
-          }),
-        );
+        request.response.write(jsonEncode(receiptFor(body, stamps)));
         await request.response.close();
       });
       final live = SyncServer(
@@ -721,6 +775,12 @@ void main() {
         );
         expect((await second.status())['pending'], 0);
         expect(requests, 1);
+        expect(
+          (await second.read('Entry', {'id': 'local'}))?['text'],
+          'edited',
+          reason:
+              'the receipt alone completed the batch; the row shows the server-returned state',
+        );
       } finally {
         if (!token.isCompleted) token.complete('cleanup');
         await first.close();
@@ -815,7 +875,7 @@ void main() {
 
 void moreTests() {
   test(
-    'push succeeds while the WebSocket upgrade is refused; nothing settles until the upgrade is allowed and HTTP catch-up runs',
+    'push completes from its receipt while the WebSocket upgrade is refused; HTTP catch-up runs only once the upgrade is allowed',
     () async {
       final dir = await Directory.systemTemp.createTemp('ahead-dart-blocked-');
       final schema =
@@ -831,6 +891,7 @@ void moreTests() {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final sockets = <WebSocket>[];
       final errors = <Object>[];
+      final stamps = FakeStamps();
       var allowUpgrades = false, upgradeAttempts = 0, pushes = 0, pulls = 0;
       Future<void> until(FutureOr<bool> Function() check) async {
         final deadline = DateTime.now().add(const Duration(seconds: 5));
@@ -867,19 +928,12 @@ void moreTests() {
         r.response.headers.contentType = ContentType.json;
         if (r.uri.path == '/sync/mutations') {
           pushes++;
-          r.response.write(
-            jsonEncode({
-              'requiredScope': 'scope',
-              'requiredSyncId': 1,
-              'requiredCheckpoints': [
-                {'scope': 'scope', 'syncId': 1},
-              ],
-              'rejections': [],
-            }),
-          );
+          r.response.write(jsonEncode(receiptFor(body, stamps)));
         } else {
           pulls++;
           final from = body['fromCursor'] as int;
+          // The catch-up page carries a stamp newer than the receipt's, so it
+          // is authority that updates the row.
           r.response.write(
             jsonEncode({
               'scope': 'scope',
@@ -890,7 +944,7 @@ void moreTests() {
                   'syncId': from + 1,
                   'model': 'Entry',
                   'identity': {'id': 'live'},
-                  'stamp': from + 1,
+                  'stamp': stamps.next + 1,
                   'state': {'text': 'from catch-up', 'note': null},
                 },
               ],
@@ -916,10 +970,15 @@ void moreTests() {
               'model': 'Entry',
               'op': 'update',
               'identity': {'id': 'live'},
-              'values': {'text': 'edited offline'},
+              'values': {'text': '  edited offline  '},
             },
           ],
         });
+        expect(
+          (await client.read('Entry', {'id': 'live'}))?['text'],
+          '  edited offline  ',
+          reason: 'the local prediction is visible before the push',
+        );
         final connection = await client.connect(
           SyncServer(
             url: 'http://127.0.0.1:${server.port}',
@@ -933,10 +992,18 @@ void moreTests() {
           0,
           reason: 'no HTTP catch-up without an acknowledged WebSocket',
         );
-        expect((await client.status())['pending'], 1);
+        await until(() async => (await client.status())['pending'] == 0);
+        expect(
+          pulls,
+          0,
+          reason:
+              'the batch completed from its receipt alone: no page was delivered',
+        );
         expect(
           (await client.read('Entry', {'id': 'live'}))?['text'],
           'edited offline',
+          reason:
+              'the row shows the server-returned state as soon as the response is applied',
         );
         expect(
           errors.any((e) => e.toString().contains('503')),
@@ -944,13 +1011,14 @@ void moreTests() {
           reason: 'upgrade refusals reach onError: $errors',
         );
         allowUpgrades = true;
-        await until(() async => (await client.status())['pending'] == 0);
+        await until(
+          () async =>
+              (await client.read('Entry', {'id': 'live'}))?['text'] ==
+              'from catch-up',
+        );
         expect(pushes, 1, reason: 'the receipt was not re-requested');
         expect(pulls, greaterThanOrEqualTo(1));
-        expect(
-          (await client.read('Entry', {'id': 'live'}))?['text'],
-          'from catch-up',
-        );
+        expect((await client.status())['pending'], 0);
         await connection.close();
       } finally {
         await client.close();
@@ -1111,6 +1179,7 @@ void moreTests() {
       );
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       var token = 'expired', refreshes = 0, unauthorized = 0, pushes = 0;
+      final stamps = FakeStamps();
       final gate = Completer<void>();
       final accepted = Completer<void>();
       final errors = <Object>[];
@@ -1124,17 +1193,11 @@ void moreTests() {
         }
         if (request.uri.path == '/sync/mutations') {
           pushes++;
-          await utf8.decoder.bind(request).join();
-          request.response.write(
-            jsonEncode({
-              'requiredScope': 'other',
-              'requiredSyncId': 1,
-              'requiredCheckpoints': [
-                {'scope': 'other', 'syncId': 1},
-              ],
-              'rejections': <Object>[],
-            }),
-          );
+          // The receipt names no channel: the push completes on its own,
+          // whatever the live lane is doing.
+          final body =
+              jsonDecode(await utf8.decoder.bind(request).join()) as Map;
+          request.response.write(jsonEncode(receiptFor(body, stamps)));
           await request.response.close();
           return;
         }
@@ -1238,6 +1301,11 @@ void moreTests() {
           status = await client.status();
         }
         expect(status['pending'], 0);
+        expect(
+          (await client.read('Entry', {'id': 'live'}))?['text'],
+          'edited offline',
+          reason: 'the receipt completed the batch without any page',
+        );
         expect(
           refreshes,
           1,

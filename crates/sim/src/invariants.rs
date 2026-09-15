@@ -1,9 +1,11 @@
 //! What must be true after every step. Each check reads the clients and the host;
-//! none of them mutates anything except the high-water marks on Sim.
-use crate::Sim;
+//! none of them mutates anything except the high-water marks on Sim. Two more
+//! checks are stepwise rather than periodic and are called from `Sim::apply`:
+//! `unsubscribe_cannot_remove_content` and `no_pending_operation_is_lost_on_reopen`.
+use crate::{Sim, sim::ReopenState};
 use ahead_core::PushReceipt;
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 type Check = fn(&mut Sim) -> Result<(), String>;
 
@@ -12,19 +14,14 @@ const CHECKS: &[(&str, Check)] = &[
     ("cursors never decrease", cursors_never_decrease),
     ("no mutation executes twice", no_mutation_executes_twice),
     ("no pending means converged", no_pending_means_converged),
-    (
-        "claims belong to subscriptions",
-        claims_belong_to_subscriptions,
-    ),
-    ("record rows have a claim", record_rows_have_a_claim),
     ("receipts match server", receipts_match_server),
     (
-        "batches wait for their checkpoints",
-        batches_wait_for_their_checkpoints,
+        "completed work had a matching response",
+        completed_work_had_a_matching_response,
     ),
     (
-        "batches settle in sequence order",
-        batches_settle_in_sequence_order,
+        "republication cannot advance a stamp",
+        republication_cannot_advance_a_stamp,
     ),
 ];
 
@@ -46,6 +43,10 @@ fn up(sim: &Sim) -> Vec<usize> {
     (0..sim.clients.len()).filter(|&i| sim.is_up(i)).collect()
 }
 
+/// Authority never regresses: a client's stamp for a record only ever grows. A
+/// stamp row is retained across unsubscribe and deletion alike (it is the evidence
+/// that keeps stale content from resurrecting a record), so the high-water mark
+/// never needs forgetting; a client with no row yet simply has nothing to compare.
 fn stamps_never_decrease(sim: &mut Sim) -> Result<(), String> {
     let keys = sim.host.stamped_keys();
     for i in up(sim) {
@@ -57,16 +58,7 @@ fn stamps_never_decrease(sim: &mut Sim) -> Result<(), String> {
                     &[json!(key.model), json!(key.encoded_identity().unwrap())],
                 )
                 .map_err(|e| e.to_string())?;
-            // A client with no local row for this key (never synced it, or dropped it
-            // after unsubscribing / a delete) has nothing to compare: its absence is
-            // not a stamp of 0. Purge the high-water mark rather than keep it around
-            // for a row that is gone - the same reason `seen_cursors` is purged on
-            // unsubscribe below: a lingering high mark for a row this client no
-            // longer holds must not outlive the row, and would wrongly gate the mark
-            // the row picks up if it reappears with a lower legitimate stamp (e.g.
-            // after unsubscribe/resubscribe resets state).
             let Some(now) = rows.first().and_then(|r| r["stamp"].as_u64()) else {
-                sim.seen_stamps.remove(&(i, key.encoded().unwrap()));
                 continue;
             };
             let slot = sim
@@ -90,9 +82,10 @@ fn cursors_never_decrease(sim: &mut Sim) -> Result<(), String> {
     for i in up(sim) {
         let subs = sim.client(i).subscriptions().map_err(|e| e.to_string())?;
         // Unsubscribing and resubscribing intentionally restarts a channel's cursor at
-        // 0 (the claims were dropped, so the next sync is a fresh one): forget the
-        // high-water mark for any channel the client is not currently subscribed to,
-        // so that legitimate reset is not mistaken for a regression.
+        // 0 (the next sync of that channel is a fresh one; the records it delivered
+        // stay): forget the high-water mark for any channel the client is not
+        // currently subscribed to, so that legitimate reset is not mistaken for a
+        // regression.
         let subscribed: BTreeSet<String> = subs.iter().map(|(c, _)| c.clone()).collect();
         sim.seen_cursors
             .retain(|(ci, channel), _| *ci != i || subscribed.contains(channel));
@@ -155,31 +148,23 @@ fn no_pending_means_converged(sim: &mut Sim) -> Result<(), String> {
                     continue;
                 }
                 // A record's invalidation history on this channel can outlive its
-                // membership (ServerChange can notify a channel outside a record's
-                // real membership, and a record can move to another channel
-                // entirely). Once `channel` is no longer among the record's real
-                // members, being at its head proves nothing about this record - its
-                // current content, if the client has any, may be supplied by another
-                // channel the client is also subscribed to.
+                // membership (a record can move to other channels entirely, and a
+                // change can be published outside membership). Once `channel` is no
+                // longer among the record's real members, being at its head proves
+                // nothing about this record: the client's copy is retained data that
+                // only another channel it follows could refresh.
                 if sim.host.has_membership(&key)
                     && !sim.host.membership(&key).iter().any(|m| m == &channel)
                 {
                     continue;
                 }
-                // This channel's own invalidation for `key` can be behind the *last
-                // content change's* stamp when a change was notified to a different
-                // channel only (a `ServerChange` fault). Compare against
-                // `content_stamp`, not the ever-growing shared per-key `stamp`
-                // counter: a single change published to two member channels in the
-                // same call allocates them consecutive stamps even though both carry
-                // identical content, so gating on the raw counter would skip the
-                // first of the two indefinitely. `content_stamp` is pinned to the
-                // smallest stamp any one change's publishes produced, so every
-                // channel that change actually reached compares as caught up.
+                // This channel's own invalidation for `key` is behind the record's
+                // stamp when a change was published to other channels only: this
+                // channel was never told, so its head says nothing about that change.
                 if sim
                     .host
                     .channel_stamp(&channel, &key)
-                    .is_some_and(|stamp| stamp < sim.host.content_stamp(&key))
+                    .is_some_and(|stamp| stamp < sim.host.stamp(&key))
                 {
                     continue;
                 }
@@ -192,56 +177,6 @@ fn no_pending_means_converged(sim: &mut Sim) -> Result<(), String> {
                         key.encoded().unwrap()
                     ));
                 }
-            }
-        }
-    }
-    Ok(())
-}
-
-fn claims_belong_to_subscriptions(sim: &mut Sim) -> Result<(), String> {
-    for i in up(sim) {
-        let subscribed: BTreeSet<String> = sim
-            .client(i)
-            .subscriptions()
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .map(|(c, _)| c)
-            .collect();
-        let rows = sim
-            .client(i)
-            .read_sql("SELECT DISTINCT channel FROM ahead_claim", &[])
-            .map_err(|e| e.to_string())?;
-        for r in rows {
-            let c = r["channel"].as_str().unwrap_or("").to_string();
-            if !subscribed.contains(&c) {
-                return Err(format!(
-                    "client {i} has a claim on unsubscribed channel {c}"
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn record_rows_have_a_claim(sim: &mut Sim) -> Result<(), String> {
-    for i in up(sim) {
-        for model in ["Entry", "Comment"] {
-            let sql = format!(
-                "SELECT r.id AS id FROM \"{model}\" r WHERE NOT EXISTS \
-                 (SELECT 1 FROM ahead_claim c WHERE c.model = '{model}' \
-                 AND c.identity = json_object('id', r.id)) \
-                 AND NOT EXISTS (SELECT 1 FROM ahead_mutation_operation o \
-                 WHERE o.model = '{model}' AND o.identity = json_object('id', r.id))"
-            );
-            let rows = sim
-                .client(i)
-                .read_sql(&sql, &[])
-                .map_err(|e| e.to_string())?;
-            if let Some(r) = rows.first() {
-                return Err(format!(
-                    "client {i} {model} {} has no claim and no pending mutation",
-                    r["id"]
-                ));
             }
         }
     }
@@ -279,40 +214,16 @@ fn queued_pushes(sim: &mut Sim, i: usize) -> Result<BTreeSet<u64>, String> {
         .collect())
 }
 
-/// Whether the receipt for `sequence` rejected every mutation the batch carried.
-/// Such a batch leaves the queue through `remove_rejected`, not settlement, so the
-/// ordering and checkpoint rules do not apply to it.
-fn fully_rejected(sim: &Sim, i: usize, sequence: u64) -> bool {
-    let Some(ordinals) = sim.clients[i].pushes.get(&sequence) else {
-        return false;
-    };
-    let Some(receipt) = sim.clients[i].receipts.get(&sequence) else {
-        return false;
-    };
-    ordinals
-        .iter()
-        .all(|o| receipt.rejections.iter().any(|r| r.ordinal == *o))
-}
-
-/// A3: accepted optimism is removed only once every checkpoint the client could
-/// await has been reached. A frozen batch that is no longer queued must have a
-/// receipt, and for every checkpoint that receipt named on a channel the client was
-/// subscribed to (and still is, in the same subscription generation) the local
-/// cursor must have reached it. Checkpoints on channels the client was not
-/// subscribed to when the receipt arrived are not awaited (A3's second sentence);
-/// an unsubscribe settles what waited on that channel (D6), so a channel whose
-/// generation changed since is exempt.
-fn batches_wait_for_their_checkpoints(sim: &mut Sim) -> Result<(), String> {
+/// Completed work had a matching response: a frozen batch leaves the queue only
+/// through its receipt, and the client's completion counter names exactly the
+/// highest batch that did so - a batch the server actually answered, never one it
+/// has not seen.
+fn completed_work_had_a_matching_response(sim: &mut Sim) -> Result<(), String> {
     for i in up(sim) {
         let queued = queued_pushes(sim, i)?;
-        let subscriptions: BTreeMap<String, u64> = sim
-            .client(i)
-            .subscriptions()
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .collect();
+        let mut highest = 0;
         for sequence in sim.clients[i].pushes.keys().copied().collect::<Vec<_>>() {
-            if queued.contains(&sequence) || fully_rejected(sim, i, sequence) {
+            if queued.contains(&sequence) {
                 continue;
             }
             if !sim.clients[i].receipts.contains_key(&sequence) {
@@ -320,57 +231,150 @@ fn batches_wait_for_their_checkpoints(sim: &mut Sim) -> Result<(), String> {
                     "client {i} batch {sequence} left the queue without a receipt"
                 ));
             }
-            let awaited = sim.clients[i]
-                .awaited
-                .get(&sequence)
-                .cloned()
-                .unwrap_or_default();
-            for (channel, cursor, generation) in awaited {
-                let current = sim.clients[i]
-                    .generations
-                    .get(&channel)
-                    .copied()
-                    .unwrap_or(0);
-                let Some(local) = subscriptions.get(&channel) else {
-                    continue;
-                };
-                if current == generation && *local < cursor {
-                    return Err(format!(
-                        "client {i} batch {sequence} settled while {channel} is at cursor {local}, checkpoint {cursor}"
-                    ));
-                }
-            }
+            highest = highest.max(sequence);
+        }
+        let completed = sim
+            .client(i)
+            .last_completed_push()
+            .map_err(|e| e.to_string())?;
+        let id = sim.client(i).client_id().to_string();
+        let answered = sim.host.client_sequence(&id);
+        if completed > answered {
+            return Err(format!(
+                "client {i} completion counter {completed} claims a batch the server never answered (last answered {answered})"
+            ));
+        }
+        if completed != highest {
+            return Err(format!(
+                "client {i} completion counter {completed} does not name the highest completed batch {highest}"
+            ));
         }
     }
     Ok(())
 }
 
-/// A5: batches settle in sequence order. While any batch is still queued, no batch
-/// with a higher sequence may have settled; the only way a later batch leaves the
-/// queue first is by having every mutation rejected.
-fn batches_settle_in_sequence_order(sim: &mut Sim) -> Result<(), String> {
-    for i in up(sim) {
-        let queued = queued_pushes(sim, i)?;
-        let Some(earliest) = queued.iter().next().copied() else {
-            continue;
-        };
-        for sequence in sim.clients[i].pushes.keys().copied().collect::<Vec<_>>() {
-            if sequence <= earliest || queued.contains(&sequence) {
-                continue;
-            }
-            if !fully_rejected(sim, i, sequence) {
-                return Err(format!(
-                    "client {i} batch {sequence} settled while batch {earliest} is still pending"
-                ));
-            }
+/// Republication cannot advance a stamp: on the server, every record's stamp is
+/// exactly the number of business changes committed to it, plus one if its first
+/// publication had to initialize missing metadata. Publishing an existing record to
+/// a channel, however often, contributes nothing.
+fn republication_cannot_advance_a_stamp(sim: &mut Sim) -> Result<(), String> {
+    for (key, stamp, advances, initialized) in sim.host.stamp_accounting() {
+        let expected = advances + u64::from(initialized);
+        if stamp != expected {
+            return Err(format!(
+                "{} is at stamp {stamp} after {advances} advances{}",
+                key.encoded().unwrap(),
+                if initialized {
+                    " and one initialization"
+                } else {
+                    ""
+                }
+            ));
         }
+    }
+    Ok(())
+}
+
+/// Everything unsubscribing must leave alone: the visible rows of every model, the
+/// stamp rows, and the pending work (queue and before images).
+#[derive(Debug, PartialEq)]
+pub struct ContentSnapshot {
+    rows: Vec<Value>,
+    stamps: Vec<Value>,
+    pending: usize,
+    before_images: usize,
+}
+
+pub fn content_snapshot(sim: &mut Sim, client: usize) -> Result<ContentSnapshot, String> {
+    let c = sim.client(client);
+    let mut rows = vec![];
+    for model in ["Entry", "Comment"] {
+        let sql = format!("SELECT '{model}' AS model, * FROM \"{model}\" ORDER BY id");
+        rows.extend(c.read_sql(&sql, &[]).map_err(|e| e.to_string())?);
+    }
+    let stamps = c
+        .read_sql(
+            "SELECT model, identity, stamp FROM ahead_record ORDER BY model, identity",
+            &[],
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(ContentSnapshot {
+        rows,
+        stamps,
+        pending: c.pending_count().map_err(|e| e.to_string())?,
+        before_images: c.before_image_count().map_err(|e| e.to_string())?,
+    })
+}
+
+/// Unsubscribe cannot remove content: called by `Sim::apply` right after an
+/// `Action::Unsubscribe`, with the snapshot taken right before it.
+pub fn unsubscribe_cannot_remove_content(
+    sim: &mut Sim,
+    client: usize,
+    before: &ContentSnapshot,
+) -> Result<(), String> {
+    let after = content_snapshot(sim, client)?;
+    if before.rows != after.rows {
+        return Err(format!(
+            "unsubscribe cannot remove content: client {client} rows changed from {:?} to {:?}",
+            before.rows, after.rows
+        ));
+    }
+    if before.stamps != after.stamps {
+        return Err(format!(
+            "unsubscribe cannot remove content: client {client} stamp evidence changed from {:?} to {:?}",
+            before.stamps, after.stamps
+        ));
+    }
+    if (before.pending, before.before_images) != (after.pending, after.before_images) {
+        return Err(format!(
+            "unsubscribe cannot remove content: client {client} pending work changed from {} operations / {} bases to {} / {}",
+            before.pending, before.before_images, after.pending, after.before_images
+        ));
+    }
+    Ok(())
+}
+
+/// The queued ordinals and the completion counter, as `Action::Crash` records them.
+pub fn reopen_state(sim: &mut Sim, client: usize) -> Result<ReopenState, String> {
+    let c = sim.client(client);
+    let ordinals = c
+        .read_sql("SELECT ordinal FROM ahead_mutation", &[])
+        .map_err(|e| e.to_string())?
+        .iter()
+        .filter_map(|r| r["ordinal"].as_u64())
+        .collect();
+    let completed = c.last_completed_push().map_err(|e| e.to_string())?;
+    Ok((ordinals, completed))
+}
+
+/// No pending operation is lost on reopen: called by `Sim::apply` after an
+/// `Action::Restart` reopened a crashed client, against what `Action::Crash` saw.
+pub fn no_pending_operation_is_lost_on_reopen(
+    sim: &mut Sim,
+    client: usize,
+    before: &ReopenState,
+) -> Result<(), String> {
+    let after = reopen_state(sim, client)?;
+    if before.0 != after.0 {
+        let lost: Vec<u64> = before.0.difference(&after.0).copied().collect();
+        return Err(format!(
+            "no pending operation is lost on reopen: client {client} queued {:?} before the crash, {:?} after; lost {lost:?}",
+            before.0, after.0
+        ));
+    }
+    if before.1 != after.1 {
+        return Err(format!(
+            "no pending operation is lost on reopen: client {client} completion counter was {} before the crash, {} after",
+            before.1, after.1
+        ));
     }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{Action, MutationSpec, Sim};
+    use crate::{Action, MutationSpec, Sim, schema::entry_key};
 
     #[test]
     fn invariants_hold_through_a_plain_round_trip() {
@@ -394,10 +398,7 @@ mod tests {
         sim.check().unwrap();
         sim.settle();
         sim.check().unwrap();
-        assert_eq!(
-            sim.read_text(1, &crate::schema::entry_key("e1")),
-            Some("hi".into())
-        );
+        assert_eq!(sim.read_text(1, &entry_key("e1")), Some("hi".into()));
     }
 
     #[test]
@@ -419,7 +420,7 @@ mod tests {
         sim.settle();
         // Corrupt the server behind the client's back: content differs at head.
         sim.host.set_state(
-            &crate::schema::entry_key("e1"),
+            &entry_key("e1"),
             Some(serde_json::json!({"id":"e1","text":"other","note":null})),
         );
         let err = sim.check().unwrap_err();
@@ -427,13 +428,16 @@ mod tests {
     }
 
     /// Run `sql` against a crashed client's file behind the engine's back, then
-    /// restart it: the way these tests forge a state the engine never produces.
+    /// restart it: the way these tests forge a state the engine never produces. The
+    /// crash record is cleared first, since the reopen check would otherwise catch
+    /// the forgery itself instead of the periodic checker under test.
     fn corrupt(sim: &mut Sim, client: usize, sql: &str) {
         use ahead_client::store::ClientStore;
         sim.apply(Action::Crash { client }).unwrap();
         let mut store = ahead_sqlite::SqliteStore::open(&sim.clients[client].path).unwrap();
         store.execute(sql, &[]).unwrap();
         drop(store);
+        sim.clients[client].crash_state = None;
         sim.apply(Action::Restart { client }).unwrap();
     }
 
@@ -450,33 +454,6 @@ mod tests {
     }
 
     #[test]
-    fn a_batch_settled_before_its_checkpoint_is_reported() {
-        let mut sim = Sim::new(5, 1);
-        sim.apply(Action::Subscribe {
-            client: 0,
-            channel: "a".into(),
-        })
-        .unwrap();
-        frozen_batch(&mut sim, "e1");
-        sim.apply(Action::Deliver).unwrap(); // push reaches the server
-        sim.apply(Action::Deliver).unwrap(); // receipt names a checkpoint on `a`
-        sim.check().unwrap();
-        assert_eq!(
-            sim.clients[0].awaited[&1].len(),
-            1,
-            "the receipt named channel a"
-        );
-        // Forge an early settlement: the mutation is gone but a's cursor is still 0.
-        corrupt(&mut sim, 0, "DELETE FROM ahead_mutation");
-        let err = sim.check().unwrap_err();
-        assert!(
-            err.contains("batches wait for their checkpoints")
-                && err.contains("batch 1 settled while a is at cursor 0"),
-            "{err}"
-        );
-    }
-
-    #[test]
     fn a_batch_gone_without_a_receipt_is_reported() {
         let mut sim = Sim::new(6, 1);
         sim.apply(Action::Subscribe {
@@ -489,68 +466,134 @@ mod tests {
         corrupt(&mut sim, 0, "DELETE FROM ahead_mutation");
         let err = sim.check().unwrap_err();
         assert!(
-            err.contains("batch 1 left the queue without a receipt"),
+            err.contains("completed work had a matching response")
+                && err.contains("batch 1 left the queue without a receipt"),
             "{err}"
         );
     }
 
     #[test]
-    fn a_later_batch_settling_first_is_reported() {
+    fn a_forged_completion_counter_is_reported() {
+        let mut sim = Sim::new(5, 1);
+        sim.apply(Action::Subscribe {
+            client: 0,
+            channel: "a".into(),
+        })
+        .unwrap();
+        frozen_batch(&mut sim, "e1");
+        sim.apply(Action::Deliver).unwrap(); // push reaches the server
+        sim.apply(Action::Deliver).unwrap(); // receipt completes batch 1
+        assert_eq!(sim.client(0).last_completed_push().unwrap(), 1);
+        sim.check().unwrap();
+        corrupt(
+            &mut sim,
+            0,
+            "UPDATE ahead_client SET last_completed_push = 9",
+        );
+        let err = sim.check().unwrap_err();
+        assert!(
+            err.contains("completed work had a matching response")
+                && err.contains("completion counter 9 claims a batch the server never answered"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_regressed_stamp_is_reported() {
         let mut sim = Sim::new(7, 1);
         sim.apply(Action::Subscribe {
             client: 0,
             channel: "a".into(),
         })
         .unwrap();
-        frozen_batch(&mut sim, "e1");
-        sim.apply(Action::Deliver).unwrap();
-        sim.apply(Action::Deliver).unwrap(); // batch 1 acknowledged, waiting for its page
-        frozen_batch(&mut sim, "e2");
-        sim.apply(Action::Deliver).unwrap();
-        sim.apply(Action::Deliver).unwrap(); // batch 2 acknowledged behind it
+        frozen_batch(&mut sim, "e1"); // stamp 1
+        sim.settle();
+        sim.apply(Action::ServerChange {
+            key: "Entry:e1".into(),
+            text: Some("v2".into()),
+            channels: vec!["a".into()],
+        })
+        .unwrap(); // stamp 2
+        sim.settle();
+        assert_eq!(sim.client(0).record_stamp(&entry_key("e1")).unwrap(), 2);
         sim.check().unwrap();
-        assert_eq!(
-            sim.clients[0].pushes.keys().copied().collect::<Vec<_>>(),
-            [1, 2]
+        corrupt(
+            &mut sim,
+            0,
+            "UPDATE ahead_record SET stamp = stamp - 1 WHERE stamp > 1",
         );
-        corrupt(&mut sim, 0, "DELETE FROM ahead_mutation WHERE push = 2");
         let err = sim.check().unwrap_err();
         assert!(
-            err.contains("batches settle in sequence order")
-                && err.contains("batch 2 settled while batch 1 is still pending"),
+            err.contains("stamps never decrease") && err.contains("stamp 1 < 2"),
             "{err}"
         );
     }
 
     #[test]
-    fn an_unsubscribe_settling_a_waiting_batch_is_not_a_violation() {
+    fn an_erased_pending_operation_is_reported_on_reopen() {
+        use ahead_client::store::ClientStore;
         let mut sim = Sim::new(8, 1);
+        frozen_batch(&mut sim, "e1");
+        sim.apply(Action::Crash { client: 0 }).unwrap();
+        let mut store = ahead_sqlite::SqliteStore::open(&sim.clients[0].path).unwrap();
+        store.execute("DELETE FROM ahead_mutation", &[]).unwrap();
+        drop(store);
+        let err = sim.apply(Action::Restart { client: 0 }).unwrap_err();
+        assert!(
+            err.contains("no pending operation is lost on reopen") && err.contains("lost [1]"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn an_unsubscribe_retains_content_and_resubscribing_restarts_the_cursor() {
+        let mut sim = Sim::new(9, 1);
         sim.apply(Action::Subscribe {
             client: 0,
             channel: "a".into(),
         })
         .unwrap();
         frozen_batch(&mut sim, "e1");
-        sim.apply(Action::Deliver).unwrap();
-        sim.apply(Action::Deliver).unwrap();
+        sim.settle();
+        assert_eq!(sim.client(0).cursor("a").unwrap(), 1);
+        // A second edit is left pending so the unsubscribe has queue state to keep.
+        sim.apply(Action::Enqueue {
+            client: 0,
+            mutation: MutationSpec::Edit {
+                id: "e1".into(),
+                text: "pending".into(),
+            },
+        })
+        .unwrap();
         assert_eq!(sim.client(0).pending_count().unwrap(), 1);
+        // `apply` runs `unsubscribe_cannot_remove_content` itself.
         sim.apply(Action::Unsubscribe {
             client: 0,
             channel: "a".into(),
         })
         .unwrap();
         assert_eq!(
-            sim.client(0).pending_count().unwrap(),
-            0,
-            "D6 settles the batch"
+            sim.read_text(0, &entry_key("e1")).as_deref(),
+            Some("pending")
         );
+        assert_eq!(sim.client(0).pending_count().unwrap(), 1);
+        assert_eq!(sim.client(0).record_stamp(&entry_key("e1")).unwrap(), 1);
+        assert!(sim.client(0).subscriptions().unwrap().is_empty());
         sim.check().unwrap();
         sim.apply(Action::Subscribe {
             client: 0,
             channel: "a".into(),
         })
         .unwrap();
-        // The cursor restarted at 0, below the old checkpoint, in a new generation.
+        // The cursor restarted at 0 in a new generation; that is not a regression.
+        assert_eq!(sim.client(0).cursor("a").unwrap(), 0);
+        sim.check().unwrap();
+        sim.settle();
+        assert_eq!(
+            sim.read_text(0, &entry_key("e1")).as_deref(),
+            Some("pending")
+        );
+        assert_eq!(sim.client(0).pending_count().unwrap(), 0);
         sim.check().unwrap();
     }
 }

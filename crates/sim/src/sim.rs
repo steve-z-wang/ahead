@@ -112,10 +112,11 @@ pub enum Action {
         text: Option<String>,
         channels: Vec<String>,
     },
-    /// A record's real membership legitimately moves to `channels`: the new members
-    /// and the ones it leaves both get notified (the ones it leaves load `null`, the
-    /// application-correct "moved away" delete per the record-stamp spec's "Delete
-    /// applies across channels").
+    /// A record's real membership legitimately moves to `channels`: every new member
+    /// is told about the record at its current stamp (a republication, which never
+    /// advances a version). The channels it leaves hear nothing: loads are
+    /// channel-blind, so a client that only follows a vacated channel keeps its last
+    /// content as legitimately retained data.
     MoveMembership {
         key: String,
         channels: Vec<String>,
@@ -133,18 +134,24 @@ pub struct Slot {
     pub receipts: BTreeMap<u64, PushReceipt>,
     /// Every batch this client froze, by sequence, with the ordinals it carried
     /// (decoded from the frozen bytes at `Action::Freeze`). A batch that later
-    /// leaves the queue must have done so through settlement or rejection; the A3
-    /// and A5 invariants compare this record with the live queue.
+    /// leaves the queue must have done so through its receipt;
+    /// `completed_work_had_a_matching_response` compares this record with the live
+    /// queue and the completion counter.
     pub pushes: BTreeMap<u64, Vec<u64>>,
-    /// The checkpoints the client could await when each receipt arrived: those on
-    /// channels it was subscribed to at that moment, with the subscription
-    /// generation so a later unsubscribe-and-resubscribe (which restarts the cursor
-    /// at 0 and settles what waited on the channel) is not read as a violation.
-    pub awaited: BTreeMap<u64, Vec<(String, u64, u64)>>,
     /// Subscription generation per channel: bumped every time the client goes from
     /// unsubscribed to subscribed.
     pub generations: BTreeMap<String, u64>,
+    /// What the queue held when the client last crashed: the queued ordinals and
+    /// the completion counter. `Action::Restart` requires the reopened client to
+    /// show exactly this (no pending operation is lost on reopen). Cleared by the
+    /// restart; a test that corrupts the file behind the engine's back clears it
+    /// itself, since it is forging a state the engine never produced.
+    pub crash_state: Option<ReopenState>,
 }
+
+/// The durable queue state a crash must not lose: queued ordinals and the last
+/// completed push.
+pub type ReopenState = (BTreeSet<u64>, u64);
 
 pub struct Sim {
     pub host: MemHost,
@@ -165,26 +172,23 @@ pub struct Sim {
     /// Whether the random stepper (`step.rs::choose`) may generate `Action::Direct`.
     /// Defaults to true; tests/invariants.rs runs the R2 runner both ways.
     pub generate_direct: bool,
-    /// Whether `Action::ServerChange` (`step.rs::choose`) may notify a channel outside
-    /// a record's real, explicitly-set membership *without* also notifying every
-    /// channel that currently provides the record. Defaults to false: per
-    /// `docs/superpowers/specs/2026-09-12-record-stamp-design.md`, "Delete applies
-    /// across channels" - "Hiding a record on one channel is a change to that record,
-    /// so the rule above applies: the handler notifies every channel that provides
-    /// it" - a notify that skips a real member channel is an application-rule
-    /// violation, not an engine defect. When this flag is set, the unrelated
-    /// channel's own load-refused-content (null) invalidation correctly outranks the
-    /// member channel's stale content by stamp once notified: the client applying it
-    /// as a delete is the engine doing exactly what a genuine cross-channel delete
-    /// requires, given an application that broke the rule. Off by default so the R2
-    /// runner does not fuzz an application bug the engine was never meant to defend
-    /// against; a test that wants to exercise this sets it directly.
+    /// Whether `Action::ServerChange` (`step.rs::choose`) may publish to a channel
+    /// outside a record's real, explicitly-set membership. Defaults to false: an
+    /// application's handler publishes to the channels that provide a record, and
+    /// the random runner generates what applications do. Since loads are
+    /// channel-blind, publishing outside membership is harmless to the engine - the
+    /// extra channel simply delivers the same content at the same stamp - so a test
+    /// may turn this on to prove exactly that.
     pub generate_membership_faults: bool,
     /// Count of actual (client, key) content comparisons `no_pending_means_converged`
     /// has made across the run - the checks it skips (not at head, exempted by a
-    /// direct write, membership or content-stamp gate) do not count. The R2 runner
+    /// direct write, membership or channel-stamp gate) do not count. The R2 runner
     /// asserts a floor on the sum across seeds so this coverage cannot silently drop.
     pub comparisons: usize,
+    /// Equal-stamp content conflicts every receipt and page reported across the run
+    /// (`ApplyReport::conflicts`). The engine never applies such content; a test that
+    /// injects none expects this to stay 0.
+    pub conflicts: usize,
     _dir: tempfile::TempDir,
 }
 
@@ -219,8 +223,8 @@ impl Sim {
                     enqueued: vec![],
                     receipts: BTreeMap::new(),
                     pushes: BTreeMap::new(),
-                    awaited: BTreeMap::new(),
                     generations: BTreeMap::new(),
+                    crash_state: None,
                 }
             })
             .collect();
@@ -239,6 +243,7 @@ impl Sim {
             generate_direct: true,
             generate_membership_faults: false,
             comparisons: 0,
+            conflicts: 0,
             _dir: dir,
         }
     }
@@ -276,33 +281,16 @@ impl Sim {
         let refs: Vec<&str> = channels.iter().map(String::as_str).collect();
         self.host.set_membership(&key, &refs);
     }
-    /// Move `key`'s real membership to exactly `channels`, then notify every new
-    /// member and every channel it just left - the left ones now load `null` for it
-    /// (membership already excludes them), the legitimate "moved away" delete.
+    /// Move `key`'s real membership to exactly `channels`, then republish it to every
+    /// member at its current stamp - `publish({channel, records})` on an existing
+    /// record, which initializes a missing stamp but never advances one. The channels
+    /// it leaves are told nothing: they simply stop receiving its updates.
     fn move_membership(&mut self, key: &RecordKey, channels: &[String]) {
-        let old = self.host.membership(key);
         let refs: Vec<&str> = channels.iter().map(String::as_str).collect();
         self.host.set_membership(key, &refs);
-        // Content is compared by absolute stamp, not delivery order (D2): whichever
-        // publish gets the higher stamp wins once a client sees it, regardless of
-        // which page arrives first. So the channels this record just left must be
-        // published *before* every real member, not after - otherwise the "moved
-        // away" delete could carry a higher stamp than the record's real content and
-        // wrongly outrank it once a client applies both, exactly the ordering D4's
-        // own move test uses (the vacated channel's delete is published with a lower
-        // stamp than the destination's upsert).
-        let removed: Vec<&str> = old
-            .iter()
-            .filter(|c| !channels.contains(c))
-            .map(String::as_str)
-            .collect();
-        if !removed.is_empty() {
-            self.host.notify(key, &removed);
+        for channel in &refs {
+            self.host.ensure_publish(key, channel);
         }
-        // Then republish every real member so its stamp is unambiguously the newest.
-        // Content is unchanged, but the stamp must be, so a client that later applies
-        // the vacated channel's now-stale delete cannot regress this.
-        self.host.notify(key, &refs);
     }
     pub fn apply(&mut self, action: Action) -> Result<(), String> {
         self.trace.push(action.clone());
@@ -344,9 +332,14 @@ impl Sim {
                 }
             }
             Action::Unsubscribe { client, channel } => {
+                // A channel is a delivery path, not an owner: unsubscribing must
+                // leave every visible row, every stamp and every pending operation
+                // exactly as it found them.
+                let before = crate::invariants::content_snapshot(self, client)?;
                 self.client(client)
                     .transaction(|tx| tx.set_channel(channel, false))
                     .map_err(|e| e.to_string())?;
+                crate::invariants::unsubscribe_cannot_remove_content(self, client, &before)?;
             }
             Action::Freeze { client } => {
                 if let Some(bytes) = self.client(client).freeze().map_err(|e| e.to_string())? {
@@ -393,12 +386,21 @@ impl Sim {
                 self.net.swap(i, j);
             }
             Action::Crash { client } => {
+                if self.is_up(client) {
+                    let state = crate::invariants::reopen_state(self, client)?;
+                    self.clients[client].crash_state = Some(state);
+                }
                 self.clients[client].client = None;
             }
             Action::Restart { client } => {
                 if self.clients[client].client.is_none() {
                     let path = self.clients[client].path.clone();
                     self.clients[client].client = Some(open(&path));
+                    if let Some(before) = self.clients[client].crash_state.take() {
+                        crate::invariants::no_pending_operation_is_lost_on_reopen(
+                            self, client, &before,
+                        )?;
+                    }
                 }
             }
             Action::ServerChange {
@@ -417,11 +419,11 @@ impl Sim {
                 });
                 // A real DeleteEntry mutation cascades: the client-side engine drops a
                 // Comment locally the moment it learns its parent Entry's authority
-                // went to None (`set_authority` in mutate.rs walks `descendants`).
+                // went to None (`stage_authority` in authority.rs walks `descendants`).
                 // Nulling an Entry here without also removing its Comments would leave
                 // the server holding a Comment the client is bound to cascade-drop, a
                 // state the real handler never produces - so mirror the cascade,
-                // notifying each dropped Comment on its own real channels.
+                // publishing each dropped Comment on its own real channels.
                 if state.is_none() && k.model == "Entry" {
                     for (encoded_key, value) in self.host.records() {
                         if !encoded_key.starts_with("[\"Comment\"") || value["entryId"] != id {
@@ -448,17 +450,10 @@ impl Sim {
             Action::MoveMembership { key, channels } => {
                 let k = parse_key(&key);
                 self.move_membership(&k, &channels);
-                // A real client cascade-drops a Comment locally the instant its
-                // parent Entry's authority goes to null on a channel it's watching
-                // (`set_authority` in mutate.rs walks descendants) - it cannot tell
-                // "parent moved to another channel" from "parent deleted" (see the
-                // record-stamp spec's "Delete applies across channels"). So a moved
-                // Entry must take its Comments with it, exactly like D4 describes
-                // ("a record can move to another channel entirely... including child
-                // records whose membership follows the parent"), or a comment whose
-                // own membership never changed would be wrongly cascade-dropped by a
-                // client that still holds it through the very channel this move
-                // leaves.
+                // Child membership follows the parent: a moved Entry takes its
+                // Comments to the same channels, so a client that follows the
+                // destination sees the pair together rather than a parent whose
+                // children it can never receive.
                 if k.model == "Entry" {
                     let id = k.identity["id"].clone();
                     let child_ids: Vec<String> = self
@@ -513,29 +508,14 @@ impl Sim {
                     return Ok(());
                 }
                 let receipt = PushReceipt::decode(&bytes).map_err(|e| e.to_string())?;
-                // What the client can await is decided when the receipt arrives:
-                // only checkpoints on channels it is subscribed to right now (A3).
-                let subscribed = self
-                    .client(client)
-                    .subscriptions()
-                    .map_err(|e| e.to_string())?;
+                // The receipt completes the batch at once: its authority is applied
+                // by stamp and the completed operations leave the queue. A stale
+                // duplicate changes nothing and reports itself as such.
                 match self.client(client).acknowledge(sequence, receipt.clone()) {
-                    Ok(()) => {
-                        let slot = &mut self.clients[client];
-                        let awaited: Vec<(String, u64, u64)> = receipt
-                            .required_checkpoints
-                            .iter()
-                            .filter(|cp| subscribed.iter().any(|(c, _)| c == &cp.channel))
-                            .map(|cp| {
-                                let generation =
-                                    slot.generations.get(&cp.channel).copied().unwrap_or(0);
-                                (cp.channel.clone(), cp.cursor, generation)
-                            })
-                            .collect();
-                        slot.awaited.entry(sequence).or_insert(awaited);
-                        slot.receipts.insert(sequence, receipt);
+                    Ok(report) => {
+                        self.conflicts += report.conflicts;
+                        self.clients[client].receipts.insert(sequence, receipt);
                     }
-                    Err(e) if e.to_string().contains("unknown batch") => {}
                     Err(e) => return Err(e.to_string()),
                 }
             }
@@ -578,9 +558,11 @@ impl Sim {
                         touched.push(key.encoded().unwrap());
                     }
                 }
-                self.client(client)
+                let report = self
+                    .client(client)
                     .apply_page(page)
                     .map_err(|e| e.to_string())?;
+                self.conflicts += report.conflicts;
                 for key in touched {
                     self.direct_writes.remove(&(client, key));
                 }
@@ -671,18 +653,22 @@ mod tests {
         sim.apply(Action::Deliver).unwrap(); // receipt reaches the client
         assert_eq!(
             sim.client(0).pending_count().unwrap(),
-            1,
-            "ACK alone does not settle"
+            0,
+            "the receipt completes the batch on its own"
         );
+        assert_eq!(sim.client(0).last_completed_push().unwrap(), 1);
+        assert_eq!(sim.client(0).record_stamp(&entry_key("e1")).unwrap(), 1);
         sim.apply(Action::Pull {
             client: 0,
             channel: "a".into(),
         })
         .unwrap();
         sim.apply(Action::Deliver).unwrap(); // pull reaches server, page queued
-        sim.apply(Action::Deliver).unwrap(); // page reaches client
+        sim.apply(Action::Deliver).unwrap(); // page reaches client: same stamp, no rewrite
         assert_eq!(sim.client(0).pending_count().unwrap(), 0);
+        assert_eq!(sim.client(0).cursor("a").unwrap(), 1);
         assert_eq!(sim.read_text(0, &entry_key("e1")), Some("hi".into()));
+        assert_eq!(sim.conflicts, 0);
         assert_eq!(sim.trace.len(), 8);
     }
 
