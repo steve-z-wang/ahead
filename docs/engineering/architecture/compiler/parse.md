@@ -20,7 +20,7 @@ Code: `lex` and `Parser` in [compiler/lib.rs](../../../../crates/compiler/src/li
 
 ## 10. Quality Requirements
 
-- A syntax error names its line (guarantee S1, syntax half). Evidence: [compiler/tests/compiler.rs](../../../../crates/compiler/tests/compiler.rs) `rejects_unknown_with_location`.
+- A syntax error names its line. Evidence: [compiler/tests/compiler.rs](../../../../crates/compiler/tests/compiler.rs) `rejects_unknown_with_location`.
 
 ## 11. Risks and Technical Debt
 

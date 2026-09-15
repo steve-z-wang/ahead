@@ -26,4 +26,4 @@
 ## 10. Quality Requirements
 
 - Selection must preserve these dependency rules, rather than enforce a global FIFO queue.
-- Evidence: [dependency and prerequisite scenarios](../../../../../../crates/sqlite/tests/push.rs). Coverage gaps in the named P3 scenarios are recorded in [guarantees](../../../../guarantees.md).
+- Evidence: [dependency and prerequisite scenarios](../../../../../../crates/sqlite/tests/push.rs). Coverage gaps in the named P3 scenarios are recorded in [coverage review](../../../../testing/review.md).

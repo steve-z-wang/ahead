@@ -1,5 +1,5 @@
 # Engineering
 
-- [Guarantees](guarantees.md) — Framework promises and their supporting checks.
+- [Guarantees](guarantees.md) — Overall behavioral requirements of the Rust sync core.
 - [Architecture](architecture.md) — Component responsibilities, architecture graph and code map.
 - [Testing](testing.md) — Testing principles and practices (to be defined).

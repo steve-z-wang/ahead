@@ -18,7 +18,7 @@ Code: `process_push` and `decode` in [server/lib.rs](../../../../../crates/serve
 
 1. **Lock the client.** `claim` locks the client's row and returns its owner, last sequence and stored receipt. A different owner is `owner_mismatch`.
 2. **Compare sequences.** The same sequence as last time returns the stored receipt without running anything (guarantee P1). A smaller one is `overlap`; anything but `last + 1` is `gap` (guarantee P2).
-3. **Check versions.** If any mutation names a known mutation at an unregistered version, the whole batch is refused before any handler runs (guarantee C4).
+3. **Check versions.** If any mutation names a known mutation at an unregistered version, the whole batch is refused before any handler runs.
 4. **Run each mutation.** Decode its arguments; a decode failure becomes a rejection with the decode code and no handler call. Otherwise open a savepoint, call the handler, and either roll the savepoint back on a rejection or record the settlement channel, then release it.
 5. **Build the receipt.** Read the head of every settlement channel, sort by channel, fill the legacy pair from the first, list the rejections, store it with `saveReceipt` and return it.
 
@@ -28,14 +28,14 @@ All of this happens in the transaction the application opened, so business write
 
 - **A lost receipt is replayed without a second execution, including under concurrent retries** (guarantee P1). Evidence: [crates/sim/tests/push.rs](../../../../../crates/sim/tests/push.rs) `p1_lost_receipt_retry_executes_once`; [runtime.test.mjs](../../../../../integration/persistence/server/runtime.test.mjs) `concurrent same-client retry executes once under PostgreSQL lock`.
 - **Gaps and overlaps are refused with stable codes and nothing executes** (guarantee P2). Evidence: `p2_contiguous_sequence_and_server_refuses_gap_and_overlap`; `push commits business + compacted publication + exact durable receipt together`.
-- **An unsupported version aborts before handlers; an invalid body settles as a rejection with no checkpoints** (guarantee C4). Evidence: `unsupported versions abort before handlers, invalid bodies settle with empty checkpoints`.
+- **An unsupported version aborts before handlers; an invalid body settles as a rejection with no checkpoints**. Evidence: `unsupported versions abort before handlers, invalid bodies settle with empty checkpoints`.
 - **A handler failure aborts the batch and the client retries the same bytes** (guarantee P6). Evidence: `p6_handler_failure_aborts_the_batch_and_the_client_retries`.
 
 Tests read, not executed.
 
 ## 11. Risks and Technical Debt
 
-**Problem: guarantee C1 promises body detection that does not exist.** *Condition:* a client retries a batch sequence with a different body. *Consequence:* the stored receipt is returned; `PushRequest::semantic_hash` is never called outside core tests and the `request_hash` column in [migration.sql](../../../../../packages/persistence-prisma/migration.sql) is never written. The persistence test asserts the current behavior. *Status:* the guarantees page marks C1 partial with this note. **To confirm:** whether to enforce the hash or drop the clause.
+**To confirm: whether retries must validate request bodies.** *Condition:* a client retries a batch sequence with a different body. *Consequence:* the stored receipt is returned; `PushRequest::semantic_hash` is never called outside core tests and the `request_hash` column in [migration.sql](../../../../../packages/persistence-prisma/migration.sql) is never written. The persistence test asserts the current behavior. *Status:* codec hash tests do not establish server enforcement. Whether retries should require matching request hashes remains a contract decision owned here.
 
 **Accepted limitation.** A client id is bound to the first owner that used it; a later push from another user with the same client id is `owner_mismatch` (HTTP 403) and there is no reassignment. Relevant to shared devices.
 
