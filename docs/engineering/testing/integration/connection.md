@@ -17,7 +17,7 @@ Next review: map cancellation, overflow, auth and reconnect scenarios across bot
 
 ## Coverage review
 
-Reviewed 2026-09-14; tests read, not executed, except where a row records a verified run. Verified 2026-09-15 after adding the Dart byte-bound overflow test: `node --test integration/bindings/client-js/live.test.mjs` passed (17 tests) and `(cd packages/dart && dart analyze && dart test)` reported no analyzer issues and passed (21 tests). Client-side tests use a real WebSocket server and real HTTP listener in the test process but a scripted backend; server-side tests run the real backend over PostgreSQL. Both count as real transport boundaries; neither alone proves the full pair, which is the end-to-end suite's job.
+Reviewed 2026-09-14; tests read, not executed, except where a row records a verified run. Verified 2026-09-15 after adding the Dart byte-bound overflow test: `node --test integration/bindings/client-js/live.test.mjs` passed (19 tests) and `(cd packages/dart && dart analyze && dart test)` reported no analyzer issues and passed (28 tests). Client-side tests use a real WebSocket server and real HTTP listener in the test process but a scripted backend; server-side tests run the real backend over PostgreSQL. Both count as real transport boundaries; neither alone proves the full pair, which is the end-to-end suite's job.
 
 | Behavior | Existing tests | Coverage | Gap and next step |
 | --- | --- | --- | --- |
