@@ -26,15 +26,21 @@ The upgrade path authenticates before accepting the socket and refuses with a ra
 
 Code: `createHttpHandler`, `attachLive`, `listen` in [server/index.mts](../../../../../packages/server/index.mts).
 
+## 7. Deployment View
+
+One Node process runs the listener, the handlers, the loaders and the native engine. The listener binds to `127.0.0.1` unless `host` says otherwise, speaks plain HTTP and `ws://`, reads no forwarded-for headers, and enforces the 1 MiB limits itself. The supported placement is behind a reverse proxy that terminates TLS, forwards the two POST routes and relays the `/sync/live` upgrade with the `Authorization` header preserved. Live wakeups are process-local, so one process serves each set of live subscribers. The author-facing description, including a proxy example and what has and has not been validated, is [Deploy the backend](../../../../../website/docs/backend/deployment.md).
+
 ## 10. Quality Requirements
 
 - **Unauthenticated requests are refused, valid ones reach the native engine, malformed bodies are `400`, and server failures are `500 {code: "server"}` reported to `onError`.** Evidence: [runtime.test.mjs](../../../../../integration/persistence/server/runtime.test.mjs) `HTTP adapter authenticates and serves the real native persistence path`, `onError captures server-side failures and HTTP responds with {code:"server"}`, `listen answers pull over HTTP with authentication and closes cleanly`.
 - **Every mapped status is produced from the real engine, and the mapping keys on the code alone.** Evidence: `HTTP maps engine codes to statuses: 403, 409 gap/overlap/version fields, 404, 405, 413, 400` (real backend over PostgreSQL) and `HTTP classifies native failures by code, not message wording; unknown codes fall back to 500` (a fake native whose messages are reworded; also asserts the live `1002`/`1011` close codes and that unclassified codes reach `onError` as `EngineError`).
 
-Verified 2026-09-14: `bash integration/persistence/server/run.sh` passed with these tests.
+- **Behind a reverse proxy that forwards HTTP and relays the WebSocket upgrade with headers preserved, push, pull and live work; a proxy that strips `Authorization` is refused.** Evidence: `a reverse proxy forwarding HTTP and the WebSocket upgrade with headers serves push, pull and live; a stripped Authorization header is refused` (an in-process proxy with TCP-level upgrade pass-through). Verified 2026-09-14 by `bash integration/persistence/server/run.sh`.
+
+Verified 2026-09-14: `bash integration/persistence/server/run.sh` passed with the proxy and structured-error tests.
 
 ## 11. Risks and Technical Debt
 
-**To confirm.** Deployment assumptions are not written down: no TLS, CORS, compression or proxy-header handling, and the default bind address is loopback. A reverse proxy seems implied.
+**Accepted limitation.** No TLS, CORS, compression or proxy-header handling is built in; the listener is meant to sit behind a reverse proxy on loopback ([Deployment View](#7-deployment-view)). TLS termination and specific proxy products are not exercised by any test; browser clients ([#59](https://github.com/zanminwang/ahead/issues/59)) and multi-process live delivery ([#62](https://github.com/zanminwang/ahead/issues/62)) are separate decisions.
 
 **Accepted limitation.** The 1 MiB limits are fixed; the internal options exist but `listen` does not expose them ([#11](https://github.com/zanminwang/ahead/issues/11)).

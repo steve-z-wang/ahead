@@ -66,6 +66,7 @@ nav:
           - Backend API: backend/api.md
           - Database adapters: backend/database.md
           - Prisma / PostgreSQL: backend/prisma.md
+          - Deploy the backend: backend/deployment.md
       - Contributing:
           - Contribute to the docs: https://github.com/zanminwang/ahead/blob/main/docs/writing/guides.md
           - Testing: https://github.com/zanminwang/ahead/blob/main/docs/engineering/testing/running.md

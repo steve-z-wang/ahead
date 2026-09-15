@@ -18,8 +18,8 @@ Use this index to find the interface you call or implement. The examples use the
 | `Handlers<Tx>`, `HandlerCall` | Implement each mutation's authoritative business logic | [Handlers](backend/api.md#handlers) |
 | `Loaders<Tx>`, `LoaderCall` | Return current records for synchronization | [Loaders](backend/api.md#loaders) |
 | `notify`, `NotifyArgs`, model reference functions | Tell Ahead which records changed on which channels | [Notifications](backend/api.md#notifications) |
-| `createBackend`, `Options<Tx>` | Connect your implementations to the backend runtime | [Backend setup](backend/api.md#createbackend) |
-| `backend.listen` | Serve sync requests and close the listener | [Listener](backend/api.md#listener) |
+| `createBackend`, `Options<Tx>` | Connect your implementations to the backend runtime | [Backend setup](backend/api.md#createbackend), [What your backend owns](backend/api.md#what-your-backend-owns) |
+| `backend.listen` | Serve sync requests and close the listener | [Listener](backend/api.md#listener), [Deploy the backend](backend/deployment.md) |
 | `Authenticate`, `devAuth` | Identify the caller | [Authentication](backend/api.md#authentication) |
 | `MutationRejected`, `translateRejection`, `onError`, `EngineError` | Reject business operations and diagnose failures | [Errors](backend/api.md#errors) |
 | `backend.notify`, `backend.bindTransaction` | Notify about writes performed outside a handler | [Background writes](backend/api.md#background-writes) |
