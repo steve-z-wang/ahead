@@ -1,0 +1,43 @@
+# Handoff: mobile To-do demo (#31)
+
+## Copyable agent prompt
+
+Implement [Ahead issue #31](https://github.com/zanminwang/ahead/issues/31) using these documents, in order:
+
+1. `docs/superpowers/specs/2026-09-15-todo-mobile-design.md`
+2. `docs/superpowers/plans/2026-09-15-todo-mobile.md`
+
+Reuse this isolated worktree on this machine:
+
+```text
+/Users/stevewang/Github/local first state/.worktrees/todo-mobile
+branch: codex/todo-mobile
+planning baseline: a837cf8
+```
+
+Read `AGENTS.md` and inspect branch/status first. Preserve the planning documents and unrelated changes; commit the documents before updating the implementation baseline. If working on another machine, obtain this branch's planning documents first and create an isolated `codex/` worktree. Do not assume locally saved files are already pushed to GitHub.
+
+The user has settled the product scope: **React Native + TypeScript, Add task and Done only**. Two independent phones use Alice and Bob identities with simple initial avatars and show the same shared task list. Exactly two business tables: `User(id, name)` and `Todo(id, title, done, createdById)`. Creator is not assignee. There are no replies, assignment, edit/delete controls, multiple lists, or extra dashboard UI. The app renders one phone screen; the marketing demonstration shows two app instances side by side.
+
+Use the existing Rust/SQLite engine, generated clients and TypeScript/Prisma/PostgreSQL backend. Include the required React Native native carrier and JS host adaptation: today's Node SDK is not directly mobile-compatible. Use an Expo development build; iOS is the first required target. Preserve Node transaction/savepoint behavior and existing Dart coverage. Check whether #58's Rust live-session migration has landed; use current implemented APIs, not a planned command family.
+
+Work through the plan and verify each deliverable. The decisive mobile test uses two separate simulator installations/databases/client IDs, actual backend synchronization, offline add-then-done, app termination/relaunch while disconnected, and convergence after reconnect. Build with embedded JavaScript for the offline-relaunch test. A mockup, SDK pause alone, Node-only tests, or native link success does not complete that test.
+
+Replace `examples/rust-round-trip` with `examples/todo` only after moving its useful normalization/rejection/retry/catch-up and JS/Dart regressions into an integration fixture and updating scripts/docs. Do not delete tests to make the smaller demo pass.
+
+Proceed with implementation within this scope. Keep user updates concise. Finish independent work if a platform check is blocked, then report the exact missing evidence. Do not expand into browser/WASM, Android, production authentication, deployment, or video production. Do not merge or publish automatically.
+
+## State at preparation
+
+- #31 exists and owns the mobile demo; its previous Flutter/assignment/CRUD description is superseded by this spec.
+- #59 owns browser/WASM/runtime/storage/transport dependencies.
+- #72 is the web version of this same demo. #31 and #59 block #72; mobile is not blocked by browser work.
+- The demo worktree was rebased to the then-current local main, `a837cf8`.
+- This handoff adds design and planning documents only. It does not implement the app or native adapter.
+- Earlier HTML previews simulated shared state. They are not runtime evidence or a source of additional features; use the spec's minimal wireframe.
+- No implementation agent has been launched by this planning task.
+- Planning validation passed: the spec's exact schema compiled with the repository compiler at `a837cf8`; generated AddTodo/SetTodoDone builders produced the expected operation shapes; local Markdown links and fenced blocks checked cleanly. These checks do not validate mobile execution or backend synchronization.
+
+## Expected final report
+
+Include the resulting app/backend locations, exact two-simulator launch steps, verified revision/toolchain, executed tests and runtime screenshots, preserved regression coverage, and material remaining limitations. Map results to acceptance criteria A1–A9 in the spec. Keep #31 open if required mobile runtime evidence is missing.
