@@ -170,6 +170,15 @@ impl PullLedger {
             .position(|p| matches(p) && p.epoch == current)
         {
             self.issued.remove(i);
+            // The wire identifies requests only by channel and cursor. If old and
+            // current subscriptions issued the same request, this response could
+            // belong to either one. Let every indistinguishable answer use the
+            // cursor gate; otherwise the fresh answer can be dropped as stale
+            // when the old answer arrives first. Retain the entries so another
+            // subscription change can still make the outstanding answers stale.
+            for pull in self.issued.iter_mut().filter(|p| matches(p)) {
+                pull.epoch = current;
+            }
             return false;
         }
         if let Some(i) = self.issued.iter().position(matches) {

@@ -323,3 +323,26 @@ fn page_from_a_previous_subscription_is_stale_not_a_gap() {
         .unwrap();
     assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "kept");
 }
+
+#[test]
+fn older_subscription_response_cannot_discard_a_fresh_response() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    subscribe(&mut c, "a");
+    let old = PullRequest::decode(c.downlink_request("a").unwrap().as_bytes()).unwrap();
+    c.transaction(|tx| tx.set_channel("a".into(), false))
+        .unwrap();
+    c.transaction(|tx| tx.set_channel("a".into(), true))
+        .unwrap();
+    let fresh = PullRequest::decode(c.downlink_request("a").unwrap().as_bytes()).unwrap();
+    // The requests have identical wire identities. Receiving the old answer
+    // first must not consume the fresh request and discard its later answer.
+    c.receive_downlink(stamped("a", 0, 1, 1, Some("old")), Some(old))
+        .unwrap();
+    let fresh_progress = c
+        .receive_downlink(stamped("a", 0, 2, 2, Some("fresh")), Some(fresh))
+        .unwrap();
+    assert_eq!(fresh_progress.disposition, "applied");
+    assert_eq!(c.cursor("a").unwrap(), 2);
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "fresh");
+}

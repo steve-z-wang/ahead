@@ -43,7 +43,7 @@ Verified 2026-09-14: `cargo test -p ahead-sim --locked` and `cargo test -p ahead
 
 ## 11. Risks and Technical Debt
 
-**Accepted limitation.** The subscription epoch and the issued-pull memory live in the process, bounded to the last 1,024 requests. A page for a pull that was not issued through the client (a direct `apply_page` caller building its own request) is judged by the cursor gate alone and can still see `pull cursor gap`.
+**Accepted limitation.** The subscription epoch and the issued-pull memory live in the process, bounded to the last 1,024 requests. A page for a pull that was not issued through the client (a direct `apply_page` caller building its own request) is judged by the cursor gate alone and can still see `pull cursor gap`. When old and current subscriptions have outstanding requests with the same channel and cursor, their answers cannot be distinguished on the wire. All matching answers use the cursor gate, so an old answer arriving first cannot cause the fresh answer to be discarded. Evidence: `older_subscription_response_cannot_discard_a_fresh_response` in `crates/sqlite/tests/downlink.rs`; the existing A2 test covers the opposite arrival order.
 
 **Potential risk: skipped changes are invisible on the SDK path.** *Condition:* a change's state fails validation, for example the server omits a field this client's newer schema requires. *Consequence:* the change is skipped, the cursor moves past it, the record is never retried, and neither SDK can see it happened, because `receive_downlink` returns only the disposition. *Evidence:* the skip branch of `apply_page`; `receive_downlink` discards the report. **To confirm:** whether skipped changes and equal-stamp conflicts should be surfaced or should fail the page.
 
