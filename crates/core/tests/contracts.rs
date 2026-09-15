@@ -245,3 +245,129 @@ fn field_default_and_record_stamp_round_trip_and_ahead_prefix_is_rejected() {
         );
     }
 }
+
+#[test]
+fn scalar_and_enum_values_normalize_or_are_refused() {
+    let s = Schema::from_value(json!({"enums":[{"name":"Mood","values":["calm","busy"]}],"models":[{
+        "name":"E","identity":["id"],"fields":[
+            {"name":"id","type":{"kind":"scalar","name":"string"},"nullable":false},
+            {"name":"at","type":{"kind":"scalar","name":"dateTime"},"nullable":false},
+            {"name":"ratio","type":{"kind":"scalar","name":"float"},"nullable":true},
+            {"name":"mood","type":{"kind":"enum","name":"Mood"},"nullable":false},
+            {"name":"tags","type":{"kind":"list","element":{"kind":"scalar","name":"string"}},"nullable":false}
+        ]}]}))
+    .unwrap();
+    let patch = |v: Value| s.validate_patch("E", &v);
+    // dateTime re-encodes to UTC milliseconds; a date, a space separator or a number is refused.
+    assert_eq!(
+        patch(json!({"at":"2024-01-02T03:04:05+01:00"})).unwrap(),
+        json!({"at":"2024-01-02T02:04:05.000Z"})
+    );
+    assert_eq!(
+        patch(json!({"at":"2024-01-02T03:04:05.25Z"})).unwrap()["at"],
+        "2024-01-02T03:04:05.250Z"
+    );
+    for bad in [
+        json!("2024-01-02"),
+        json!("2024-01-02 03:04:05Z"),
+        json!(1704164645),
+    ] {
+        assert!(patch(json!({"at":bad})).is_err(), "{bad} must be refused");
+    }
+    // float must be finite; -0 becomes 0; null is allowed only because ratio is nullable.
+    assert_eq!(patch(json!({"ratio":-0.0})).unwrap()["ratio"], json!(0.0));
+    assert_eq!(patch(json!({"ratio":1.5})).unwrap()["ratio"], json!(1.5));
+    assert_eq!(patch(json!({"ratio":null})).unwrap()["ratio"], Value::Null);
+    assert!(patch(json!({"ratio":"1.5"})).is_err());
+    // JSON cannot carry NaN or infinity: `Value::from(f64::NAN)` is already null,
+    // so the only non-finite inputs a wire can produce are refused as non-numbers.
+    assert!(patch(json!({"ratio":"NaN"})).is_err());
+    assert!(patch(json!({"ratio":"Infinity"})).is_err());
+    // enum values must be declared and be strings.
+    assert_eq!(patch(json!({"mood":"busy"})).unwrap()["mood"], "busy");
+    assert!(patch(json!({"mood":"angry"})).is_err());
+    assert!(patch(json!({"mood":1})).is_err());
+    assert!(patch(json!({"mood":null})).is_err(), "mood is not nullable");
+    // lists normalize each element and refuse non-lists and bad elements.
+    assert_eq!(
+        patch(json!({"tags":["a","b"]})).unwrap()["tags"],
+        json!(["a", "b"])
+    );
+    assert!(patch(json!({"tags":"a"})).is_err());
+    assert!(patch(json!({"tags":["a",1]})).is_err());
+    assert!(patch(json!({"tags":null})).is_err(), "lists cannot be null");
+}
+
+#[test]
+fn list_descriptors_must_hold_scalars_and_cannot_be_nullable() {
+    let model = |field: Value| {
+        Schema::from_value(
+            json!({"enums":[{"name":"Mood","values":["calm"]}],"models":[{
+            "name":"E","identity":["id"],"fields":[
+                {"name":"id","type":{"kind":"scalar","name":"string"},"nullable":false},
+                field
+            ]}]}),
+        )
+    };
+    assert!(model(json!({"name":"tags","type":{"kind":"list","element":{"kind":"scalar","name":"string"}},"nullable":false})).is_ok());
+    let nullable_list = model(
+        json!({"name":"tags","type":{"kind":"list","element":{"kind":"scalar","name":"string"}},"nullable":true}),
+    );
+    assert!(
+        nullable_list
+            .unwrap_err()
+            .to_string()
+            .contains("lists cannot be nullable")
+    );
+    let enum_list = model(
+        json!({"name":"moods","type":{"kind":"list","element":{"kind":"enum","name":"Mood"}},"nullable":false}),
+    );
+    assert!(
+        enum_list
+            .unwrap_err()
+            .to_string()
+            .contains("list elements must be scalar")
+    );
+    let nested = model(
+        json!({"name":"grid","type":{"kind":"list","element":{"kind":"list","element":{"kind":"scalar","name":"int"}}},"nullable":false}),
+    );
+    assert!(nested.is_err());
+    assert!(
+        model(json!({"name":"mood","type":{"kind":"enum","name":"Unknown"},"nullable":false}))
+            .is_err()
+    );
+}
+
+#[test]
+fn push_batches_hold_one_to_twenty_mutations_with_distinct_ordinals() {
+    let batch = |count: usize| {
+        let mutations: Vec<Value> = (1..=count)
+            .map(|i| json!({"ordinal":i,"name":"edit","operations":[]}))
+            .collect();
+        json!({"clientId":"c","batchSequence":1,"mutations":mutations}).to_string()
+    };
+    assert!(PushRequest::decode(batch(0).as_bytes()).is_err());
+    assert_eq!(
+        PushRequest::decode(batch(1).as_bytes())
+            .unwrap()
+            .mutations
+            .len(),
+        1
+    );
+    assert_eq!(
+        PushRequest::decode(batch(20).as_bytes())
+            .unwrap()
+            .mutations
+            .len(),
+        20
+    );
+    let err = PushRequest::decode(batch(21).as_bytes()).unwrap_err();
+    assert!(err.to_string().contains("1..20"), "{err}");
+    let duplicate = json!({"clientId":"c","batchSequence":1,"mutations":[
+        {"ordinal":1,"name":"edit","operations":[]},{"ordinal":1,"name":"edit","operations":[]}
+    ]})
+    .to_string();
+    assert!(PushRequest::decode(duplicate.as_bytes()).is_err());
+    let zero = json!({"clientId":"c","batchSequence":1,"mutations":[{"ordinal":0,"name":"edit","operations":[]}]}).to_string();
+    assert!(PushRequest::decode(zero.as_bytes()).is_err());
+}
