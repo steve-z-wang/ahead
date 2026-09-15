@@ -19,7 +19,7 @@ A model declares the records an application stores: the stored fields, the ident
 - **Record key.** The identity object with exactly the identity fields, normalized; its canonical encoding is the record's key in every table and message ([Protocol / Common](../protocol/common.md)).
 - **State and patch shapes.** Received states must carry every non-identity field or a nullable default; patches may name only known non-identity fields; identity is immutable ([Protocol / Common](../protocol/common.md)).
 
-Code: parsing in [compiler/lib.rs](../../../../crates/compiler/src/lib.rs); descriptor rules and record keys in [core/schema.rs](../../../../crates/core/src/schema.rs); tables and indexes in [client/ddl.rs](../../../../crates/client/src/ddl.rs).
+Code: parsing in [compiler/parse.rs](../../../../crates/compiler/src/parse.rs); name, identity and unique checks in [compiler/validate.rs](../../../../crates/compiler/src/validate.rs); descriptor rules and record keys in [core/schema.rs](../../../../crates/core/src/schema.rs); tables and indexes in [client/ddl.rs](../../../../crates/client/src/ddl.rs).
 
 ## 10. Quality Requirements
 
