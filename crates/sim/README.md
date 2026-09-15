@@ -6,7 +6,7 @@ checked after every step). `random_sequences_with_direct_writes` is ignored unti
 is fixed. `SIM_SEEDS=5000 SIM_STEPS=300 cargo test -p ahead-sim --test invariants` is the long
 form. A failure prints the seed, the full trace and the minimal trace that still fails.
 
-Design: docs/testing.md, section "Simulation crate". Guarantees: docs/guarantees.md.
+Design: docs/testing.md, section "Simulation crate". Guarantees: docs/engineering/guarantees.md.
 
 ## Capacity diagnostic
 

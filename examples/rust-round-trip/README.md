@@ -1,3 +1,3 @@
 # Getting started
 
-See the [documentation](../../docs/getting-started.md) for setup, usage and reference.
+See the [documentation](../../website/docs/getting-started.md) for setup, usage and reference.

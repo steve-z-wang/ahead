@@ -1,0 +1,33 @@
+# Subscriptions
+
+Engine behavior: [Client / Connection / Controller](../client/connection/controller/README.md), [Server / Connection / Controller](../server/connection/controller.md).
+
+## 3. Context and Scope
+
+- Endpoint: WebSocket upgrade on `/sync/live` with `Authorization: Bearer <token>`; refused with a raw `401`, `500` or `503` before the upgrade.
+- Client frame, exactly one: `{"type":"subscribe","scopes":[…]}`. Any other key, including `cursors`, is refused.
+- Server acknowledgement: `{"type":"subscribed","scopes":[…],"rejections":[]}` with scopes deduplicated and sorted by UTF-16 order.
+- Server pages: [Pull](pull.md) pages without a `type` key, one channel each, starting at the channel head as of negotiation.
+- Close codes: `1002` protocol violation (a second client frame or a malformed subscribe), `1011` server failure, `1001` server shutting down.
+
+## 5. Building Block View
+
+- Scopes must be non-empty strings and at least one is required.
+- The acknowledgement is produced inside the negotiating transaction, which also reads each channel's head; that head is where streaming starts.
+- Clients validate the acknowledgement strictly: the same scope set and an empty `rejections` array, otherwise the session ends.
+- Each streamed page is checked against the subscriber's expected scope and cursor before it is sent.
+
+Code: [server/live.rs](../../../../crates/server/src/live.rs); clients in [client-js/live.mts](../../../../packages/client-js/live.mts) and [dart/live.dart](../../../../packages/dart/lib/src/live.dart).
+
+## 6. Runtime View
+
+Because streaming starts at the head, the client catches up over HTTP from its durable cursor as soon as the acknowledgement arrives; overlapping pages are reconciled by the cursor rules in [Client Pull](../client/engine/pull.md). Changing the channel set means closing the socket and negotiating again; there is no resubscribe frame.
+
+## 10. Quality Requirements
+
+- Only one subscribe frame is accepted, scopes are normalized, and a subscribe carrying `cursors` is refused. Evidence: [server/tests/runtime.rs](../../../../crates/server/tests/runtime.rs) `live_subscribe_requires_one_subscribe_frame_and_normalizes_scopes`; [server/tests/stamp.rs](../../../../crates/server/tests/stamp.rs) `live_negotiation_establishes_current_heads_and_rejects_cursor_modes`.
+- Both clients complete the handshake and receive pages; a second client frame closes the socket with `1002`. Evidence: [live.test.mjs](../../../../integration/bindings/client-js/live.test.mjs), [dart/test/live_test.dart](../../../../packages/dart/test/live_test.dart), [runtime.test.mjs](../../../../integration/persistence/server/runtime.test.mjs) `live transport negotiates, wakes only after commit, reconnects, and cleans up`.
+
+## 11. Risks and Technical Debt
+
+- **Accepted limitation:** `rejections` is vestigial since channel authorization was removed in [#22](https://github.com/zanminwang/ahead/issues/22); it is always empty and clients require it to be.

@@ -16,7 +16,7 @@ Local-first apps read and write data on the device, so everyday interactions don
 
 ## How it works
 
-![Ahead architecture: local state and background sync](docs/assets/architecture.svg)
+![Ahead architecture: local state and background sync](website/docs/assets/architecture.svg)
 
 Clients push mutations over HTTP. On connection, they catch up from saved progress over HTTP, then receive ongoing record updates over WebSocket. Ahead manages this as one connection.
 
@@ -28,11 +28,11 @@ Writes update local SQLite immediately, so reads see changes before sync complet
 
 | Layer | Supported today |
 | --- | --- |
-| Frontend / client | [TypeScript](docs/frontend/setup.md) · [Flutter](docs/frontend/setup.md) |
-| Backend | [TypeScript](docs/backend/setup.md) |
-| Database adapter | [Prisma with PostgreSQL](docs/backend/prisma.md) |
+| Frontend / client | [TypeScript](website/docs/frontend/setup.md) · [Flutter](website/docs/frontend/setup.md) |
+| Backend | [TypeScript](website/docs/backend/setup.md) |
+| Database adapter | [Prisma with PostgreSQL](website/docs/backend/prisma.md) |
 
-The TypeScript client and backend currently run on Node.js. The clients use native runtimes; browser support is not yet implemented. See [platform validation](docs/frontend/platforms.md) for tested environments.
+The TypeScript client and backend currently run on Node.js. The clients use native runtimes; browser support is not yet implemented. See [platform validation](website/docs/frontend/platforms.md) for tested environments.
 
 Need another language, runtime, or database adapter? [Request support](https://github.com/zanminwang/ahead/issues/new). More integrations can be added.
 
@@ -53,7 +53,7 @@ model Todo {
 mutation AddTodo { todo Todo.create }
 ```
 
-The compiler generates the client used below and the backend's `Handlers` and `Loaders` interfaces. See the [schema compiler guide](docs/schema/reference.md) for generation commands.
+The compiler generates the client used below and the backend's `Handlers` and `Loaders` interfaces. See the [schema compiler guide](website/docs/schema/reference.md) for generation commands.
 
 ### 2. Read and write locally
 
@@ -98,7 +98,7 @@ Ahead sends queued writes when the network allows, retries failed sync requests,
 
 ### 3. Implement handlers and loaders for your backend
 
-This example uses Prisma with PostgreSQL and the [included database adapter](docs/backend/prisma.md).
+This example uses Prisma with PostgreSQL and the [included database adapter](website/docs/backend/prisma.md).
 
 ```ts
 // Handle a write using your database transaction.
@@ -172,4 +172,4 @@ Instant Cloud is closed to new signups and will shut down on August 31, 2027. Yo
 
 Ahead is an early alpha. Packages have not been published, and a license has not yet been added.
 
-[Schema guide](docs/schema/reference.md) · [Client guide](docs/frontend/setup.md) · [Backend guide](docs/backend/setup.md)
+[Schema guide](website/docs/schema/reference.md) · [Client guide](website/docs/frontend/setup.md) · [Backend guide](website/docs/backend/setup.md)

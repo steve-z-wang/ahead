@@ -1,0 +1,79 @@
+site_name: Ahead
+site_description: Ahead is a schema-driven framework for building local-first apps with your own backend.
+site_url: https://zanminwang.github.io/ahead/
+repo_url: https://github.com/zanminwang/ahead
+repo_name: zanminwang/ahead
+edit_uri: ''
+strict: true
+docs_dir: docs
+site_dir: site
+theme:
+  name: material
+  language: en
+  font: false
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+  palette:
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+plugins:
+  - search
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+extra_css:
+  - stylesheets/extra.css
+nav:
+  - Home: index.md
+  - Docs:
+      - Getting started:
+          - Run your first app: getting-started.md
+          - How Ahead works: concepts.md
+          - Find an interface: api-index.md
+      - Schema:
+          - Define models and mutations: schema/define.md
+          - Schema and compiler reference: schema/reference.md
+      - Frontend:
+          - Set up the client: frontend/setup.md
+          - Client API: frontend/client-api.md
+          - Offline work and sync: frontend/sync.md
+          - Local storage: frontend/storage.md
+          - Advanced client APIs: frontend/runtime.md
+          - Supported platforms: frontend/platforms.md
+      - Backend:
+          - Set up your backend: backend/setup.md
+          - Backend API: backend/api.md
+          - Database adapters: backend/database.md
+          - Prisma / PostgreSQL: backend/prisma.md
+      - Contributing:
+          - Contribute to the docs: https://github.com/zanminwang/ahead/blob/main/docs/writing/guides.md
+          - Testing: https://github.com/zanminwang/ahead/blob/main/docs/engineering/testing/running.md
+          - Guarantees and proofs: https://github.com/zanminwang/ahead/blob/main/docs/engineering/guarantees.md
+          - Testing strategy: https://github.com/zanminwang/ahead/blob/main/docs/engineering/testing/strategy.md
+  - GitHub: https://github.com/zanminwang/ahead
+validation:
+  links:
+    not_found: warn
+    anchors: warn
+    unrecognized_links: warn
