@@ -1,7 +1,9 @@
 import {
   startConnection,
+  startLiveLane,
   type Connection,
   type ConnectionOptions,
+  type LiveLane,
   type Transport,
 } from "./connection.mts";
 export type { Connection, ConnectionOptions } from "./connection.mts";
@@ -9,7 +11,7 @@ import { strictJson, type QuerySpec, type RecordValue } from "./values.mts";
 import type { ServerOptions, ServerConnection } from "./live.mts";
 import { Events } from "./events.mts";
 
-/** Share the existing client orchestration; each host supplies only its carrier, scope and sockets. */
+/** Hosts share the Rust action executor and supply only their carrier, transaction scope and network. */
 export function createClient<
   Tx extends {
     finish(): Promise<void>;
@@ -21,8 +23,7 @@ export function createClient<
   createServerConnection: (options: ServerOptions) => ServerConnection,
 ) {
   return class Client {
-    #liveGeneration = 0;
-    #invalidateDownlink: (() => void) | undefined;
+    #live: LiveLane | undefined;
     #syncing: Promise<void> | undefined;
     #tasks: Promise<void> | undefined;
     #connection: Connection | undefined;
@@ -126,27 +127,24 @@ export function createClient<
       return this.transaction((tx) => tx.mutate(mutation));
     }
     subscribe(channel: string) {
-      this.#liveGeneration++;
-      this.#invalidateDownlink?.();
+      return this.#setChannel(channel, true);
+    }
+    unsubscribe(channel: string) {
+      return this.#setChannel(channel, false);
+    }
+    /** The live session is abandoned at once; once the change commits, Rust starts one for the new channel set. */
+    #setChannel(channel: string, subscribed: boolean) {
+      this.#live?.cancel();
       return this.#exclusive(() =>
-        this.#send({ op: "channel", channel, subscribed: true }).then(
+        this.#send({ op: "channel", channel, subscribed }).then(
           (value) => {
             this.#events.emit("channels");
             this.#events.emit("work");
             return value;
           },
-        ),
-      );
-    }
-    unsubscribe(channel: string) {
-      this.#liveGeneration++;
-      this.#invalidateDownlink?.();
-      return this.#exclusive(() =>
-        this.#send({ op: "channel", channel, subscribed: false }).then(
-          (value) => {
+          (error) => {
             this.#events.emit("channels");
-            this.#events.emit("work");
-            return value;
+            throw error;
           },
         ),
       );
@@ -189,12 +187,11 @@ export function createClient<
               }
             : {}),
         };
-        const control = (event: string, lane?: string) =>
+        const control = (event: string) =>
           this.#exclusive(() =>
             this.#send({
               op: "connection",
               event,
-              ...(lane ? { lane } : {}),
               now: Date.now(),
               entropy: Math.floor(Math.random() * 0x100000000),
             }),
@@ -205,100 +202,23 @@ export function createClient<
           live.push,
           driverOptions,
         );
-        let session: AbortController | undefined;
-        let streamEpoch = 0;
-        const invalidate = () => {
-          streamEpoch++;
-          session?.abort();
-        };
-        this.#invalidateDownlink = invalidate;
-        const streaming = await startConnection(
-          (event) => control(event, "live"),
-          async (request) => {
-            await request("live", "");
-          },
-          async (_kind, _body, signal) => {
-            const epoch = ++streamEpoch;
-            const current = new AbortController();
-            session = current;
-            const cancel = () => current.abort();
-            signal?.addEventListener("abort", cancel, { once: true });
-            if (signal?.aborted) cancel();
-            try {
-              const snapshot = await this.#exclusive(async () => {
-                const generation = this.#liveGeneration;
-                return {
-                  status: await this.#send({ op: "status" }),
-                  generation,
-                };
-              });
-              if (
-                current.signal.aborted ||
-                epoch !== streamEpoch ||
-                snapshot.generation !== this.#liveGeneration ||
-                snapshot.status.channels.length === 0
-              )
-                return "";
-              const valid = () =>
-                !current.signal.aborted &&
-                epoch === streamEpoch &&
-                snapshot.generation === this.#liveGeneration;
-              const deliver = (page: object, request?: string) =>
-                this.#exclusive(async () => {
-                  if (!valid()) return;
-                  const result = await this.#send({
-                    op: "downlinkPage",
-                    page,
-                    ...(request === undefined ? {} : { request }),
-                  });
-                  if (result.disposition === "applied")
-                    this.#events.emit("work");
-                  return result;
-                });
-              const catchUp = async () => {
-                for (const scope of snapshot.status.channels) {
-                  for (;;) {
-                    const body = await this.#exclusive(() =>
-                      valid()
-                        ? this.#send({ op: "downlinkRequest", scope })
-                        : Promise.resolve(undefined),
-                    );
-                    if (body === undefined || !valid()) return;
-                    const response = await live.push(
-                      "pull",
-                      body,
-                      current.signal,
-                    );
-                    const result = await deliver(JSON.parse(response), body);
-                    if (
-                      !result ||
-                      (!result.continues && result.disposition !== "recover")
-                    )
-                      break;
-                  }
-                }
-              };
-              await live.stream(
-                { scopes: snapshot.status.channels },
-                async (page) => {
-                  const result = await deliver(page);
-                  if (result?.disposition === "recover") await catchUp();
-                },
-                current.signal,
-                catchUp,
-              );
-              return "";
-            } finally {
-              current.abort();
-              signal?.removeEventListener("abort", cancel);
-              if (session === current) session = undefined;
-            }
-          },
+        const streaming = await startLiveLane(
+          (event) =>
+            this.#exclusive(() =>
+              this.#send({
+                op: "live",
+                ...event,
+                now: Date.now(),
+                entropy: Math.floor(Math.random() * 0x100000000),
+              }),
+            ),
+          live,
           driverOptions,
+          () => void connection.wake().catch(options.onError ?? (() => {})),
         );
+        this.#live = streaming;
         const channels = () => {
-          invalidate();
-          void streaming?.wake().catch(options.onError ?? (() => {}));
+          void streaming.wake().catch(options.onError ?? (() => {}));
         };
         this.#events.on("channels", channels);
         const wake = () => {
@@ -308,23 +228,21 @@ export function createClient<
         const result = {
           ...connection,
           pause: async () => {
-            invalidate();
-            await Promise.all([streaming?.pause(), connection.pause()]);
+            await Promise.all([streaming.pause(), connection.pause()]);
           },
           resume: async () => {
-            await Promise.all([streaming?.resume(), connection.resume()]);
+            await Promise.all([streaming.resume(), connection.resume()]);
           },
           wake: async () => {
-            await Promise.all([streaming?.wake(), connection.wake()]);
+            await Promise.all([streaming.wake(), connection.wake()]);
           },
           close: async () => {
             this.#events.off("work", wake);
             this.#events.off("channels", channels);
-            invalidate();
-            await Promise.all([streaming?.close(), connection.close()]);
+            await Promise.all([streaming.close(), connection.close()]);
             if (this.#connection === result) {
               this.#connection = undefined;
-              this.#invalidateDownlink = undefined;
+              this.#live = undefined;
             }
           },
         };

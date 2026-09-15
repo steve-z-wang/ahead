@@ -227,6 +227,63 @@
                   "kind": "scalar",
                   "name": "string"
                 }
+              }
+            ],
+            "identity": [
+              "id"
+            ],
+            "name": "Entry"
+          }
+        ]
+      },
+      "knownFields": {
+        "Entry": [
+          "id",
+          "title",
+          "note",
+          "at",
+          "tags",
+          "status"
+        ]
+      },
+      "name": "EditEntry",
+      "prerequisites": [],
+      "requirements": [],
+      "sequence": null,
+      "slots": [
+        {
+          "allowedPatchFields": [
+            "title"
+          ],
+          "cardinality": "single",
+          "model": "Entry",
+          "name": "target",
+          "operation": "update"
+        }
+      ],
+      "version": 1
+    },
+    {
+      "input": {
+        "enums": [],
+        "models": [
+          {
+            "fields": [
+              {
+                "name": "id",
+                "nullable": false,
+                "type": {
+                  "kind": "scalar",
+                  "name": "uuid"
+                }
+              },
+              {
+                "name": "title",
+                "nullable": false,
+                "type": {
+                  "kind": "scalar",
+                  "name": "string"
+                }
               },
               {
                 "name": "note",
@@ -403,7 +460,8 @@
       ],
       "name": "Entry",
       "relations": [],
-      "unique": []
+      "unique": [],
+      "version": 2
     },
     {
       "fields": [
@@ -429,7 +487,8 @@
       ],
       "name": "Book",
       "relations": [],
-      "unique": []
+      "unique": [],
+      "version": 1
     },
     {
       "fields": [
@@ -475,7 +534,8 @@
           ]
         }
       ],
-      "unique": []
+      "unique": [],
+      "version": 1
     },
     {
       "fields": [
@@ -501,7 +561,8 @@
       ],
       "name": "Counter",
       "relations": [],
-      "unique": []
+      "unique": [],
+      "version": 1
     }
   ],
   "prerequisites": [],

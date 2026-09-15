@@ -6,6 +6,36 @@ fn arr<'a>(v: &'a Value, k: &str) -> &'a Vec<Value> {
 fn s<'a>(v: &'a Value, k: &str) -> &'a str {
     v[k].as_str().unwrap()
 }
+/// Deprecation notices are generated-code hints only ([#91](https://github.com/zanminwang/ahead/issues/91)):
+/// `Some(reason)` when the field, enum value or slot carries `@deprecated`.
+fn deprecation<'a>(v: &'a Value, kind: &str, keys: &[(&str, &str)]) -> Option<&'a Value> {
+    v["deprecations"]
+        .as_array()?
+        .iter()
+        .find(|d| d["kind"] == kind && keys.iter().all(|(k, x)| d[*k] == *x))
+        .map(|d| &d["reason"])
+}
+/// A JSDoc line for a deprecated member, or nothing.
+fn ts_deprecated(reason: Option<&Value>) -> String {
+    match reason {
+        None => String::new(),
+        Some(Value::String(r)) => format!(" /** @deprecated {r} */\n"),
+        Some(_) => " /** @deprecated */\n".into(),
+    }
+}
+/// A Dart `@Deprecated` annotation for a deprecated member, or nothing.
+fn dart_deprecated(reason: Option<&Value>, trailing: &str) -> String {
+    match reason {
+        None => String::new(),
+        Some(r) => format!(
+            "@Deprecated('{}'){trailing}",
+            r.as_str()
+                .unwrap_or("")
+                .replace('\\', "\\\\")
+                .replace('\'', "\\'")
+        ),
+    }
+}
 fn lower(s: &str) -> String {
     let mut c = s.chars();
     format!("{}{}", c.next().unwrap().to_lowercase(), c.as_str())
@@ -146,6 +176,18 @@ pub fn typescript(v: &Value) -> String {
     );
     writeln!(o, "export const schema = {} as const;", v["schema"]).unwrap();
     for en in arr(&v["schema"], "enums") {
+        for value in arr(en, "values") {
+            if let Some(reason) = deprecation(
+                v,
+                "enumValue",
+                &[("enum", s(en, "name")), ("value", value.as_str().unwrap())],
+            ) {
+                match reason {
+                    Value::String(r) => writeln!(o, "/** @deprecated {value}: {r} */").unwrap(),
+                    _ => writeln!(o, "/** @deprecated {value} */").unwrap(),
+                }
+            }
+        }
         writeln!(
             o,
             "export type {} = {};",
@@ -169,6 +211,11 @@ pub fn typescript(v: &Value) -> String {
                 if (filter == 1 && !id) || (filter == 2 && id) {
                     continue;
                 }
+                o.push_str(&ts_deprecated(deprecation(
+                    v,
+                    "field",
+                    &[("model", n), ("field", s(f, "name"))],
+                )));
                 writeln!(
                     o,
                     " {}{}: {};",
@@ -257,6 +304,11 @@ pub fn typescript(v: &Value) -> String {
                 }
             };
             let card = s(slot, "cardinality");
+            o.push_str(&ts_deprecated(deprecation(
+                v,
+                "slot",
+                &[("mutation", n), ("slot", s(slot, "name"))],
+            )));
             writeln!(
                 o,
                 " {}{}: {}{};",
@@ -435,6 +487,10 @@ pub fn backend_typescript(v: &Value, runtime: &str) -> String {
         backend["mutations"] = history.clone();
         backend.as_object_mut().unwrap().remove("backendMutations");
     }
+    if let Some(history) = v.get("backendModels") {
+        backend["models"] = history.clone();
+        backend.as_object_mut().unwrap().remove("backendModels");
+    }
     writeln!(o, "const schema = {} as const;", backend).unwrap();
     let mutations = arr(&backend, "mutations");
     let latest = |name: &str| {
@@ -444,15 +500,6 @@ pub fn backend_typescript(v: &Value, runtime: &str) -> String {
             .map(|m| m["version"].as_u64().unwrap())
             .max()
             .unwrap()
-    };
-    let key = |m: &Value| {
-        let n = s(m, "name");
-        let ver = m["version"].as_u64().unwrap();
-        if ver == latest(n) {
-            lower(n)
-        } else {
-            format!("{}V{ver}", lower(n))
-        }
     };
     let input_name = |m: &Value| {
         let n = s(m, "name");
@@ -466,30 +513,143 @@ pub fn backend_typescript(v: &Value, runtime: &str) -> String {
     for m in mutations {
         writeln!(o, "export interface {} {{", input_name(m)).unwrap();
         for slot in arr(m, "slots") {
+            o.push_str(&ts_deprecated(deprecation(
+                v,
+                "slot",
+                &[("mutation", s(m, "name")), ("slot", s(slot, "name"))],
+            )));
             writeln!(o, " {}: {};", s(slot, "name"), slot_input_type(slot)).unwrap();
         }
         o.push_str("}\n");
     }
+    // Registration groups every retained version under the mutation name; a bare function is
+    // shorthand for v1 and never for the latest version ([#91](https://github.com/zanminwang/ahead/issues/91)).
     o.push_str("export interface Handlers<Tx> {\n");
+    let mut emitted: Vec<&str> = vec![];
     for m in mutations {
-        writeln!(
-            o,
-            " {}(call: HandlerCall<Tx, {}>): Promise<void | {{ channel: string }}>;",
-            key(m),
-            input_name(m)
-        )
-        .unwrap();
+        let n = s(m, "name");
+        if emitted.contains(&n) {
+            continue;
+        }
+        emitted.push(n);
+        let mut versions: Vec<&Value> = mutations.iter().filter(|x| s(x, "name") == n).collect();
+        versions.sort_by_key(|x| x["version"].as_u64().unwrap());
+        let members: Vec<String> = versions
+            .iter()
+            .map(|x| {
+                format!(
+                    "v{}(call: HandlerCall<Tx, {}>): Promise<void | {{ channel: string }}>;",
+                    x["version"].as_u64().unwrap(),
+                    input_name(x)
+                )
+            })
+            .collect();
+        let grouped = format!("{{ {} }}", members.join(" ").trim_end_matches(';'));
+        if versions.len() == 1 && versions[0]["version"].as_u64() == Some(1) {
+            writeln!(
+                o,
+                " {}: {grouped} | ((call: HandlerCall<Tx, {}>) => Promise<void | {{ channel: string }}>);",
+                lower(n),
+                input_name(versions[0])
+            )
+            .unwrap();
+        } else {
+            writeln!(o, " {}: {grouped};", lower(n)).unwrap();
+        }
     }
     o.push_str("}\n");
+    // Every retained model read contract: the schema's own version is the
+    // latest and keeps the plain record name; an older version is its own
+    // record type with the enum values of its time inline, so a loader of that
+    // version cannot be typed against a value the contract never promised.
+    let retained: Vec<Value> = match backend.get("models").and_then(Value::as_array) {
+        Some(list) => list.clone(),
+        None => models
+            .iter()
+            .map(|m| {
+                let mut snapshot = m.clone();
+                snapshot["enums"] = arr(&v["schema"], "enums")
+                    .iter()
+                    .filter(|e| {
+                        arr(m, "fields")
+                            .iter()
+                            .any(|f| f["type"]["kind"] == "enum" && f["type"]["name"] == e["name"])
+                    })
+                    .cloned()
+                    .collect();
+                snapshot
+            })
+            .collect(),
+    };
+    let record_name = |contract: &Value| {
+        let n = s(contract, "name");
+        let current = models
+            .iter()
+            .find(|m| m["name"] == contract["name"])
+            .map(|m| m["version"].as_u64().unwrap_or(1));
+        if Some(contract["version"].as_u64().unwrap()) == current {
+            n.to_string()
+        } else {
+            format!("{n}V{}", contract["version"])
+        }
+    };
+    for contract in &retained {
+        let name = record_name(contract);
+        if name == s(contract, "name") {
+            continue;
+        }
+        writeln!(o, "export interface {name} {{").unwrap();
+        for f in arr(contract, "fields") {
+            let field_type = if f["type"]["kind"] == "enum" {
+                let en = arr(contract, "enums")
+                    .iter()
+                    .find(|e| e["name"] == f["type"]["name"])
+                    .expect("a retained contract carries the enums its fields use");
+                format!(
+                    "{}{}",
+                    arr(en, "values")
+                        .iter()
+                        .map(Value::to_string)
+                        .collect::<Vec<_>>()
+                        .join(" | "),
+                    if f["nullable"] == true { " | null" } else { "" }
+                )
+            } else {
+                ft(f, false)
+            };
+            writeln!(o, " {}: {field_type};", s(f, "name")).unwrap();
+        }
+        o.push_str("}\n");
+    }
+    // Loader registration mirrors handlers: every retained version under the
+    // model name, a bare function only for a v1-only model.
     o.push_str("export interface Loaders<Tx> {\n");
     for m in models {
         let n = s(m, "name");
-        writeln!(
-            o,
-            " {}(call: LoaderCall<Tx, {n}Identity>): Promise<readonly ({n} | null)[]>;",
-            lower(n)
-        )
-        .unwrap();
+        let mut versions: Vec<&Value> =
+            retained.iter().filter(|c| c["name"] == m["name"]).collect();
+        versions.sort_by_key(|c| c["version"].as_u64().unwrap());
+        let members: Vec<String> = versions
+            .iter()
+            .map(|c| {
+                format!(
+                    "v{}(call: LoaderCall<Tx, {n}Identity>): Promise<readonly ({} | null)[]>;",
+                    c["version"].as_u64().unwrap(),
+                    record_name(c)
+                )
+            })
+            .collect();
+        let grouped = format!("{{ {} }}", members.join(" ").trim_end_matches(';'));
+        if versions.len() == 1 && versions[0]["version"].as_u64() == Some(1) {
+            writeln!(
+                o,
+                " {}: {grouped} | ((call: LoaderCall<Tx, {n}Identity>) => Promise<readonly ({n} | null)[]>);",
+                lower(n)
+            )
+            .unwrap();
+        } else {
+            writeln!(o, " {}: {grouped};", lower(n)).unwrap();
+        }
     }
     o.push_str("}\n");
     o.push_str("export type Options<Tx> = Omit<BackendOptions<Tx>, \"config\" | \"handlers\" | \"loaders\"> & { handlers: Handlers<Tx>; loaders: Loaders<Tx> };\n");
@@ -513,7 +673,18 @@ pub fn dart(v: &Value) -> String {
             s(en, "name"),
             arr(en, "values")
                 .iter()
-                .map(|x| x.as_str().unwrap())
+                .map(|x| format!(
+                    "{}{}",
+                    dart_deprecated(
+                        deprecation(
+                            v,
+                            "enumValue",
+                            &[("enum", s(en, "name")), ("value", x.as_str().unwrap())]
+                        ),
+                        " "
+                    ),
+                    x.as_str().unwrap()
+                ))
                 .collect::<Vec<_>>()
                 .join(", ")
         )
@@ -532,6 +703,12 @@ pub fn dart(v: &Value) -> String {
             let patch = suffix == "Patch";
             writeln!(o, "class {n}{suffix} {{").unwrap();
             for f in &fields {
+                if let Some(reason) =
+                    deprecation(v, "field", &[("model", n), ("field", s(f, "name"))])
+                {
+                    o.push(' ');
+                    o.push_str(&dart_deprecated(Some(reason), "\n"));
+                }
                 writeln!(
                     o,
                     " final {} {};",
@@ -654,6 +831,12 @@ pub fn dart(v: &Value) -> String {
                     .collect();
                 writeln!(o, "class {input} {{\n final {model}Identity identity;").unwrap();
                 for f in &fields {
+                    if let Some(reason) =
+                        deprecation(v, "field", &[("model", model), ("field", s(f, "name"))])
+                    {
+                        o.push(' ');
+                        o.push_str(&dart_deprecated(Some(reason), "\n"));
+                    }
                     writeln!(o, " final Present<{}>? {};", ft(f, true), s(f, "name")).unwrap();
                 }
                 writeln!(
@@ -684,12 +867,16 @@ pub fn dart(v: &Value) -> String {
                 model.to_string()
             };
             let card = s(slot, "cardinality");
+            let mark = dart_deprecated(
+                deprecation(v, "slot", &[("mutation", n), ("slot", key)]),
+                " ",
+            );
             params.push(if card == "list" {
-                format!("required List<{base}> {key}")
+                format!("{mark}required List<{base}> {key}")
             } else if card == "optional" {
-                format!("{base}? {key}")
+                format!("{mark}{base}? {key}")
             } else {
-                format!("required {base} {key}")
+                format!("{mark}required {base} {key}")
             });
         }
         writeln!(
@@ -850,6 +1037,11 @@ fn dart_query_types(v: &Value, o: &mut String) {
             .collect::<Vec<_>>();
         writeln!(o, "class {n}Filter {{").unwrap();
         for f in &fields {
+            if let Some(reason) = deprecation(v, "field", &[("model", n), ("field", s(f, "name"))])
+            {
+                o.push(' ');
+                o.push_str(&dart_deprecated(Some(reason), "\n"));
+            }
             writeln!(o, " final Present<{}>? {};", ft(f, true), s(f, "name")).unwrap();
         }
         writeln!(

@@ -150,7 +150,8 @@
       ],
       "name": "User",
       "relations": [],
-      "unique": []
+      "unique": [],
+      "version": 1
     },
     {
       "fields": [
@@ -204,7 +205,8 @@
           ]
         }
       ],
-      "unique": []
+      "unique": [],
+      "version": 1
     }
   ],
   "prerequisites": [],

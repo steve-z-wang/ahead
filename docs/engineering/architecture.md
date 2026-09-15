@@ -6,7 +6,7 @@ See the [component documentation index](architecture/README.md) for individual d
 
 - **[Schema](architecture/schema/README.md)** — User-written, language-independent definitions of models, fields, types, identities and mutations.
   - **[Types](architecture/schema/types.md)** — Scalar and enum types, lists and nullability.
-  - **[Models](architecture/schema/models.md)** — Fields, identities, unique constraints and record format versions (planned).
+  - **[Models](architecture/schema/models.md)** — Fields, identities, unique constraints and read-contract versions.
   - **[Relations](architecture/schema/relations.md)** — References, inverse relations and deletion rules.
   - **[Mutations](architecture/schema/mutations.md)** — Operation groups, argument bindings, versions and sequencing.
   - **[Prerequisites](architecture/schema/prerequisites.md)** — Prerequisite declarations and references.
@@ -58,7 +58,7 @@ See the [component documentation index](architecture/README.md) for individual d
 
 ## Component graph
 
-Target architecture. Connection and protocol handling are not yet fully separated from SDKs and Engines in the current code; the client controller's session logic and the server controller's state machine live in the language packages.
+Target architecture. Both connection controllers are Rust: the client's live session (`LiveSession`) and the server's subscription controller (`Subscriptions`); the language packages execute their actions and keep no sync decision.
 
 Solid lines show composition; dashed lines are labeled with contract use or data flow.
 
@@ -133,10 +133,10 @@ Current code locations for the components above. Some responsibilities still sha
 | Component | Code location |
 |---|---|
 | Schema | Source syntax in [compiler/parse.rs](../../crates/compiler/src/parse.rs) |
-| Protocol | [core/protocol.rs](../../crates/core/src/protocol.rs); subscription messages in [server/live.rs](../../crates/server/src/live.rs) |
+| Protocol | [core/protocol.rs](../../crates/core/src/protocol.rs), including the shared `limits` and the subscription messages |
 | Compiler / Parse | [compiler/parse.rs](../../crates/compiler/src/parse.rs); file concatenation and error relocation in [compiler/main.rs](../../crates/compiler/src/main.rs) |
-| Compiler / Validate | [compiler/validate.rs](../../crates/compiler/src/validate.rs); version history and fence in [compiler/history.rs](../../crates/compiler/src/history.rs) |
-| Compiler / Generate | Descriptors emitted by [compiler/validate.rs](../../crates/compiler/src/validate.rs), represented by [core/schema.rs](../../crates/core/src/schema.rs); typed interfaces in [compiler/emit.rs](../../crates/compiler/src/emit.rs); output files in [compiler/main.rs](../../crates/compiler/src/main.rs) |
+| Compiler / Validate | `validate` and the `Validated` types in [compiler/validate.rs](../../crates/compiler/src/validate.rs); version history and fence in [compiler/history.rs](../../crates/compiler/src/history.rs) |
+| Compiler / Generate | Descriptors in [compiler/generate.rs](../../crates/compiler/src/generate.rs), represented by [core/schema.rs](../../crates/core/src/schema.rs); typed interfaces in [compiler/emit.rs](../../crates/compiler/src/emit.rs); output files in [compiler/main.rs](../../crates/compiler/src/main.rs) |
 | SDKs / Typed API / Client | [client-js](../../packages/client-js), [dart](../../packages/dart/lib); model-specific classes are compiler output |
 | SDKs / Typed API / Server | [server/index.mts](../../packages/server/index.mts); typed signatures are compiler output |
 | SDKs / Bindings | [bindings/common](../../bindings/common), [bindings/node](../../bindings/node), [bindings/dart](../../bindings/dart) |
@@ -152,12 +152,12 @@ Current code locations for the components above. Some responsibilities still sha
 | Client / Storage / Reconciliation | [client/ddl.rs](../../crates/client/src/ddl.rs) |
 | Client / Connection / Transport | [client-js/transport.mts](../../packages/client-js/transport.mts), [client-js/live.mts](../../packages/client-js/live.mts), [dart/live.dart](../../packages/dart/lib/src/live.dart) |
 | Client / Connection / Controller / Scheduling | [client/connection.rs](../../crates/client/src/connection.rs); host loops in [client-js/connection.mts](../../packages/client-js/connection.mts) and [dart/connection.dart](../../packages/dart/lib/src/connection.dart) |
-| Client / Connection / Controller / Push lane | [client/transport.rs](../../crates/client/src/transport.rs) (`SyncCycle`); loops in [client-js/index.mts](../../packages/client-js/index.mts) and [dart/client.dart](../../packages/dart/lib/src/client.dart) |
-| Client / Connection / Controller / Live session | `connect` in [client-js/index.mts](../../packages/client-js/index.mts) and [dart/client.dart](../../packages/dart/lib/src/client.dart); dispositions in [client/transport.rs](../../crates/client/src/transport.rs) |
-| Server / Backend interface | `Host` in [server/lib.rs](../../crates/server/src/lib.rs); handler/loader dispatch in [server/index.mts](../../packages/server/index.mts) |
+| Client / Connection / Controller / Push lane | [client/transport.rs](../../crates/client/src/transport.rs) (`SyncCycle`); loops in [client-js/runtime.mts](../../packages/client-js/runtime.mts) and [dart/client.dart](../../packages/dart/lib/src/client.dart) |
+| Client / Connection / Controller / Live session | [client/live.rs](../../crates/client/src/live.rs) (`LiveSession`); dispositions in [client/transport.rs](../../crates/client/src/transport.rs); executors `startLiveLane` in [client-js/connection.mts](../../packages/client-js/connection.mts) and `LiveLane` in [dart/connection.dart](../../packages/dart/lib/src/connection.dart) |
+| Server / Backend interface | Operation contract in [server/host.rs](../../crates/server/src/host.rs) and [server/host-contract.mts](../../packages/server/host-contract.mts); `Host` in [server/lib.rs](../../crates/server/src/lib.rs); handler/loader dispatch in [server/index.mts](../../packages/server/index.mts) |
 | Server / Engine / Push | [server/lib.rs](../../crates/server/src/lib.rs) (`process_push`) |
 | Server / Engine / Pull | [server/lib.rs](../../crates/server/src/lib.rs) (`process_pull`) |
 | Server / Engine / Notify | [server/lib.rs](../../crates/server/src/lib.rs) (`publish`) |
 | Server / Persistence | Interface in [server/index.mts](../../packages/server/index.mts); adapter in [persistence-prisma](../../packages/persistence-prisma); tables in [migration.sql](../../packages/persistence-prisma/migration.sql) |
 | Server / Connection / Transport | [server/index.mts](../../packages/server/index.mts) |
-| Server / Connection / Controller | [server/live.rs](../../crates/server/src/live.rs), [server/index.mts](../../packages/server/index.mts) |
+| Server / Connection / Controller | [server/live.rs](../../crates/server/src/live.rs) (`Subscriptions`); executor `serveLive` in [server/index.mts](../../packages/server/index.mts) |

@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'dart:ffi';
 import 'dart:isolate';
 import 'dart:io';
+import 'dart:math';
 import 'package:ffi/ffi.dart';
 
 typedef _CallNative = Pointer<Utf8> Function(Pointer<Utf8>);
@@ -59,8 +60,7 @@ class Client implements ReadPort {
   final int _handle;
   final String clientId;
   Future<void> _tail = Future<void>.value();
-  int _liveGeneration = 0;
-  void Function()? _invalidateDownlink;
+  LiveLane? _live;
   final _channels = StreamController<void>.broadcast(sync: true);
   Future<void>? _syncing;
   Future<void>? _tasks;
@@ -227,21 +227,24 @@ class Client implements ReadPort {
   );
   Future<int> mutate(Map<String, dynamic> mutation) =>
       transaction((tx) => tx.mutate(mutation));
-  Future<void> subscribe(String channel) {
-    _liveGeneration++;
-    _invalidateDownlink?.call();
-    return _exclusive(() async {
-      await _send({'op': 'channel', 'channel': channel, 'subscribed': true});
-      _channels.add(null);
-      _work.add(null);
-    });
-  }
+  Future<void> subscribe(String channel) => _setChannel(channel, true);
+  Future<void> unsubscribe(String channel) => _setChannel(channel, false);
 
-  Future<void> unsubscribe(String channel) {
-    _liveGeneration++;
-    _invalidateDownlink?.call();
+  /// The live session is abandoned at once; once the change commits, Rust
+  /// starts one for the new channel set.
+  Future<void> _setChannel(String channel, bool subscribed) {
+    _live?.cancel();
     return _exclusive(() async {
-      await _send({'op': 'channel', 'channel': channel, 'subscribed': false});
+      try {
+        await _send({
+          'op': 'channel',
+          'channel': channel,
+          'subscribed': subscribed,
+        });
+      } catch (_) {
+        _channels.add(null);
+        rethrow;
+      }
       _channels.add(null);
       _work.add(null);
     });
@@ -280,121 +283,35 @@ class Client implements ReadPort {
         onError: onError,
         refreshAuth: refreshAuth == null ? null : refresh,
       );
-      StreamSubscription<void>? channelSubscription;
-      {
-        Completer<void>? session;
-        int streamEpoch = 0;
-        void invalidate() {
-          streamEpoch++;
-          if (session?.isCompleted == false) session!.complete();
-        }
-
-        _invalidateDownlink = invalidate;
-        final streaming = await RuntimeConnection.start(
-          control: (event, now, entropy) => _exclusive(
-            () => _send({
-              'op': 'connection',
-              'lane': 'live',
-              'event': event,
-              'now': now,
-              'entropy': entropy,
-            }),
-          ),
-          sync: (request) async {
-            await request('live', '');
-          },
-          transport: (kind, body) async {
-            final epoch = ++streamEpoch;
-            final current = Completer<void>();
-            session = current;
-            try {
-              final generation = _liveGeneration;
-              final status = await _exclusive(
-                () async => await _send({'op': 'status'}) as Map,
-              );
-              if (current.isCompleted ||
-                  epoch != streamEpoch ||
-                  generation != _liveGeneration ||
-                  (status['channels'] as List).isEmpty)
-                return '';
-              final scopes = (status['channels'] as List).cast<String>();
-              bool valid() =>
-                  !current.isCompleted &&
-                  epoch == streamEpoch &&
-                  generation == _liveGeneration;
-              Future<Map<String, dynamic>?> deliver(
-                Map<String, dynamic> page, {
-                String? request,
-              }) => _exclusive(() async {
-                if (!valid()) return null;
-                final result =
-                    await _send({
-                          'op': 'downlinkPage',
-                          'page': page,
-                          if (request != null) 'request': request,
-                        })
-                        as Map<String, dynamic>;
-                if (result['disposition'] == 'applied') _work.add(null);
-                return result;
-              });
-              // Subscription invalidation aborts only this downlink session.
-              Future<void> catchUp() async {
-                for (final scope in scopes) {
-                  while (true) {
-                    final request = await _exclusive(() async {
-                      if (!valid()) return null;
-                      return await _send({
-                            'op': 'downlinkRequest',
-                            'scope': scope,
-                          })
-                          as String;
-                    });
-                    if (request == null || !valid()) return;
-                    final response = await live.pull(request, current.future);
-                    final result = await deliver(
-                      jsonDecode(response),
-                      request: request,
-                    );
-                    if (result == null ||
-                        !valid() ||
-                        (result['continues'] != true &&
-                            result['disposition'] != 'recover'))
-                      break;
-                  }
-                }
-              }
-
-              await live.stream(
-                scopes,
-                (page) async {
-                  final result = await deliver(page);
-                  if (result?['disposition'] == 'recover') await catchUp();
-                },
-                current.future,
-                catchUp: catchUp,
-              );
-              return '';
-            } finally {
-              if (!current.isCompleted) current.complete();
-              if (identical(session, current)) session = null;
-            }
-          },
-          onError: onError,
-          refreshAuth: refreshAuth == null ? null : refresh,
+      final streaming = await LiveLane.start(
+        command: (event) => _exclusive(
+          () async =>
+              (await _send({
+                    'op': 'live',
+                    ...event,
+                    'now': DateTime.now().millisecondsSinceEpoch,
+                    'entropy': Random().nextInt(0x100000000),
+                  }))
+                  as List<dynamic>,
+        ),
+        network: live,
+        wakePush: () => unawaited(
+          connection.wake().catchError((Object error) {
+            onError?.call(error);
+          }),
+        ),
+        onError: onError,
+        refreshAuth: refreshAuth == null ? null : refresh,
+      );
+      _live = streaming;
+      final channelSubscription = _channels.stream.listen((_) {
+        unawaited(
+          streaming.wake().catchError((Object error) {
+            onError?.call(error);
+          }),
         );
-        channelSubscription = _channels.stream.listen((_) {
-          invalidate();
-          unawaited(
-            streaming.wake().catchError((Object error) {
-              onError?.call(error);
-            }),
-          );
-        });
-        connection.attachLive(streaming, () {
-          invalidate();
-          live.cancelPush();
-        });
-      }
+      });
+      connection.attachLive(streaming, live.cancelPush);
       final subscription = _work.stream.listen((_) {
         unawaited(
           connection.wake().catchError((Object error) {
@@ -406,10 +323,10 @@ class Client implements ReadPort {
       unawaited(
         connection.closed.then((_) async {
           await subscription.cancel();
-          await channelSubscription?.cancel();
+          await channelSubscription.cancel();
           if (identical(_connection, connection)) {
             _connection = null;
-            _invalidateDownlink = null;
+            _live = null;
           }
         }),
       );

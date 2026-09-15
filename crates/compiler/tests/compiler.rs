@@ -72,15 +72,15 @@ fn backend_emitter_declares_handlers_loaders_and_references() {
     assert!(ts.contains("from \"@ahead/server\""));
     assert!(ts.contains("export interface Handlers<Tx> {"));
     assert!(ts.contains(
-        " addBook(call: HandlerCall<Tx, AddBookInput>): Promise<void | { channel: string }>;"
+        " addBook: { v1(call: HandlerCall<Tx, AddBookInput>): Promise<void | { channel: string }> } | ((call: HandlerCall<Tx, AddBookInput>) => Promise<void | { channel: string }>);"
     ));
     assert!(ts.contains(
-        " addComment(call: HandlerCall<Tx, AddCommentInput>): Promise<void | { channel: string }>;"
+        " addComment: { v1(call: HandlerCall<Tx, AddCommentInput>): Promise<void | { channel: string }> } | ((call: HandlerCall<Tx, AddCommentInput>) => Promise<void | { channel: string }>);"
     ));
     assert!(ts.contains("export interface Loaders<Tx> {"));
     assert!(
         ts.contains(
-            " book(call: LoaderCall<Tx, BookIdentity>): Promise<readonly (Book | null)[]>;"
+            " book: { v1(call: LoaderCall<Tx, BookIdentity>): Promise<readonly (Book | null)[]> } | ((call: LoaderCall<Tx, BookIdentity>) => Promise<readonly (Book | null)[]>);"
         )
     );
     assert!(ts.contains("export function Book(identity: BookIdentity): RecordRef { return { model: \"Book\", identity }; }"));
@@ -89,15 +89,48 @@ fn backend_emitter_declares_handlers_loaders_and_references() {
     assert!(!ahead_compiler::typescript(&v).contains("backendConfig"));
 }
 #[test]
-fn backend_emitter_suffixes_older_mutation_versions() {
+fn backend_emitter_groups_handler_versions_under_the_mutation_name() {
     let v = compile("model A { id String title String @@id(id) } mutation Edit { a A.update<title> @@version(2) }").unwrap();
     let mut with_history = v.clone();
     let mut old = v["mutations"][0].clone();
     old["version"] = serde_json::json!(1);
     with_history["backendMutations"] = serde_json::json!([old, v["mutations"][0].clone()]);
     let ts = ahead_compiler::backend_typescript(&with_history, "@ahead/server");
-    assert!(ts.contains(" edit(call: HandlerCall<Tx, EditInput>)"));
-    assert!(ts.contains(" editV1(call: HandlerCall<Tx, EditV1Input>)"));
+    assert!(
+        ts.contains(
+            " edit: { v1(call: HandlerCall<Tx, EditV1Input>): Promise<void | { channel: string }>; v2(call: HandlerCall<Tx, EditInput>): Promise<void | { channel: string }> };\n"
+        ),
+        "{ts}"
+    );
+    assert!(!ts.contains(" editV1(call:"));
+}
+
+#[test]
+fn backend_emitter_accepts_a_bare_function_only_for_a_v1_only_mutation() {
+    let v = compile("model A { id String title String @@id(id) } mutation Save { a A.create }")
+        .unwrap();
+    let ts = ahead_compiler::backend_typescript(&v, "@ahead/server");
+    assert!(
+        ts.contains(
+            " save: { v1(call: HandlerCall<Tx, SaveInput>): Promise<void | { channel: string }> } | ((call: HandlerCall<Tx, SaveInput>) => Promise<void | { channel: string }>);\n"
+        ),
+        "{ts}"
+    );
+    let later = compile(
+        "model A { id String title String @@id(id) } mutation Save { a A.create @@version(2) }",
+    )
+    .unwrap();
+    let ts = ahead_compiler::backend_typescript(&later, "@ahead/server");
+    assert!(
+        ts.contains(
+            " save: { v2(call: HandlerCall<Tx, SaveInput>): Promise<void | { channel: string }> };\n"
+        ),
+        "{ts}"
+    );
+    assert!(
+        !ts.contains("| ((call: HandlerCall"),
+        "a single non-v1 version has no shorthand: {ts}"
+    );
 }
 
 #[test]
@@ -276,4 +309,125 @@ fn structural_refusals_a_schema_author_is_likely_to_hit() {
             compile(valid).err()
         );
     }
+}
+
+#[test]
+fn model_versions_reach_every_generated_surface() {
+    // The client's declared read contract is the `version` of each model in the
+    // embedded schema; the backend additionally carries every retained contract.
+    let v = compile("enum Status { open closed } model Task { id UUID status Status @@id(id) @@version(2) } model Note { id UUID @@id(id) }").unwrap();
+    assert_eq!(v["schema"]["models"][0]["version"], 2);
+    assert_eq!(
+        v["schema"]["models"][1]["version"], 1,
+        "omitted is version 1"
+    );
+    let ts = ahead_compiler::typescript(&v);
+    assert!(
+        ts.contains(r#""name":"Task","relations":[],"unique":[],"version":2}"#),
+        "{ts}"
+    );
+    assert!(
+        ts.contains(r#""name":"Note","relations":[],"unique":[],"version":1}"#),
+        "{ts}"
+    );
+    let dart = ahead_compiler::dart(&v);
+    assert!(
+        dart.contains(r#""name":"Task","relations":[],"unique":[],"version":2}"#),
+        "{dart}"
+    );
+    let mut with_history = v.clone();
+    let old = serde_json::json!({"name":"Task","version":1,"identity":["id"],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}}],"enums":[]});
+    with_history["backendModels"] = serde_json::json!([old]);
+    let backend = ahead_compiler::backend_typescript(&with_history, "@ahead/server");
+    assert!(backend.contains(r#""models":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}}],"identity":["id"],"name":"Task","version":1}]"#), "{backend}");
+    assert!(!backend.contains("backendModels"), "{backend}");
+}
+
+#[test]
+fn backend_emitter_groups_loader_versions_under_the_model_name() {
+    let v = compile("enum Status { open closed archived } model Task { id UUID title String status Status @@id(id) @@version(2) } model Note { id UUID text String @@id(id) }").unwrap();
+    let mut with_history = v.clone();
+    // The retained v1 contract: no `title`, and `Status` as it was published.
+    let old = serde_json::json!({"name":"Task","version":1,"identity":["id"],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}},{"name":"status","nullable":false,"type":{"kind":"enum","name":"Status"}}],"enums":[{"name":"Status","values":["open","closed"]}]});
+    let mut current = v["schema"]["models"][0].clone();
+    current["enums"] = v["schema"]["enums"].clone();
+    let note = serde_json::json!({"name":"Note","version":1,"identity":["id"],"fields":v["schema"]["models"][1]["fields"],"enums":[]});
+    with_history["backendModels"] = serde_json::json!([note, old, current]);
+    let ts = ahead_compiler::backend_typescript(&with_history, "@ahead/server");
+    // An older contract is its own record type, with the enum values of its time inline.
+    assert!(
+        ts.contains(
+            "export interface TaskV1 {\n id: string;\n status: \"open\" | \"closed\";\n}\n"
+        ),
+        "{ts}"
+    );
+    assert!(ts.contains("export type Task = TaskRecord;"), "{ts}");
+    assert!(
+        !ts.contains("TaskV2"),
+        "the latest version keeps the plain name: {ts}"
+    );
+    assert!(
+        ts.contains(" task: { v1(call: LoaderCall<Tx, TaskIdentity>): Promise<readonly (TaskV1 | null)[]>; v2(call: LoaderCall<Tx, TaskIdentity>): Promise<readonly (Task | null)[]> };\n"),
+        "{ts}"
+    );
+    assert!(
+        ts.contains(" note: { v1(call: LoaderCall<Tx, NoteIdentity>): Promise<readonly (Note | null)[]> } | ((call: LoaderCall<Tx, NoteIdentity>) => Promise<readonly (Note | null)[]>);\n"),
+        "{ts}"
+    );
+    // Without a history the schema's own version is the only retained one; a
+    // single non-v1 version has no shorthand.
+    let ts = ahead_compiler::backend_typescript(&v, "@ahead/server");
+    assert!(
+        ts.contains(" task: { v2(call: LoaderCall<Tx, TaskIdentity>): Promise<readonly (Task | null)[]> };\n"),
+        "{ts}"
+    );
+    assert!(!ts.contains("TaskV1"), "{ts}");
+}
+
+#[test]
+fn deprecations_reach_every_generated_surface_and_leave_the_descriptors_alone() {
+    let v = compile("enum Status { active archived @deprecated(reason: \"use closed\") closed }\nmodel Task { id UUID name String @deprecated(reason: \"renamed to title\") title String legacy Int? @deprecated status Status @@id(id) }\nmutation Edit { task Task.update<title> old Task.update<name>? @deprecated(reason: \"use task\") }").unwrap();
+    // The runtime descriptors do not carry deprecation: it is a generated-code notice only.
+    assert!(
+        !v["schema"].to_string().contains("deprecat"),
+        "{}",
+        v["schema"]
+    );
+    assert!(!v["mutations"].to_string().contains("deprecat"));
+    assert_eq!(
+        v["deprecations"],
+        serde_json::json!([
+            {"kind":"enumValue","enum":"Status","value":"archived","reason":"use closed"},
+            {"kind":"field","model":"Task","field":"name","reason":"renamed to title"},
+            {"kind":"field","model":"Task","field":"legacy","reason":null},
+            {"kind":"slot","mutation":"Edit","slot":"old","reason":"use task"}
+        ])
+    );
+    let ts = ahead_compiler::typescript(&v);
+    assert!(ts.contains("export interface Task {\n id: string;\n /** @deprecated renamed to title */\n name: string;\n title: string;\n /** @deprecated */\n legacy: number | null;\n"), "{ts}");
+    assert!(
+        ts.contains(
+            "export interface TaskPatch {\n /** @deprecated renamed to title */\n name?: string;\n"
+        ),
+        "{ts}"
+    );
+    assert!(ts.contains("/** @deprecated \"archived\": use closed */\nexport type Status = \"active\" | \"archived\" | \"closed\";"), "{ts}");
+    assert!(ts.contains("export interface EditArgs {\n task: { identity:TaskIdentity; values:Pick<TaskPatch, \"title\"> };\n /** @deprecated use task */\n old?: { identity:TaskIdentity; values:Pick<TaskPatch, \"name\"> };\n}"), "{ts}");
+    let backend = ahead_compiler::backend_typescript(&v, "@ahead/server");
+    assert!(backend.contains("export interface EditInput {\n task: { identity: TaskIdentity; patch: Pick<TaskPatch, \"title\"> };\n /** @deprecated use task */\n old: { identity: TaskIdentity; patch: Pick<TaskPatch, \"name\"> } | null;\n}"), "{backend}");
+    let dart = ahead_compiler::dart(&v);
+    assert!(
+        dart.contains("enum Status { active, @Deprecated('use closed') archived, closed }"),
+        "{dart}"
+    );
+    assert!(dart.contains("class Task {\n final String id;\n @Deprecated('renamed to title')\n final String name;\n final String title;\n @Deprecated('')\n final int? legacy;\n"), "{dart}");
+    assert!(
+        dart.contains(
+            "class TaskPatch {\n @Deprecated('renamed to title')\n final Present<String>? name;\n"
+        ),
+        "{dart}"
+    );
+    assert!(dart.contains("class TaskFilter {\n final Present<String>? id;\n @Deprecated('renamed to title')\n final Present<String>? name;\n"), "{dart}");
+    assert!(dart.contains("Map<String,dynamic> edit({required EditTaskUpdate task,@Deprecated('use task') EditOldUpdate? old})"), "{dart}");
+    assert!(dart.contains(" Future<int> edit({required EditTaskUpdate task,@Deprecated('use task') EditOldUpdate? old})"), "{dart}");
 }

@@ -2,24 +2,43 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:ahead/ahead.dart';
-import 'package:ahead/src/live.dart' show ServerSession;
+import 'package:ahead/src/live.dart' show ServerSession, SocketEvents;
 import 'package:test/test.dart';
+
+final subscribeFrame = jsonEncode({
+  'type': 'subscribe',
+  'scopes': ['scope'],
+});
+SocketEvents events({
+  Future<void> Function(String)? message,
+  void Function(Object, StackTrace?)? closed,
+}) => SocketEvents(
+  message: message ?? (_) async {},
+  overflow: () async {},
+  closed: closed ?? (_, _) {},
+);
 
 void main() {
   test('cancellation ends a stalled WebSocket token', () async {
     final cancel = Completer<void>();
+    var closed = 0;
     final live = ServerSession(
       SyncServer(
         url: 'http://127.0.0.1:1',
         token: () => Completer<String>().future,
       ),
     );
-    final running = live.stream(['scope'], (_) async {}, cancel.future);
+    live.open(
+      subscribeFrame,
+      cancel.future,
+      events(closed: (_, _) => closed++),
+    );
     cancel.complete();
-    await running.timeout(const Duration(seconds: 2));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(closed, 0, reason: 'a cancelled socket is not reported as closed');
   });
   test(
-    'WebSocket establishes listeners without cursor catch-up mode',
+    'the socket sends the subscribe frame and delivers frames in order',
     () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final handshake = Completer<Map>();
@@ -47,29 +66,37 @@ void main() {
         }, onDone: () => finished.complete());
       });
       final cancel = Completer<void>();
-      final received = Completer<Map>();
+      final frames = <Map>[];
+      final second = Completer<void>();
       final live = ServerSession(
         SyncServer(
           url: 'http://127.0.0.1:${server.port}',
           token: () => 'secret',
         ),
       );
-      final running = live.stream(['scope'], (page) async {
-        received.complete(page);
-      }, cancel.future);
+      live.open(
+        subscribeFrame,
+        cancel.future,
+        events(
+          message: (text) async {
+            frames.add(jsonDecode(text) as Map);
+            if (frames.length == 2) second.complete();
+          },
+        ),
+      );
       try {
         expect(await handshake.future.timeout(const Duration(seconds: 2)), {
           'type': 'subscribe',
           'scopes': ['scope'],
         });
+        await second.future.timeout(const Duration(seconds: 2));
         expect(
-          (await received.future.timeout(
-            const Duration(seconds: 2),
-          ))['toCursor'],
-          8,
+          frames[0]['type'],
+          'subscribed',
+          reason: 'the transport does not interpret frames',
         );
+        expect(frames[1]['toCursor'], 8);
         cancel.complete();
-        await running.timeout(const Duration(seconds: 2));
         await finished.future.timeout(const Duration(seconds: 2));
       } finally {
         if (!cancel.isCompleted) cancel.complete();
@@ -141,17 +168,25 @@ void main() {
   test('close during an opening handshake cancels its socket', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final entered = Completer<void>();
+    final requests = <HttpRequest>[];
     server.listen((r) {
+      requests.add(r);
       entered.complete();
     });
     final cancelled = Completer<void>();
+    var closed = 0;
     final live = ServerSession(
       SyncServer(url: 'http://127.0.0.1:${server.port}', token: () => 'secret'),
     );
-    final running = live.stream(['scope'], (_) async {}, cancelled.future);
+    live.open(
+      subscribeFrame,
+      cancelled.future,
+      events(closed: (_, _) => closed++),
+    );
     await entered.future.timeout(const Duration(seconds: 2));
     cancelled.complete();
-    await running.timeout(const Duration(seconds: 2));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(closed, 0);
     await server.close(force: true);
   });
 
@@ -1030,6 +1065,447 @@ void moreTests() {
         expect(
           (await client.read('Entry', {'id': 'live'}))?['text'],
           'head 202',
+        );
+        expect(
+          pullCursors,
+          contains(1),
+          reason: 'recovery preserves the held HTTP page before pulling again',
+        );
+        expect(
+          sockets.length,
+          1,
+          reason: 'overflow must not restart the socket and starve catch-up',
+        );
+        expect(
+          pulls,
+          inInclusiveRange(2, 4),
+          reason: 'overflow requires HTTP recovery and coalesces its work',
+        );
+        expect(errors, isEmpty);
+        await connection.close();
+      } finally {
+        if (!gate.isCompleted) gate.complete();
+        await client.close();
+        for (final socket in sockets) {
+          await socket.close();
+        }
+        await server.close(force: true);
+        await dir.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
+    'a 401 on both lanes at once shares one refreshAuth; both lanes recover with the new token',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('ahead-dart-refresh-');
+      final schema =
+          jsonDecode(
+                await File('../../fixtures/schemas/entry.json').readAsString(),
+              )
+              as Map<String, dynamic>;
+      final client = await Client.open(
+        path: '${dir.path}/db',
+        schema: schema,
+        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+      );
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      var token = 'expired', refreshes = 0, unauthorized = 0, pushes = 0;
+      final gate = Completer<void>();
+      final accepted = Completer<void>();
+      final errors = <Object>[];
+      final sockets = <WebSocket>[];
+      server.listen((request) async {
+        if (request.headers.value('authorization') != 'Bearer valid') {
+          unauthorized++;
+          request.response.statusCode = 401;
+          await request.response.close();
+          return;
+        }
+        if (request.uri.path == '/sync/mutations') {
+          pushes++;
+          await utf8.decoder.bind(request).join();
+          request.response.write(
+            jsonEncode({
+              'requiredScope': 'other',
+              'requiredSyncId': 1,
+              'requiredCheckpoints': [
+                {'scope': 'other', 'syncId': 1},
+              ],
+              'rejections': <Object>[],
+            }),
+          );
+          await request.response.close();
+          return;
+        }
+        if (request.uri.path == '/sync/pull') {
+          final pull =
+              jsonDecode(await utf8.decoder.bind(request).join()) as Map;
+          request.response.write(
+            jsonEncode({
+              'scope': pull['scope'],
+              'fromCursor': pull['fromCursor'],
+              'toCursor': pull['fromCursor'],
+              'changes': <Object>[],
+            }),
+          );
+          await request.response.close();
+          return;
+        }
+        final socket = await WebSocketTransformer.upgrade(request);
+        sockets.add(socket);
+        socket.listen((message) {
+          final sub = jsonDecode(message as String) as Map;
+          socket.add(
+            jsonEncode({
+              'type': 'subscribed',
+              'scopes': sub['scopes'],
+              'rejections': <Object>[],
+            }),
+          );
+          if (!accepted.isCompleted) accepted.complete();
+        });
+      });
+      Future<void> until(bool Function() predicate, String label) async {
+        final deadline = DateTime.now().add(const Duration(seconds: 5));
+        while (!predicate()) {
+          if (DateTime.now().isAfter(deadline)) {
+            throw StateError(
+              '$label: refreshes=$refreshes unauthorized=$unauthorized '
+              'pushes=$pushes errors=$errors',
+            );
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+      }
+
+      try {
+        await client.transaction((tx) async {
+          await tx.direct({
+            'model': 'Entry',
+            'op': 'create',
+            'identity': {'id': 'live'},
+            'values': {'text': 'local'},
+          });
+        });
+        await client.subscribe('scope');
+        await client.mutate({
+          'name': 'Edit',
+          'operations': [
+            {
+              'model': 'Entry',
+              'op': 'update',
+              'identity': {'id': 'live'},
+              'values': {'text': 'edited offline'},
+            },
+          ],
+        });
+        final connection = await client.connect(
+          SyncServer(
+            url: 'http://127.0.0.1:${server.port}',
+            token: () => token,
+          ),
+          onError: errors.add,
+          refreshAuth: () async {
+            refreshes++;
+            await gate.future;
+            token = 'valid';
+          },
+        );
+        await until(() => unauthorized >= 2, 'both lanes refused');
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        expect(
+          unauthorized,
+          2,
+          reason:
+              'each lane was refused once and neither retried while the refresh was pending',
+        );
+        expect(
+          refreshes,
+          1,
+          reason:
+              'the second lane joined the pending refresh instead of starting another',
+        );
+        gate.complete();
+        await until(
+          () => accepted.isCompleted && pushes >= 1,
+          'both lanes recovered',
+        );
+        var status = await client.status();
+        final settled = DateTime.now().add(const Duration(seconds: 5));
+        while (status['pending'] != 0 && DateTime.now().isBefore(settled)) {
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+          status = await client.status();
+        }
+        expect(status['pending'], 0);
+        expect(
+          refreshes,
+          1,
+          reason: 'no further refresh once the token is valid',
+        );
+        expect(unauthorized, 2);
+        await connection.close();
+      } finally {
+        if (!gate.isCompleted) gate.complete();
+        await client.close();
+        for (final socket in sockets) {
+          await socket.close();
+        }
+        await server.close(force: true);
+        await dir.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
+    'a socket the server closes is reconnected after the backoff, resubscribed, and streaming resumes',
+    () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'ahead-dart-reconnect-',
+      );
+      final schema =
+          jsonDecode(
+                await File('../../fixtures/schemas/entry.json').readAsString(),
+              )
+              as Map<String, dynamic>;
+      final client = await Client.open(
+        path: '${dir.path}/db',
+        schema: schema,
+        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+      );
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final started = DateTime.now();
+      final upgrades = <int>[];
+      final subscribes = <Map<String, dynamic>>[];
+      final sockets = <WebSocket>[];
+      final errors = <Object>[];
+      server.listen((request) async {
+        if (request.uri.path == '/sync/pull') {
+          final pull =
+              jsonDecode(await utf8.decoder.bind(request).join()) as Map;
+          request.response.write(
+            jsonEncode({
+              'scope': pull['scope'],
+              'fromCursor': pull['fromCursor'],
+              'toCursor': pull['fromCursor'],
+              'changes': <Object>[],
+            }),
+          );
+          await request.response.close();
+          return;
+        }
+        upgrades.add(DateTime.now().difference(started).inMilliseconds);
+        final socket = await WebSocketTransformer.upgrade(request);
+        sockets.add(socket);
+        socket.listen((message) {
+          final sub = jsonDecode(message as String) as Map<String, dynamic>;
+          subscribes.add(sub);
+          socket.add(
+            jsonEncode({
+              'type': 'subscribed',
+              'scopes': sub['scopes'],
+              'rejections': <Object>[],
+            }),
+          );
+        });
+      });
+      Future<void> until(
+        FutureOr<bool> Function() predicate,
+        String label,
+      ) async {
+        final deadline = DateTime.now().add(const Duration(seconds: 5));
+        while (!await predicate()) {
+          if (DateTime.now().isAfter(deadline)) {
+            throw StateError(
+              '$label: upgrades=$upgrades subscribes=${subscribes.length} '
+              'errors=$errors',
+            );
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+      }
+
+      try {
+        await client.transaction((tx) async {
+          await tx.direct({
+            'model': 'Entry',
+            'op': 'create',
+            'identity': {'id': 'live'},
+            'values': {'text': 'local'},
+          });
+        });
+        await client.subscribe('scope');
+        final connection = await client.connect(
+          SyncServer(
+            url: 'http://127.0.0.1:${server.port}',
+            token: () => 'secret',
+          ),
+          onError: errors.add,
+        );
+        await until(() => subscribes.length == 1, 'first subscribe');
+        final closedAt = DateTime.now().difference(started).inMilliseconds;
+        await sockets[0].close(1001, 'closing');
+        await until(() => upgrades.length == 2, 'reconnect');
+        final waited = upgrades[1] - closedAt;
+        expect(
+          waited,
+          greaterThanOrEqualTo(180),
+          reason:
+              'the reconnect waited $waited ms; the first retry is due 250 ms later, minus 20% jitter',
+        );
+        expect(errors, isNotEmpty, reason: 'the close reaches onError');
+        await until(() => subscribes.length == 2, 'second subscribe');
+        expect(subscribes[1], {
+          'type': 'subscribe',
+          'scopes': ['scope'],
+          'models': {'Entry': 1},
+        });
+        sockets[1].add(
+          jsonEncode({
+            'scope': 'scope',
+            'fromCursor': 0,
+            'toCursor': 1,
+            'changes': [
+              {
+                'syncId': 1,
+                'model': 'Entry',
+                'identity': {'id': 'live'},
+                'stamp': 1,
+                'state': {'text': 'after reconnect', 'note': null},
+              },
+            ],
+          }),
+        );
+        await until(
+          () async =>
+              (await client.read('Entry', {'id': 'live'}))?['text'] ==
+              'after reconnect',
+          'page on the new socket applies',
+        );
+        expect(upgrades.length, 2, reason: 'one reconnect; no busy loop');
+        await connection.close();
+      } finally {
+        await client.close();
+        for (final socket in sockets) {
+          await socket.close();
+        }
+        await server.close(force: true);
+        await dir.delete(recursive: true);
+      }
+    },
+  );
+  test(
+    'bounded receive buffer (8 MiB) overflows on ten large pages without restarting the in-flight HTTP catch-up',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('ahead-dart-bytes-');
+      final schema =
+          jsonDecode(
+                await File('../../fixtures/schemas/entry.json').readAsString(),
+              )
+              as Map<String, dynamic>;
+      final client = await Client.open(
+        path: '${dir.path}/db',
+        schema: schema,
+        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+      );
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final sockets = <WebSocket>[];
+      final errors = <Object>[];
+      final entered = Completer<void>(), gate = Completer<void>();
+      var head = 1, pulls = 0;
+      final pullCursors = <int>[];
+      Map<String, dynamic> page(String text, int cursor, int to) => {
+        'scope': 'scope',
+        'fromCursor': cursor,
+        'toCursor': to,
+        'changes': [
+          {
+            'syncId': to,
+            'model': 'Entry',
+            'identity': {'id': 'live'},
+            'stamp': to,
+            'state': {'text': text, 'note': null},
+          },
+        ],
+      };
+      // Each page carries one change holding a 1 MiB value, so eight buffered
+      // pages already exceed the 8 MiB byte bound: the page count never comes
+      // close to 128 and cannot be what trips the buffer.
+      const largePages = 10;
+      final filler = 'x' * (1024 * 1024);
+      expect(largePages, lessThan(128));
+      expect(
+        jsonEncode(page('live 1 $filler', 1, 2)).length * 8,
+        greaterThan(8 * 1024 * 1024),
+      );
+      Future<void> until(FutureOr<bool> Function() check) async {
+        final deadline = DateTime.now().add(const Duration(seconds: 10));
+        while (DateTime.now().isBefore(deadline)) {
+          if (await check()) return;
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        throw StateError('condition timed out: $errors');
+      }
+
+      server.listen((r) async {
+        if (WebSocketTransformer.isUpgradeRequest(r)) {
+          final socket = await WebSocketTransformer.upgrade(r);
+          sockets.add(socket);
+          socket.listen((message) {
+            final sub = jsonDecode(message as String) as Map;
+            socket.add(
+              jsonEncode({
+                'type': 'subscribed',
+                'scopes': sub['scopes'],
+                'rejections': [],
+              }),
+            );
+          });
+          return;
+        }
+        final body = jsonDecode(await utf8.decoder.bind(r).join()) as Map;
+        pulls++;
+        final from = body['fromCursor'] as int;
+        pullCursors.add(from);
+        final response = page('head $head', from, head);
+        if (pulls == 1) {
+          entered.complete();
+          await gate.future;
+        }
+        r.response.headers.contentType = ContentType.json;
+        r.response.write(jsonEncode(response));
+        await r.response.close();
+      });
+      try {
+        await client.subscribe('scope');
+        final connection = await client.connect(
+          SyncServer(
+            url: 'http://127.0.0.1:${server.port}',
+            token: () => 'secret',
+          ),
+          onError: errors.add,
+        );
+        await entered.future.timeout(const Duration(seconds: 5));
+        // Flush fewer pages than the 128-page bound but more bytes than the
+        // 8 MiB bound while the initial HTTP response remains held.
+        await sockets.first.addStream(
+          Stream.fromIterable([
+            for (var cursor = 1; cursor <= largePages; cursor++)
+              jsonEncode(page('live $cursor $filler', cursor, cursor + 1)),
+          ]),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        // Only HTTP can reveal this state: replaying every buffered live page
+        // reaches 11, so a buffer bounded by pages alone cannot satisfy this.
+        head = 12;
+        gate.complete();
+        await until(
+          () async => (await client.status())['cursors']['scope'] >= 11,
+        );
+        expect((await client.status())['cursors']['scope'], 12);
+        expect(
+          (await client.read('Entry', {'id': 'live'}))?['text'],
+          'head 12',
         );
         expect(
           pullCursors,

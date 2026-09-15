@@ -102,29 +102,22 @@ class ServerSession {
     path: '${_base.path.replaceFirst(RegExp(r'/$'), '')}/sync/$path',
   );
 
-  Future<void> stream(
-    List<String> channels,
-    Future<void> Function(Map<String, dynamic>) apply,
-    Future<void> cancellation, {
-    Future<void> Function()? catchUp,
-  }) {
-    final done = Completer<void>();
+  /// Open `/sync/live`, send [subscribe] once open and deliver every frame to
+  /// [on] in order until [cancellation] completes or the socket ends. Frames
+  /// that arrive while one is being delivered wait in a bounded buffer; past
+  /// the bound the buffer is dropped and [SocketEvents.overflow] is reported.
+  void open(String subscribe, Future<void> cancellation, SocketEvents on) {
     WebSocket? socket;
     StreamSubscription<dynamic>? subscription;
     final http = HttpClient();
     bool ended = false;
-    bool subscribed = false;
     void finish([Object? error, StackTrace? stack]) {
       if (ended) return;
       ended = true;
       http.close(force: true);
       unawaited(subscription?.cancel());
       unawaited(socket?.close());
-      if (error == null) {
-        done.complete();
-      } else {
-        done.completeError(error, stack);
-      }
+      if (error != null) on.closed(error, stack);
     }
 
     unawaited(
@@ -153,29 +146,24 @@ class ServerSession {
           unawaited(opened.close());
           return;
         }
-        final scopes = channels.toList()..sort();
-        opened.add(jsonEncode({'type': 'subscribe', 'scopes': scopes}));
-        final pending = <Map<String, dynamic>>[];
+        opened.add(subscribe);
+        final pending = <String>[];
         int pendingBytes = 0;
         bool draining = false;
         bool overflowed = false;
-        Future<void> drain({bool initial = false}) async {
-          if (draining || ended || !subscribed) return;
+        Future<void> drain() async {
+          if (draining || ended) return;
           draining = true;
           try {
-            if (initial) await catchUp?.call();
-            while (!ended) {
+            while (!ended && (overflowed || pending.isNotEmpty)) {
               if (overflowed) {
                 overflowed = false;
-                pending.clear();
-                pendingBytes = 0;
-                await catchUp?.call();
-                continue;
+                await on.overflow();
+              } else {
+                final frame = pending.removeAt(0);
+                pendingBytes -= frame.length;
+                await on.message(frame);
               }
-              if (pending.isEmpty) break;
-              final page = pending.removeAt(0);
-              pendingBytes -= jsonEncode(page).length;
-              await apply(page);
             }
           } finally {
             draining = false;
@@ -187,46 +175,22 @@ class ServerSession {
             if (ended) return;
             try {
               final text = raw is String ? raw : utf8.decode(raw as List<int>);
-              if (text.length > 8 * 1024 * 1024) {
-                throw const FormatException('live page too large');
+              if (text.length > maxFrameLength) {
+                throw const FormatException('live frame too large');
               }
-              final page = jsonDecode(text) as Map<String, dynamic>;
-              if (!subscribed) {
-                final accepted = (page['scopes'] as List?)
-                    ?.cast<String>()
-                    .toList();
-                accepted?.sort();
-                if (page['type'] != 'subscribed' ||
-                    jsonEncode(accepted) != jsonEncode(scopes) ||
-                    (page['rejections'] as List?)?.isEmpty != true) {
-                  throw const FormatException(
-                    'invalid live subscription acknowledgement',
-                  );
-                }
-                subscribed = true;
-                unawaited(
-                  drain(
-                    initial: true,
-                  ).catchError((Object e, StackTrace s) => finish(e, s)),
-                );
-              } else {
-                if (page.containsKey('type'))
-                  throw const FormatException('invalid live page');
-                if (pending.length >= 128 ||
-                    pendingBytes + text.length > 8 * 1024 * 1024) {
-                  // Keep the listener active and recover from durable cursors.
-                  // Never restart an in-flight HTTP page because traffic is busy.
-                  overflowed = true;
-                  pending.clear();
-                  pendingBytes = 0;
-                } else if (!overflowed) {
-                  pending.add(page);
-                  pendingBytes += jsonEncode(page).length;
-                }
-                unawaited(
-                  drain().catchError((Object e, StackTrace s) => finish(e, s)),
-                );
+              if (pending.length >= bufferedFrames ||
+                  pendingBytes + text.length > bufferedBytes) {
+                // Keep the socket and the in-flight HTTP request: the session
+                // recovers from the durable cursor instead of starting over.
+                pending.clear();
+                pendingBytes = 0;
+                overflowed = true;
               }
+              pending.add(text);
+              pendingBytes += text.length;
+              unawaited(
+                drain().catchError((Object e, StackTrace s) => finish(e, s)),
+              );
             } catch (e, s) {
               finish(e, s);
             }
@@ -240,6 +204,24 @@ class ServerSession {
         );
       }).catchError((Object error, StackTrace stack) => finish(error, stack)),
     );
-    return done.future;
   }
+
+  /// Host resource bounds; not protocol rules.
+  static const int maxFrameLength = 8 * 1024 * 1024;
+  static const int bufferedFrames = 128;
+  static const int bufferedBytes = 8 * 1024 * 1024;
+}
+
+/// How the live lane hears from one socket.
+class SocketEvents {
+  final Future<void> Function(String text) message;
+  final Future<void> Function() overflow;
+
+  /// The socket ended on its own; not called for a cancelled socket.
+  final void Function(Object error, StackTrace? stack) closed;
+  const SocketEvents({
+    required this.message,
+    required this.overflow,
+    required this.closed,
+  });
 }

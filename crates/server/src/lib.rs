@@ -1,11 +1,15 @@
 //! Server protocol orchestration. Host calls run in the application's outer transaction.
 pub mod error;
+pub mod host;
 pub mod live;
 use ahead_core::{
     ChannelCheckpoint, PullPage, PullRequest, PushReceipt, PushRequest, RecordChange, Rejection,
-    Schema, read_counter,
+    Schema, limits, read_counter,
 };
 pub use error::{Error, code};
+use host::{
+    Acknowledged, Claimed, Handled, Head, HostExt, HostRequest, Invalidation, Loaded, Published,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::{
@@ -24,6 +28,44 @@ pub struct Config {
     pub schema: Schema,
     pub mutations: Vec<Mutation>,
     pub loaders: Vec<String>,
+    /// Every retained model read contract, one per `(name, version)`. Absent
+    /// in a hand-written config, in which case each model is retained at the
+    /// schema's own version.
+    #[serde(default)]
+    pub models: Vec<ModelContract>,
+}
+/// One retained model read contract, as the compiler keeps it in
+/// `history/models.json`: the record structure a loader of `version` returns
+/// and the enums those fields use, as they were when the version was published.
+#[derive(Clone, Deserialize, Serialize)]
+pub struct ModelContract {
+    pub name: String,
+    pub version: u64,
+    pub identity: Vec<String>,
+    pub fields: Vec<ahead_core::FieldDescriptor>,
+    #[serde(default)]
+    pub enums: Vec<ahead_core::EnumDescriptor>,
+    /// The contract as a one-model schema, for normalizing loader rows.
+    #[serde(skip)]
+    contract: Option<Schema>,
+}
+impl ModelContract {
+    fn schema(&self) -> Schema {
+        Schema {
+            enums: self.enums.clone(),
+            models: vec![ahead_core::ModelDescriptor {
+                name: self.name.clone(),
+                version: self.version,
+                identity: self.identity.clone(),
+                fields: self.fields.clone(),
+                relations: vec![],
+                unique: vec![],
+            }],
+            requirements: vec![],
+            prerequisites: vec![],
+            client_policies: vec![],
+        }
+    }
 }
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Mutation {
@@ -127,7 +169,94 @@ impl Config {
         for loader in &c.loaders {
             c.schema.model(loader).map_err(config_invalid)?;
         }
+        let mut c = c;
+        if c.models.is_empty() {
+            c.models = c
+                .schema
+                .models
+                .iter()
+                .map(|m| ModelContract {
+                    name: m.name.clone(),
+                    version: m.version,
+                    identity: m.identity.clone(),
+                    fields: m.fields.clone(),
+                    enums: c
+                        .schema
+                        .enums
+                        .iter()
+                        .filter(|e| {
+                            m.fields.iter().any(|f| {
+                                matches!(&f.value_type, ahead_core::ValueType::Enum { name } if *name == e.name)
+                            })
+                        })
+                        .cloned()
+                        .collect(),
+                    contract: None,
+                })
+                .collect();
+        }
+        let mut retained = BTreeSet::new();
+        for contract in &mut c.models {
+            let current = c.schema.model(&contract.name).map_err(config_invalid)?;
+            if read_counter(&json!(contract.version), true).is_err()
+                || !retained.insert((contract.name.clone(), contract.version))
+                || contract.identity != current.identity
+            {
+                return Err(Error::new(
+                    code::CONFIG_INVALID,
+                    format!(
+                        "invalid model contract {} v{}",
+                        contract.name, contract.version
+                    ),
+                ));
+            }
+            let schema = contract.schema();
+            schema.validate().map_err(config_invalid)?;
+            contract.contract = Some(schema);
+        }
+        for model in &c.schema.models {
+            if !retained.contains(&(model.name.clone(), model.version)) {
+                return Err(Error::new(
+                    code::CONFIG_INVALID,
+                    format!(
+                        "model {} v{} is not a retained contract",
+                        model.name, model.version
+                    ),
+                ));
+            }
+        }
         Ok(c)
+    }
+    /// Check a client's declared read contracts: every declared model must
+    /// exist and every declared version must be retained. Nothing is inferred
+    /// for a model the client did not declare; a page holding one is refused
+    /// by [`process_pull`] with the same code.
+    pub fn check_declared(&self, models: &BTreeMap<String, u64>) -> Result<()> {
+        for (name, version) in models {
+            if self.schema.model(name).is_err() {
+                return Err(Error::new(
+                    code::MODEL_VERSION_UNSUPPORTED,
+                    format!("model {name} is not served by this backend"),
+                )
+                .with_details(json!({"model":name,"version":version})));
+            }
+            if self.contract(name, *version).is_none() {
+                return Err(Error::new(
+                    code::MODEL_VERSION_UNSUPPORTED,
+                    format!("model {name} v{version} is not a retained read contract"),
+                )
+                .with_details(json!({"model":name,"version":version})));
+            }
+        }
+        Ok(())
+    }
+    /// The read contract a loader of `version` serves for `model`, or `None`
+    /// when that version is not retained.
+    pub fn contract(&self, model: &str, version: u64) -> Option<&Schema> {
+        self.models
+            .iter()
+            .find(|m| m.name == model && m.version == version)
+            .and_then(|m| m.contract.as_ref())
     }
     fn descriptor(&self, body: &Value) -> Result<&Mutation> {
         let name = body["name"]
@@ -145,9 +274,6 @@ fn config_invalid(e: impl std::fmt::Display) -> Error {
 }
 fn internal(e: impl std::fmt::Display) -> Error {
     Error::new(code::INTERNAL, e.to_string())
-}
-fn host_invalid(e: impl std::fmt::Display) -> Error {
-    Error::new(code::HOST_INVALID, e.to_string())
 }
 fn storage_invalid(e: impl std::fmt::Display) -> Error {
     Error::new(code::STORAGE_INVALID, e.to_string())
@@ -309,7 +435,7 @@ fn machine_name(name: &str) -> String {
     }
     s
 }
-fn valid_code(s: &str) -> bool {
+pub(crate) fn valid_code(s: &str) -> bool {
     let mut parts = s.split(['.', '_', '-']);
     let first = parts.next().unwrap_or("");
     first.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
@@ -330,8 +456,12 @@ fn principal(owner: &str) -> Result<()> {
     }
 }
 async fn head(host: &impl Host, channel: &str) -> Result<u64> {
-    let v = host.call(json!({"op":"head","channel":channel})).await?;
-    read_counter(&v, false).map_err(host_invalid)
+    let Head(cursor) = host
+        .call_typed(HostRequest::Head {
+            channel: channel.into(),
+        })
+        .await?;
+    Ok(cursor)
 }
 pub async fn process_push(
     config: &Config,
@@ -341,20 +471,22 @@ pub async fn process_push(
 ) -> Result<String> {
     principal(owner)?;
     let request = PushRequest::decode(bytes).map_err(request_invalid)?;
-    let locked = host
-        .call(json!({"op":"claim","owner":owner,"clientId":request.client_id}))
+    let locked: Claimed = host
+        .call_typed(HostRequest::Claim {
+            owner: owner.into(),
+            client_id: request.client_id.clone(),
+        })
         .await?;
-    if locked["clientId"] != request.client_id {
+    if locked.client_id != request.client_id {
         return Err(storage_invalid("storage client mismatch"));
     }
-    if locked["owner"] != owner {
+    if locked.owner != owner {
         return Err(Error::code(code::OWNER_MISMATCH));
     }
-    let last = read_counter(&locked["sequence"], false).map_err(storage_invalid)?;
+    let last = locked.sequence;
     if request.batch_sequence == last {
-        return locked["receipt"]
-            .as_str()
-            .map(str::to_owned)
+        return locked
+            .receipt
             .ok_or_else(|| storage_invalid("receipt missing"));
     }
     if request.batch_sequence < last {
@@ -381,6 +513,17 @@ pub async fn process_push(
     let mut rejections = vec![];
     let mut channels = BTreeSet::new();
     for m in &request.mutations {
+        // `decode` resolves the same descriptor first, so both refuse together.
+        let (name, mutation_version) = match config.descriptor(&m.raw) {
+            Ok(d) => (d.name.clone(), d.version),
+            Err(refused) => {
+                rejections.push(Rejection {
+                    ordinal: m.ordinal,
+                    code: refused.code,
+                });
+                continue;
+            }
+        };
         let args = match decode(config, &m.raw) {
             Ok(a) => a,
             Err(refused) => {
@@ -391,28 +534,35 @@ pub async fn process_push(
                 continue;
             }
         };
-        host.call(json!({"op":"savepoint","ordinal":m.ordinal}))
+        let Acknowledged = host
+            .call_typed(HostRequest::Savepoint { ordinal: m.ordinal })
             .await?;
         // Host returns only explicit refusal as data; every thrown error aborts the outer transaction.
-        let result=host.call(json!({"op":"handle","name":m.raw["name"],"version":version(&m.raw),"arguments":args,"owner":owner,"ordinal":m.ordinal})).await?;
-        if let Some(code) = result.get("rejection") {
-            let code = code
-                .as_str()
-                .filter(|s| valid_code(s))
-                .ok_or_else(|| Error::new(code::HANDLER_INVALID, "invalid rejection code"))?;
-            host.call(json!({"op":"rollback","ordinal":m.ordinal}))
-                .await?;
-            rejections.push(Rejection {
+        let settlement: Handled = host
+            .call_typed(HostRequest::Handle {
+                name,
+                version: mutation_version,
+                arguments: args,
+                owner: owner.into(),
                 ordinal: m.ordinal,
-                code: code.into(),
-            });
-        } else {
-            let selected = result["channel"]
-                .as_str()
-                .ok_or_else(|| Error::new(code::HANDLER_INVALID, "invalid handler settlement"))?;
-            channels.insert(selected.to_string());
+            })
+            .await?;
+        match settlement {
+            Handled::Rejected { rejection } => {
+                let Acknowledged = host
+                    .call_typed(HostRequest::Rollback { ordinal: m.ordinal })
+                    .await?;
+                rejections.push(Rejection {
+                    ordinal: m.ordinal,
+                    code: rejection,
+                });
+            }
+            Handled::Settled { channel } => {
+                channels.insert(channel);
+            }
         }
-        host.call(json!({"op":"release","ordinal":m.ordinal}))
+        let Acknowledged = host
+            .call_typed(HostRequest::Release { ordinal: m.ordinal })
             .await?;
     }
     let mut checkpoints = vec![];
@@ -434,7 +584,14 @@ pub async fn process_push(
         rejections,
     };
     let text = String::from_utf8(receipt.encode().map_err(internal)?).map_err(internal)?;
-    host.call(json!({"op":"saveReceipt","owner":owner,"clientId":request.client_id,"sequence":request.batch_sequence,"receipt":text})).await?;
+    let Acknowledged = host
+        .call_typed(HostRequest::SaveReceipt {
+            owner: owner.into(),
+            client_id: request.client_id.clone(),
+            sequence: request.batch_sequence,
+            receipt: text.clone(),
+        })
+        .await?;
     Ok(text)
 }
 pub async fn process_pull(
@@ -445,49 +602,48 @@ pub async fn process_pull(
 ) -> Result<String> {
     principal(owner)?;
     let request = PullRequest::decode(bytes).map_err(request_invalid)?;
+    config.check_declared(&request.models)?;
     let maximum = head(host, &request.channel).await?;
     if request.from_cursor > maximum {
         return Err(request_invalid("cursor ahead of head"));
     }
-    let raw = host
-        .call(json!({"op":"scan","channel":request.channel,"after":request.from_cursor,"limit":50}))
+    let rows: Vec<Invalidation> = host
+        .call_typed(HostRequest::Scan {
+            channel: request.channel.clone(),
+            after: request.from_cursor,
+            limit: limits::PULL_CHANGES as u64,
+        })
         .await?;
-    let rows = raw
-        .as_array()
-        .ok_or_else(|| storage_invalid("invalid scan"))?;
-    if rows.len() > 50 {
+    if rows.len() > limits::PULL_CHANGES {
         return Err(storage_invalid("invalid scan size"));
     }
     let mut previous = request.from_cursor;
     let mut changes = vec![];
     let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
-    for row in rows {
-        let cursor = read_counter(&row["cursor"], true).map_err(storage_invalid)?;
-        if row["channel"] != request.channel || cursor <= previous || cursor > maximum {
+    for row in &rows {
+        if row.channel != request.channel || row.cursor <= previous || row.cursor > maximum {
             return Err(storage_invalid("invalid invalidation order"));
         }
-        previous = cursor;
-        let model = row["model"]
-            .as_str()
-            .ok_or_else(|| storage_invalid("invalid model"))?;
-        if !config.loaders.iter().any(|m| m == model) {
+        previous = row.cursor;
+        if !config.loaders.contains(&row.model) {
             return Err(Error::new(code::LOADER_UNREGISTERED, "unregistered loader"));
         }
         let key = config
             .schema
-            .record_key(model, &row["identity"])
+            .record_key(&row.model, &row.identity)
             .map_err(storage_invalid)?;
-        if row["identityKey"] != key.encoded_identity().map_err(storage_invalid)? {
+        if row.identity_key != key.encoded_identity().map_err(storage_invalid)? {
             return Err(storage_invalid("noncanonical identity"));
         }
-        let stamp = read_counter(&row["stamp"], true)
-            .map_err(|e| storage_invalid(format!("invalid stamp: {e}")))?;
-        groups.entry(model.into()).or_default().push(changes.len());
+        groups
+            .entry(row.model.clone())
+            .or_default()
+            .push(changes.len());
         changes.push(RecordChange {
-            cursor,
-            model: model.into(),
+            cursor: row.cursor,
+            model: row.model.clone(),
             identity: key.identity,
-            stamp,
+            stamp: row.stamp,
             state: Value::Null,
         });
     }
@@ -496,26 +652,49 @@ pub async fn process_pull(
             .iter()
             .map(|i| changes[*i].identity.clone())
             .collect();
-        let loaded=host.call(json!({"op":"load","model":model,"identities":identities,"owner":owner,"channel":request.channel})).await?;
-        let values = loaded
-            .as_array()
-            .filter(|a| a.len() == indexes.len())
-            .ok_or_else(|| Error::new(code::LOADER_INVALID, "misaligned loader result"))?;
-        for (i, state) in indexes.iter().zip(values) {
-            changes[*i].state = if state.is_null() {
-                Value::Null
-            } else {
-                config
-                    .schema
+        // Served at the version the client declared, by that version's loader,
+        // and normalized with that version's contract. A model the client did
+        // not declare is not in its read contract: refused as a whole until
+        // per-read isolation ([#95](https://github.com/zanminwang/ahead/issues/95)).
+        let version = *request.models.get(&model).ok_or_else(|| {
+            Error::new(
+                code::MODEL_VERSION_UNSUPPORTED,
+                format!("model {model} is not declared by the client"),
+            )
+            .with_details(json!({"model":model}))
+        })?;
+        let contract = config
+            .contract(&model, version)
+            .ok_or_else(|| internal(format!("model {model} v{version} is not retained")))?;
+        let loaded: Loaded = host
+            .call_typed(HostRequest::Load {
+                model: model.clone(),
+                version,
+                identities,
+                owner: owner.into(),
+                channel: request.channel.clone(),
+            })
+            .await?;
+        if loaded.len() != indexes.len() {
+            return Err(Error::new(code::LOADER_INVALID, "misaligned loader result"));
+        }
+        for (i, state) in indexes.iter().zip(&loaded) {
+            changes[*i].state = match state {
+                None => Value::Null,
+                Some(state) => contract
                     .normalize_state(&model, state)
-                    .map_err(|e| Error::new(code::LOADER_INVALID, e.to_string()))?
+                    .map_err(|e| Error::new(code::LOADER_INVALID, e.to_string()))?,
             };
         }
     }
     let page = PullPage {
         channel: request.channel,
         from_cursor: request.from_cursor,
-        to_cursor: if rows.len() == 50 { previous } else { maximum },
+        to_cursor: if rows.len() == limits::PULL_CHANGES {
+            previous
+        } else {
+            maximum
+        },
         changes,
     };
     String::from_utf8(page.encode().map_err(internal)?).map_err(internal)
@@ -558,11 +737,15 @@ pub async fn publish(
     let mut result = vec![];
     for channel in selected {
         for key in keys.values() {
-            let result=host.call(json!({"op":"publish","channel":channel,"model":key.model,"identity":key.identity,"identityKey":key.encoded_identity().map_err(internal)?})).await?;
-            read_counter(&result["cursor"], true)
-                .map_err(|e| host_invalid(format!("invalid publish cursor: {e}")))?;
-            read_counter(&result["stamp"], true)
-                .map_err(|e| host_invalid(format!("invalid publish stamp: {e}")))?;
+            // The counters are validated on decode; the engine re-reads `head`.
+            let Published { .. } = host
+                .call_typed(HostRequest::Publish {
+                    channel: channel.into(),
+                    model: key.model.clone(),
+                    identity: key.identity.clone(),
+                    identity_key: key.encoded_identity().map_err(internal)?,
+                })
+                .await?;
         }
         result.push(json!({"scope":channel,"syncId":head(host,channel).await?}));
     }

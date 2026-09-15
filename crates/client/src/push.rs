@@ -5,12 +5,10 @@ use crate::store::ClientStore;
 use crate::{Mutation, Operation, OperationKind, mutate::apply_to_row};
 use ahead_core::{
     ChannelCheckpoint, PushReceipt, PushRequest, RecordKey, Rejection, Result, canonical_json,
-    invalid,
+    invalid, limits,
 };
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
-
-const MAX_MUTATIONS: usize = 20;
 
 /// A checkpoint row on this channel marks a batch whose receipt named nothing the
 /// client can await. Its cursor is 0, which every channel has reached, so the
@@ -123,7 +121,7 @@ impl<S: ClientStore> Engine<'_, S> {
             }
             chosen.insert(q.ordinal);
             selected.push(q.clone());
-            if selected.len() == MAX_MUTATIONS {
+            if selected.len() == limits::PUSH_MUTATIONS {
                 break;
             }
         }

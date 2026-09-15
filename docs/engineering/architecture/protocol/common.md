@@ -22,11 +22,15 @@ Wire names are inherited from the reference implementation and must not change: 
 
 **Shared fixture.** [fixtures/protocol/counter-and-checkpoint.json](../../../../fixtures/protocol/counter-and-checkpoint.json) lists boundary cases both sides must agree on.
 
-Code: [core/lib.rs](../../../../crates/core/src/lib.rs) (`canonical_json`), [core/protocol.rs](../../../../crates/core/src/protocol.rs) (`counter`, `read_counter`), [core/schema.rs](../../../../crates/core/src/schema.rs) (`RecordKey`, state and patch validation).
+Code: [core/lib.rs](../../../../crates/core/src/lib.rs) (`canonical_json`), [core/protocol.rs](../../../../crates/core/src/protocol.rs) (`counter`, `read_counter`, `limits`), [core/schema.rs](../../../../crates/core/src/schema.rs) (`RecordKey`, state and patch validation).
 
 ## 8. Crosscutting Concepts
 
-Several limits are shared by both sides but not negotiated on the wire: 20 mutations and 256 KiB per push, 50 changes per pull page, 1 MiB HTTP bodies and WebSocket frames on the server, 8 MiB WebSocket frames on the clients. Their consequences are recorded by [Batching](../client/engine/push/batching.md), [Server Pull](../server/engine/pull.md) and the two transports; making them configurable is [#11](https://github.com/zanminwang/ahead/issues/11).
+Three limits are shared by both sides but not negotiated on the wire: 20 mutations and 256 KiB per push, 50 changes per pull page. They are defined once, in `limits` of [core/protocol.rs](../../../../crates/core/src/protocol.rs), and every consumer reads them from there: the push request decoder and the client's [batching](../client/engine/push/batching.md), the client's page-end rule (`PullPage::continues`) and the [server pull](../server/engine/pull.md) scan. A page with more than 50 changes is refused by `PullPage::validate`. Making the limits configurable is [#11](https://github.com/zanminwang/ahead/issues/11).
+
+Host resource limits are not protocol rules and stay with each transport: 1 MiB HTTP bodies and WebSocket frames on the server, 8 MiB WebSocket frames and the page buffers on the clients ([Client transport](../client/connection/transport.md), [Server transport](../server/connection/transport.md)).
+
+[fixtures/protocol/live-messages.json](../../../../fixtures/protocol/live-messages.json) records the limit values and the subscription message cases ([Subscriptions](subscriptions.md)).
 
 ## 10. Quality Requirements
 

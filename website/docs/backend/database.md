@@ -58,6 +58,8 @@ The generic `Persistence.call` boundary uses the following operations. Use the [
 | `rollback` | `ordinal` | Roll back to the mutation savepoint; return null |
 | `release` | `ordinal` | Release the mutation savepoint; return null |
 
+Return exactly the fields listed: a result carrying anything beyond them is refused at the boundary, not ignored.
+
 `scan` rows contain `{ channel, cursor, model, identityKey, identity, stamp }`. `identityKey` is provided by the runtime; preserve its canonical representation. `identity` is the decoded identity object. `receipt` is the stored serialized receipt, initially null with sequence zero. Unknown operations and storage failures must reject, not return a plausible empty result.
 
 Persist a receipt atomically with business writes and notifications. A retried `(clientId, sequence)` must observe the previously committed receipt rather than executing the handler again. Ownership must be enforced when saving it.
