@@ -113,34 +113,12 @@ mod tests {
         ));
     }
 
-    /// A strict replay of the issue #33 repro from task-10-report.md: a Direct write
-    /// on a still-dirty (unconfirmed pending-create) row gets baked into the client's
-    /// truth image, orphaning the row (no claim, no pending mutation) once the batch
-    /// settles - which `record_rows_have_a_claim` catches.
-    ///
-    /// `shrink` is only allowed to accept a candidate removal when it fails with the
-    /// same `key` as the original error (an invariant name, here
-    /// "record rows have a claim"), so it cannot wander off to the shorter but
-    /// unrelated "update row missing" failure that a lone `Direct` on a never-created
-    /// row produces - that failure has a different key.
-    ///
-    /// It turns out `Subscribe` and `RejectNext` are not needed to reach this same
-    /// invariant violation, though: `shrink` reduces this trace to `Enqueue, Freeze,
-    /// Direct, Deliver, Deliver` (push then ack, no rejection, no subscription at
-    /// all) and that still fails with the identical "record rows have a claim" key -
-    /// a genuinely more minimal reproduction than task-10-report.md's, since a
-    /// pending mutation's operation record apparently disappears from
-    /// `ahead_mutation_operation` the moment a `Direct` write lands on it, whether or
-    /// not the original create is later accepted or rejected. `key` matching
-    /// correctly keeps this reduction (it is the same invariant, not a different
-    /// bug), it just cannot single out one specific *mechanism* by which that
-    /// invariant fires - see task-11-report.md for the fix-round writeup.
-    ///
-    /// When issue #33 is fixed this trace no longer fails; rewrite the test around a
-    /// different guaranteed failure (for example a `Direct` on a crashed client via a
-    /// strict replay).
+    /// A `Direct` write on a row the client never held fails in `apply` with
+    /// "update row missing" - an error whose `key` is the whole message, since it
+    /// carries no invariant prefix. `shrink` must keep exactly that failure while it
+    /// drops everything around it, down to the lone `Direct`.
     #[test]
-    fn shrink_of_the_issue_33_repro_keeps_the_same_failure() {
+    fn shrink_keeps_the_same_failure_and_reaches_the_lone_cause() {
         let failing = vec![
             Action::Subscribe {
                 client: 0,
@@ -154,31 +132,29 @@ mod tests {
                 },
             },
             Action::Freeze { client: 0 },
+            Action::Deliver,
             Action::Direct {
                 client: 0,
-                key: "Entry:e1".into(),
+                key: "Entry:e2".into(),
                 text: "direct".into(),
             },
-            Action::RejectNext {
-                code: "sim.denied".into(),
-            },
-            Action::Deliver,
             Action::Deliver,
         ];
         let original_len = failing.len();
         let err = replay(1, 1, &failing).unwrap_err();
-        assert_eq!(key(&err), "record rows have a claim", "{err}");
+        let original_key = key(&err).to_string();
+        assert!(err.contains("update row missing"), "{err}");
 
         let minimal = shrink(1, 1, failing);
         let err = replay(1, 1, &minimal).unwrap_err();
         assert_eq!(
             key(&err),
-            "record rows have a claim",
+            original_key,
             "minimal trace {minimal:?} failed with a different error: {err}"
         );
         assert!(
-            minimal.iter().any(|a| matches!(a, Action::Direct { .. })),
-            "minimal trace dropped the Direct write: {minimal:?}"
+            matches!(minimal.as_slice(), [Action::Direct { .. }]),
+            "minimal trace is not the lone Direct: {minimal:?}"
         );
         assert!(
             minimal.len() <= original_len,

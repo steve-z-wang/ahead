@@ -381,8 +381,13 @@ impl<S: ClientStore> Engine<'_, S> {
         )?;
         Ok(())
     }
+    /// Channels some acknowledged batch is waiting on; the nothing-awaited marker
+    /// is not a channel.
     pub fn checkpoint_channels(&mut self) -> Result<BTreeSet<String>> {
-        let rows = self.rows("SELECT DISTINCT channel FROM ahead_push_checkpoint", &[])?;
+        let rows = self.rows(
+            "SELECT DISTINCT channel FROM ahead_push_checkpoint WHERE channel<>?",
+            &[json!(crate::push::NOTHING_AWAITED)],
+        )?;
         Ok(rows.rows.iter().map(|r| text(&r[0])).collect())
     }
     pub fn insert_rejection(

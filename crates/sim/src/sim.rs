@@ -7,7 +7,7 @@ use crate::{
     schema,
 };
 use ahead_client::{Client, Operation, OperationKind};
-use ahead_core::{PullPage, PullRequest, PushReceipt, PushRequest, RecordKey};
+use ahead_core::{PullPage, PushReceipt, PushRequest, RecordKey};
 use ahead_sqlite::SqliteStore;
 use serde_json::json;
 use std::{
@@ -150,9 +150,7 @@ pub struct Sim {
     /// exempts exactly these pairs rather than the whole client or channel.
     pub direct_writes: BTreeSet<(usize, String)>,
     /// Whether the random stepper (`step.rs::choose`) may generate `Action::Direct`.
-    /// Defaults to true; the R2 runner in tests/invariants.rs turns it off to keep a
-    /// running proof against the known client bug in issue #33, which only a direct
-    /// write can trigger.
+    /// Defaults to true; tests/invariants.rs runs the R2 runner both ways.
     pub generate_direct: bool,
     /// Whether `Action::ServerChange` (`step.rs::choose`) may notify a channel outside
     /// a record's real, explicitly-set membership *without* also notifying every
@@ -339,14 +337,12 @@ impl Sim {
                 {
                     return Ok(());
                 }
-                let from_cursor = c.cursor(&channel).map_err(|e| e.to_string())?;
-                let bytes = PullRequest {
-                    channel: channel.clone(),
-                    client_id: c.client_id().to_string(),
-                    from_cursor,
-                }
-                .encode()
-                .map_err(|e| e.to_string())?;
+                // Issued through the client so it can tell a page from an earlier
+                // subscription of the channel apart from a gap (A2).
+                let bytes = c
+                    .downlink_request(&channel)
+                    .map_err(|e| e.to_string())?
+                    .into_bytes();
                 self.net.send(Message::Pull {
                     client,
                     channel,
@@ -508,17 +504,32 @@ impl Sim {
                     return Ok(());
                 }
                 let page = PullPage::decode(&bytes).map_err(|e| e.to_string())?;
-                // A key this page carries an authoritative change for is no longer
-                // shadowed by an earlier direct write on this client, regardless of
-                // whether that particular change ends up newer than local content -
-                // any real invalidation for a direct-written key's own stamp (left
-                // untouched by `direct`) is newer by construction.
-                let touched: Vec<String> = page
-                    .changes
-                    .iter()
-                    .filter_map(|c| schema::schema().record_key(&c.model, &c.identity).ok())
-                    .map(|k| k.encoded().unwrap())
-                    .collect();
+                // A key this page carries a newer authoritative change for is no
+                // longer shadowed by an earlier direct write on this client. Newer
+                // is the client's own rule (D2): the change's stamp beats the
+                // record's local stamp. A stale copy of a page the client already
+                // applied (a duplicate, a late retry) leaves the direct write in
+                // place, so it must keep the exemption too.
+                let mut touched = vec![];
+                for change in &page.changes {
+                    let Ok(key) = schema::schema().record_key(&change.model, &change.identity)
+                    else {
+                        continue;
+                    };
+                    let local = self
+                        .client(client)
+                        .read_sql(
+                            "SELECT stamp FROM ahead_record WHERE model = ? AND identity = ?",
+                            &[json!(key.model), json!(key.encoded_identity().unwrap())],
+                        )
+                        .map_err(|e| e.to_string())?
+                        .first()
+                        .and_then(|r| r["stamp"].as_u64())
+                        .unwrap_or(0);
+                    if change.stamp > local {
+                        touched.push(key.encoded().unwrap());
+                    }
+                }
                 self.client(client)
                     .apply_page(page)
                     .map_err(|e| e.to_string())?;

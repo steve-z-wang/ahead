@@ -325,6 +325,12 @@ impl<S: ClientStore> Engine<'_, S> {
         self.apply_main(&operation)?;
         if is_dirty {
             let mut truth = self.before_get(&key)?;
+            if truth.is_none() && operation.op != OperationKind::Create {
+                // The row's existence is itself pending: there is no rollback base
+                // to advance. The direct write lives only in the main row and goes
+                // with the create if the create is rejected.
+                return Ok(());
+            }
             if operation.op == OperationKind::Delete {
                 self.before_set(&key, None)?;
             } else if apply_to_row(&mut truth, &operation).is_ok() {

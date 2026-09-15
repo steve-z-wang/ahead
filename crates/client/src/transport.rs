@@ -44,14 +44,9 @@ impl SyncCycle {
         // `apply_page`, and a checkpoint the client cannot await settles on arrival.
         let channels = client.desired_channels()?;
         if let Some(channel) = channels.iter().find(|c| !self.completed.contains(*c)) {
-            let request = PullRequest {
-                client_id: client.client_id().into(),
-                channel: channel.clone(),
-                from_cursor: client.cursor(channel)?,
-            };
             let action = TransportAction {
                 kind: "pull".into(),
-                body: String::from_utf8(request.encode()?).map_err(|_| invalid("utf8"))?,
+                body: client.downlink_request(channel)?,
             };
             self.active = Some(action.clone());
             return Ok(Some(action));
@@ -90,12 +85,21 @@ impl<S: ClientStore> Client<S> {
         if !self.desired_channels()?.iter().any(|c| c == channel) {
             return Err(invalid("channel is not subscribed"));
         }
+        let from_cursor = self.cursor(channel)?;
         let request = PullRequest {
             client_id: self.client_id().into(),
             channel: channel.into(),
-            from_cursor: self.cursor(channel)?,
+            from_cursor,
         };
+        self.pulls.issue(channel, from_cursor);
         String::from_utf8(request.encode()?).map_err(|_| invalid("utf8"))
+    }
+
+    /// Whether a page answers a pull this client issued under an earlier
+    /// subscription of its channel. Such a page is stale: the resubscribe reset
+    /// the cursor and a fresh pull from it delivers everything.
+    pub(crate) fn stale_subscription_page(&mut self, page: &PullPage) -> bool {
+        self.pulls.stale(&page.channel, page.from_cursor)
     }
 
     /// One incoming path for HTTP catch-up and WebSocket pages. Optional request
@@ -116,16 +120,19 @@ impl<S: ClientStore> Client<S> {
             return Err(invalid("pull page did not advance"));
         }
         let cursor = self.cursor(&page.channel)?;
-        let disposition =
-            if !self.desired_channels()?.contains(&page.channel) || page.to_cursor <= cursor {
-                "covered"
-            } else if page.from_cursor > cursor {
-                "recover"
-            } else {
-                // apply_page filters changes already covered by the durable cursor.
-                self.apply_page(page)?;
-                "applied"
-            };
+        let disposition = if self.stale_subscription_page(&page)
+            || !self.desired_channels()?.contains(&page.channel)
+            || page.to_cursor <= cursor
+        {
+            "covered"
+        } else if page.from_cursor > cursor {
+            "recover"
+        } else {
+            // The page passed the epoch check above; the cursor gate below filters
+            // changes already covered by the durable cursor.
+            self.apply_current_page(page)?;
+            "applied"
+        };
         Ok(DownlinkProgress {
             disposition,
             continues,

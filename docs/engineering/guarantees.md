@@ -11,7 +11,7 @@ Simulation exercises these behaviors across clients and message sequences. Real-
 | L1 | Reads show the authoritative base with pending local edits replayed in order. A transaction sees its own writes; other readers see them after commit. |
 | L2 | Committed records, queued mutations and rejections survive database reopen. |
 | L3 | A failed transaction rolls back its changes. A nested savepoint can roll back its own scope without discarding the outer transaction. |
-| L4 | Direct writes never enter the push queue. Companion edits follow their mutation's acceptance or rejection. Direct edits to an authoritative record survive rejection of a pending mutation, but later server authority may replace them. |
+| L4 | Direct writes never enter the push queue. Companion edits follow their mutation's acceptance or rejection. Direct edits to an authoritative record survive rejection of a pending mutation, but later server authority may replace them. A record whose create is still pending has no authoritative base: if the create is rejected the record goes, direct edits included. A page the client has already applied does not undo a direct edit. |
 | L5 | Local deletion applies the cascades declared by the schema, with the same rollback scope as the initiating operation. |
 
 ## P. Push
@@ -32,10 +32,10 @@ Channel cursors order delivery within a subscription. Record stamps order author
 | ID | Required behavior |
 | --- | --- |
 | A1 | Delivered server values replace settled optimism; later pending edits replay over the authoritative base. |
-| A2 | Within a subscription, the cursor never decreases. Covered pages do nothing; overlapping pages apply only their unseen suffix. A page starting beyond the local cursor cannot skip the gap. |
+| A2 | Within a subscription, the cursor never decreases. Covered pages do nothing; overlapping pages apply only their unseen suffix. A page starting beyond the local cursor cannot skip the gap. A page answering a pull issued under an earlier subscription of the channel is stale, not a gap: it is dropped and the cursor stays where the resubscribe put it. |
 | A3 | Accepted optimism waits for all required checkpoints on subscribed channels, whether pages or the receipt arrive first. Checkpoints outside the subscriptions are not awaited. |
 | A4 | Required checkpoints come from channels notified by the handler. Missing or ambiguous selection for an accepted mutation aborts the batch. |
-| A5 | Accepted batches settle in sequence order; a later ready batch must not pass an earlier waiting batch. |
+| A5 | Accepted batches settle in sequence order; a later ready batch must not pass an earlier waiting batch, including a batch whose receipt named nothing the client can await. |
 
 A3's current non-subscribed-channel behavior rebuilds from existing authority: an update can revert and a local create can disappear until delivered through a subscribed channel. Whether to retain this behavior needs a decision in [Settlement](architecture/client/engine/settlement.md).
 

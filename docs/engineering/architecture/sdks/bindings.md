@@ -8,35 +8,34 @@ The bindings carry calls across the language boundary. One JSON command contract
 
 **Client direction.** Request `{op, handle?, transaction?, …}` → response `{value, changed, changedTables, generation}`; failures are error messages. The [typed API](typed-api/client.md) is the only caller.
 
-**Server direction** (Node only). `validateConfig`, `processPush`, `processPull`, `publish`, `negotiateLive`, `pullLive`, each taking the config JSON, the owner, the request, and a host callback `(requestJson) => Promise<responseJson>` that runs inside the application's database transaction ([Backend interface](../server/backend-interface.md)).
+**Server direction** (Node only). `validateConfig`, `processPush`, `processPull`, `publish`, `negotiateLive`, `pullLive`, each taking the config JSON, the owner, the request, and a host callback `(requestJson) => Promise<responseJson>` that runs inside the application's database transaction ([Backend interface](../server/backend-interface.md)). A failure is a structured engine error `{code, message, details?}`: `code` is a stable machine name, `message` is for people and may be reworded, and `details` carries only the fields a code promises (`mutation_version_unsupported` has `ordinal`, `name`, `version`). The engine codes are declared in [server/error.rs](../../../../crates/server/src/error.rs); the host callback's own failures cross back as text and are filed under `host` with their message kept.
 
 ## 5. Building Block View
 
 - **The shared command host** (`RuntimeHost`) maps a numeric handle to an open client plus its connection state machines and dispatches every command to the [frontend interface](../client/frontend-interface.md). Command families: session (`begin`, `commit`, `rollback`, savepoints), reads, writes (`enqueue`, `direct`, `channel`), connection (`connection` per lane), sync (`startSync`, `next`, `complete`, `freeze`, `ack`, `downlinkRequest`, `downlinkPage`, `pull`) and state (`readiness`, `drop`, `dismiss`, `recordStatus`, `tasks`, `status`).
 - **The session rule.** A command flagged `transaction: true` requires an open session; while a session is open, reads and writes route into it and every other command is refused. This is what lets a host keep one transaction open across many native calls without the engine ever seeing two at once.
-- **Node carrier.** An async N-API function that locks one process-wide host and runs the command; server functions wrap a thread-safe JavaScript callback as the Rust host.
+- **Node carrier.** An async N-API function that locks one process-wide host and runs the command; server functions wrap a thread-safe JavaScript callback as the Rust host. A server failure crosses N-API as the engine error's JSON in the rejection message; the server SDK's `typedNative` decodes it into `EngineError` (`code`, `message`, `details`) before any other code sees it. The transaction-bridge probe (`runProbe`) is compiled only with `cargo --features probe` into a separate `ahead-node-probe.node`; the normal addon has no probe API.
 - **Dart carrier.** A C function taking and returning a JSON string, with panics caught; the Dart package runs it on a worker isolate per client and loads the library from `libraryPath` (or the process on iOS).
 
 Code: [bindings/common/src/lib.rs](../../../../bindings/common/src/lib.rs); [bindings/node/src](../../../../bindings/node/src); [bindings/dart/src/lib.rs](../../../../bindings/dart/src/lib.rs); the isolate in [dart/client.dart](../../../../packages/dart/lib/src/client.dart).
 
 ## 6. Runtime View
 
-`changed` compares the client generation before and after a command; the SDKs turn it into their change event. Errors arrive as the engine's messages (`client_closed`, `transaction_closed`, `stale client writer; reopen runtime`, …); the server SDK maps a few of them to HTTP statuses ([Server / Connection / Transport](../server/connection/transport.md)).
+`changed` compares the client generation before and after a command; the SDKs turn it into their change event. Client-direction errors arrive as the engine's messages (`client_closed`, `transaction_closed`, `stale client writer; reopen runtime`, …); no status or branch depends on their wording. Server-direction errors arrive as `EngineError`; the HTTP transport maps `code` to a status and everything else to `500 server` ([Server / Connection / Transport](../server/connection/transport.md)).
 
 ## 10. Quality Requirements
 
 - **Session isolation and closed handles behave the same for every language.** Evidence: [bindings/common/tests/session.rs](../../../../bindings/common/tests/session.rs).
-- **An asynchronous host callback runs inside the application's transaction, and a Rust error after a host write rolls both back** (server half of guarantee P6). Evidence: [transaction-bridge.test.mjs](../../../../integration/bindings/node/transaction-bridge.test.mjs).
+- **An asynchronous host callback runs inside the application's transaction, and a Rust error after a host write rolls both back** (server half of guarantee P6). Evidence: [transaction-bridge.test.mjs](../../../../integration/bindings/node/transaction-bridge.test.mjs) over the probe build; the production path is [runtime.test.mjs](../../../../integration/persistence/server/runtime.test.mjs) `unknown error rolls back entire batch…`.
+- **Server refusals cross the boundary as codes, and rewording a message changes neither the code nor the HTTP status.** Evidence: [server/tests/runtime.rs](../../../../crates/server/tests/runtime.rs) `push_refusals_carry_stable_codes_and_run_no_handler`, `malformed_requests_and_blank_owners_are_refused_with_codes`, `host_failures_keep_their_message_under_the_host_code`; [runtime.test.mjs](../../../../integration/persistence/server/runtime.test.mjs) `HTTP classifies native failures by code, not message wording; unknown codes fall back to 500`.
 - **A failed open does not leak the Dart worker isolate.** Evidence: [generated_test.dart](../../../../integration/generated-api/generated_test.dart) `failed generated open closes its native worker isolate`.
 
-Tests read, not executed.
+Verified 2026-09-14: `cargo test -p ahead-server --locked`, `bash integration/persistence/server/run.sh` and `bash integration/persistence/transaction-probe/run.sh` passed after the typed-error and probe changes.
 
 ## 11. Risks and Technical Debt
 
-**Technical debt: errors are strings.** No error code crosses the boundary; the HTTP layer matches on message text such as `gap`, `overlap` and `request.invalid:`. Renaming a message in Rust silently changes HTTP behavior. Evidence: `createHttpHandler` in [server/index.mts](../../../../packages/server/index.mts). No issue tracks a typed error contract.
+**Accepted limitation: client-direction errors are messages.** The Node `clientCall` and Dart `ahead_call` carriers return the engine's message text without a code. No SDK branch or status depends on that wording today; a typed client-side contract would need codes in `ahead_core::Error` first.
 
 **Potential risk: one process-wide lock.** Every Node client call takes the same mutex on a Tokio worker thread and holds it for the SQLite work, so clients in one process serialize; Dart isolates share the same global host. Not measured ([#12](https://github.com/zanminwang/ahead/issues/12)). The server functions also re-parse and re-validate the config JSON on every call.
-
-**Technical debt: spike code ships in the addon.** `runProbe` and `transaction-session.mjs` exist only for the transaction-bridge test; the server SDK does not use them.
 
 **Accepted limitation.** `open` accepts and ignores `owner` and `migration` ([#20](https://github.com/zanminwang/ahead/issues/20)).

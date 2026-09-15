@@ -250,3 +250,88 @@ fn d6_unsubscribe_keeps_what_other_channels_claim() {
     assert_eq!(sim.read_text(0, &entry_key("e1")), None);
     sim.check().unwrap();
 }
+
+/// D4 with declared child membership: an entry and its comment move from channel a
+/// to channel b together. First the source's deletes arrive after the destination's
+/// upserts (delayed source), then the pair moves back with the destination's upserts
+/// arriving after the source's deletes (delayed destination). Both records end with
+/// the latest content and exactly the destination's claim; the client-side cascade of
+/// the parent's delete never erases a child the destination already delivered.
+#[test]
+fn d4_parent_and_child_move_channels_with_delayed_source_and_destination() {
+    use ahead_sim::schema::comment_key;
+    let mut sim = Sim::new(44, 1);
+    subscribe(&mut sim, 0, &["a", "b"]);
+    change(&mut sim, "Entry:e1", Some("entry in a"), &["a"]);
+    change(&mut sim, "Comment:c1", Some("comment in a"), &["a"]);
+    sim.settle();
+    assert_eq!(
+        sim.read_text(0, &comment_key("c1")).as_deref(),
+        Some("comment in a")
+    );
+
+    // Move both to b; the source's deletes are delivered after the destination's upserts.
+    sim.host.set_membership(&entry_key("e1"), &["b"]);
+    sim.host.set_membership(&comment_key("c1"), &["b"]);
+    change(&mut sim, "Entry:e1", None, &["a"]);
+    change(&mut sim, "Comment:c1", None, &["a"]);
+    change(&mut sim, "Entry:e1", Some("entry in b"), &["b"]);
+    change(&mut sim, "Comment:c1", Some("comment in b"), &["b"]);
+    pull(&mut sim, 0, "a");
+    pull(&mut sim, 0, "b");
+    sim.apply(Action::Deliver).unwrap();
+    sim.apply(Action::Deliver).unwrap();
+    sim.apply(Action::Swap { i: 0, j: 1 }).unwrap(); // b's page first, a's deletes after
+    sim.drain();
+    assert_eq!(
+        sim.read_text(0, &entry_key("e1")).as_deref(),
+        Some("entry in b")
+    );
+    assert_eq!(
+        sim.read_text(0, &comment_key("c1")).as_deref(),
+        Some("comment in b")
+    );
+    assert_eq!(
+        sim.client(0).claims_of(&entry_key("e1")).unwrap(),
+        vec!["b".to_string()]
+    );
+    assert_eq!(
+        sim.client(0).claims_of(&comment_key("c1")).unwrap(),
+        vec!["b".to_string()]
+    );
+    sim.check().unwrap();
+
+    // Move back to a; this time the destination's upserts are delivered last.
+    sim.host.set_membership(&entry_key("e1"), &["a"]);
+    sim.host.set_membership(&comment_key("c1"), &["a"]);
+    change(&mut sim, "Entry:e1", None, &["b"]);
+    change(&mut sim, "Comment:c1", None, &["b"]);
+    change(&mut sim, "Entry:e1", Some("entry back in a"), &["a"]);
+    change(&mut sim, "Comment:c1", Some("comment back in a"), &["a"]);
+    pull(&mut sim, 0, "b");
+    sim.drain();
+    assert!(
+        sim.read_text(0, &entry_key("e1")).is_none()
+            && sim.read_text(0, &comment_key("c1")).is_none(),
+        "the source's newer deletes remove both until the destination delivers"
+    );
+    pull(&mut sim, 0, "a");
+    sim.drain();
+    assert_eq!(
+        sim.read_text(0, &entry_key("e1")).as_deref(),
+        Some("entry back in a")
+    );
+    assert_eq!(
+        sim.read_text(0, &comment_key("c1")).as_deref(),
+        Some("comment back in a")
+    );
+    assert_eq!(
+        sim.client(0).claims_of(&entry_key("e1")).unwrap(),
+        vec!["a".to_string()]
+    );
+    assert_eq!(
+        sim.client(0).claims_of(&comment_key("c1")).unwrap(),
+        vec!["a".to_string()]
+    );
+    sim.check().unwrap();
+}

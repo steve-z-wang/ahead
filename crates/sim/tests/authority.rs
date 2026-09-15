@@ -180,16 +180,11 @@ fn a4_handler_without_a_channel_aborts_the_batch() {
     sim.check().unwrap();
 }
 
-/// A2 (open): a page pulled from channel "a" before an Unsubscribe/Subscribe cycle
-/// can still be in flight when the resubscribe resets the channel's cursor to 0; it
-/// must be dropped as stale, a page from a previous subscription, rather than
-/// treated as a gap or applied against the reset cursor. No reproduction of this
-/// existed in the repo; this is the nine-action repro from issue #32.
+/// A2: a page pulled from channel "a" before an Unsubscribe/Subscribe cycle can
+/// still be in flight when the resubscribe resets the channel's cursor to 0; it is
+/// dropped as stale, a page from a previous subscription, rather than treated as a
+/// gap or applied against the reset cursor. The nine-action repro from issue #32.
 #[test]
-#[ignore = "issue #32: a page from a previous subscription of the same channel is not \
-recognized as stale; it can be delivered after Unsubscribe/Subscribe resets the cursor to \
-0 and either errors as a gap or is wrongly applied, instead of being dropped. See A2 in \
-docs/engineering/guarantees.md."]
 fn a2_page_from_a_previous_subscription_is_stale_not_a_gap() {
     let mut sim = Sim::new(36, 1);
     sim.apply(Action::Subscribe {
@@ -311,6 +306,64 @@ fn a5_batches_settle_in_accepted_prefix_order() {
         2,
         "batch 2 is ready but waits for batch 1"
     );
+    sim.apply(Action::Pull {
+        client: 0,
+        channel: "slow".into(),
+    })
+    .unwrap();
+    sim.drain();
+    assert_eq!(sim.client(0).pending_count().unwrap(), 0);
+    sim.check().unwrap();
+}
+
+/// A5 on the immediate path (issue #53): batch 2's receipt names only a channel the
+/// client does not follow, so it has nothing to await; it must still wait for batch 1,
+/// which is waiting on a `slow` cursor.
+#[test]
+fn a5_immediately_settleable_batch_waits_for_the_earlier_batch() {
+    let mut sim = Sim::new(53, 1);
+    sim.apply(Action::Subscribe {
+        client: 0,
+        channel: "slow".into(),
+    })
+    .unwrap();
+    sim.host.set_membership(&entry_key("s"), &["slow"]);
+    sim.host.set_membership(&entry_key("n"), &["other"]);
+    sim.apply(Action::Enqueue {
+        client: 0,
+        mutation: MutationSpec::CreateEntry {
+            id: "s".into(),
+            text: "1".into(),
+        },
+    })
+    .unwrap();
+    sim.apply(Action::Freeze { client: 0 }).unwrap();
+    sim.apply(Action::Deliver).unwrap(); // batch 1 executed, receipt 1 queued
+    sim.apply(Action::Deliver).unwrap(); // receipt 1 acknowledged, waits on slow
+    sim.apply(Action::Enqueue {
+        client: 0,
+        mutation: MutationSpec::CreateEntry {
+            id: "n".into(),
+            text: "2".into(),
+        },
+    })
+    .unwrap();
+    sim.apply(Action::Freeze { client: 0 }).unwrap();
+    sim.apply(Action::Deliver).unwrap(); // batch 2 executed, receipt 2 queued
+    sim.apply(Action::Deliver).unwrap(); // receipt 2: only an `other` checkpoint
+    assert!(
+        sim.clients[0].receipts[&2]
+            .required_checkpoints
+            .iter()
+            .all(|cp| cp.channel == "other"),
+        "batch 2's receipt names nothing the client can await"
+    );
+    assert_eq!(
+        sim.client(0).pending_count().unwrap(),
+        2,
+        "batch 2 has nothing to await but must wait for batch 1"
+    );
+    sim.check().unwrap();
     sim.apply(Action::Pull {
         client: 0,
         channel: "slow".into(),

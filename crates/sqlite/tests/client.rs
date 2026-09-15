@@ -303,3 +303,32 @@ fn unsubscribe_drops_records_nobody_else_claims_and_restarts_from_zero() {
     assert_eq!(table_count(&mut c, "ahead_record"), 1);
     assert_eq!(table_count(&mut c, "ahead_claim"), 1);
 }
+
+/// L3: a host transaction cannot commit with a savepoint still open; the refusal
+/// rolls the whole transaction back and the client stays usable.
+#[test]
+fn committing_with_an_unclosed_savepoint_is_refused_and_rolls_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = open(&dir.path().join("db"));
+    c.begin_session().unwrap();
+    c.session(|tx| tx.direct(create("Entry", "e", json!({"text":"inside","note":null}))))
+        .unwrap();
+    c.session_savepoint().unwrap();
+    c.session(|tx| tx.enqueue(mutation("edited")).map(|_| ()))
+        .unwrap();
+    let err = c.commit_session().unwrap_err();
+    assert!(err.to_string().contains("unclosed savepoint"), "{err}");
+    assert!(!c.session_active(), "the refused commit closes the session");
+    assert!(
+        c.read(&key()).unwrap().is_none(),
+        "nothing from the session committed"
+    );
+    assert_eq!(c.pending_count().unwrap(), 0);
+    c.begin_session().unwrap();
+    c.session(|tx| tx.direct(create("Entry", "e", json!({"text":"again","note":null}))))
+        .unwrap();
+    c.session_savepoint().unwrap();
+    c.session_release().unwrap();
+    c.commit_session().unwrap();
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "again");
+}
