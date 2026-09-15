@@ -75,58 +75,18 @@ Applications that need to display the result must subscribe to the channel their
 - **The server's value replaces the optimistic one, and later local edits replay on top** (guarantee A1). Evidence: `a1_server_value_overrides_optimism_and_later_edits_replay`; `accepted_wire_rows_do_not_promote_companion_over_server_authority`.
 - **A rejection rolls back the mutation and its lifecycle dependents, and the reason survives restart until dismissed** (guarantee P5). Evidence: [crates/sim/tests/push.rs](../../../../../crates/sim/tests/push.rs) `p5_rejection_rolls_back_and_rejects_dependents`; `rejection_removes_optimism_preserves_direct_truth_and_has_durable_inbox`.
 - **Unsubscribing settles the batches that were waiting on that channel.** Evidence: [sqlite/tests/downlink.rs](../../../../../crates/sqlite/tests/downlink.rs) `unsubscribing_settles_its_checkpoint_and_later_pages_are_dropped`.
-- **When none of a receipt's checkpoints can be awaited and no earlier batch is waiting, the batch settles at once** (current behavior). Evidence: [sqlite/tests/query.rs](../../../../../crates/sqlite/tests/query.rs) `transport_pulls_only_subscribed_channels_and_unawaitable_checkpoints_settle`. This test asserts the pending count only; see section 11.
+- **When none of a receipt's checkpoints can be awaited and no earlier batch is waiting, the batch settles at once.** Evidence: [sqlite/tests/query.rs](../../../../../crates/sqlite/tests/query.rs) `transport_pulls_only_subscribed_channels_and_unawaitable_checkpoints_settle` (pending count, and the unsubscribed channel is never pulled).
+- **Settling without authority rebuilds from the available base plus the remaining pending edits** (decision in section 9). Evidence: [sqlite/tests/settlement.rs](../../../../../crates/sqlite/tests/settlement.rs) `update_without_subscription_reverts_to_the_base_on_settlement`, `create_without_subscription_disappears_on_settlement`, `unrelated_subscription_does_not_await_the_checkpoint`, `later_subscription_delivers_the_authoritative_result`, `unsubscribe_releases_the_wait_and_removes_unclaimed_records`, `remaining_pending_edits_replay_over_the_base` — each asserts the visible records and the pending work.
 
-Verified 2026-09-14: `cargo test -p ahead-sqlite --locked --test push` and `cargo test -p ahead-sim --locked --test authority` passed with the two A5 immediate-path tests; the earlier rows were read, not executed.
+Verified 2026-09-14: `cargo test -p ahead-sqlite --locked --test push` and `cargo test -p ahead-sim --locked --test authority` passed with the two A5 immediate-path tests; the earlier rows were read, not executed. Verified 2026-09-15: `cargo test -p ahead-sqlite --locked` passed (63 tests) with the settlement regressions above.
 
 ## 11. Risks and Technical Debt
 
-**Coverage gap: visible state after settlement without authority.**
+**Accepted consequence: visible state after settlement without authority.**
 
 - *Condition.* Every checkpoint in a receipt names a channel the client is not subscribed to, so all are dropped and the batch settles as soon as the ordered walk reaches it. In practice: a client that subscribes to nothing, or a handler that publishes the record only to channels this client does not follow.
 - *Consequence.* No page ever delivers the server's version, so the rebuild restores the base as it was before the mutation: an updated row reverts to its pre-mutation value, and a locally created row disappears, even though the server accepted the mutation. The record reappears only if some subscribed channel later delivers it.
-- *Status.* The existing behavior is accepted (section 9, [#52](https://github.com/zanminwang/ahead/issues/52)). Named regressions still need to assert visible records and pending work for no subscriptions, unrelated subscriptions, later authoritative delivery and unsubscribe; the pending-count test alone is insufficient.
-- *Evidence.* Code path: `awaitable` and `settle_push` in [client/push.rs](../../../../../crates/client/src/push.rs), then `rebuild` in [client/mutate.rs](../../../../../crates/client/src/mutate.rs). Executed once during the earlier architecture review with the test below (`cargo test -p ahead-sqlite --test zz_scratch_probe -- --nocapture`, passed, file not committed). Observed: the updated row read `text: "A"` after settlement; the created row read `None`.
-
-<details>
-<summary>Reproduction: a test file for <code>crates/sqlite/tests/</code> using the existing <code>common</code> helpers</summary>
-
-```rust
-mod common;
-use ahead_client::*;
-use common::*;
-use serde_json::json;
-
-fn receipt(channel: &str, cursor: u64) -> PushReceipt {
-    PushReceipt {
-        required_channel: channel.into(), required_cursor: cursor,
-        required_checkpoints: vec![ChannelCheckpoint { channel: channel.into(), cursor }],
-        rejections: vec![],
-    }
-}
-
-#[test]
-fn settling_without_authority_reverts_the_record() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut c = open(&dir.path().join("db"));
-    seed(&mut c, "A");                        // direct create; no subscription at all
-    c.transaction(|tx| tx.enqueue(mutation("B")).map(|_| ())).unwrap();
-    c.freeze().unwrap().unwrap();
-    c.acknowledge(1, receipt("other", 3)).unwrap();   // "other" is not subscribed
-    assert_eq!(c.pending_count().unwrap(), 0);
-    println!("{:?}", c.read(&key()).unwrap());        // text is "A" again, not "B"
-
-    let created = schema().record_key("Entry", &json!({"id":"n"})).unwrap();
-    c.transaction(|tx| tx.enqueue(Mutation::new("Create", vec![Operation {
-        model: "Entry".into(), op: OperationKind::Create,
-        identity: json!({"id":"n"}), values: Some(json!({"text":"new","note":null})),
-    }])).map(|_| ())).unwrap();
-    c.freeze().unwrap().unwrap();
-    c.acknowledge(2, receipt("other", 4)).unwrap();
-    println!("{:?}", c.read(&created).unwrap());      // None: the row is gone
-}
-```
-
-</details>
+- *Status.* Decided and covered ([#52](https://github.com/zanminwang/ahead/issues/52), section 9). The earlier one-off reproduction is superseded by the named regressions in [sqlite/tests/settlement.rs](../../../../../crates/sqlite/tests/settlement.rs), which assert the visible records and the pending work for each case: `update_without_subscription_reverts_to_the_base_on_settlement`, `create_without_subscription_disappears_on_settlement`, `unrelated_subscription_does_not_await_the_checkpoint`, `later_subscription_delivers_the_authoritative_result`, `unsubscribe_releases_the_wait_and_removes_unclaimed_records`, `remaining_pending_edits_replay_over_the_base`.
+- *Evidence.* Code path: `awaitable` and `settle_push` in [client/push.rs](../../../../../crates/client/src/push.rs), then `rebuild` in [client/mutate.rs](../../../../../crates/client/src/mutate.rs). Verified 2026-09-15: `cargo test -p ahead-sqlite --locked` passed (63 tests, the six above included).
 
 **Accepted limitation.** Only lifecycle dependents are rejected with their parent; a sequence dependent of a rejected mutation is still sent. This matches guarantee P5 as written and is noted because the two dependency kinds are easy to confuse ([Dependencies](push/dependencies.md)).
