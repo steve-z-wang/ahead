@@ -2,7 +2,7 @@
 
 ## 1. Introduction and Goals
 
-The transport moves bytes. It knows the two HTTP routes and the WebSocket route, adds the bearer token, honors cancellation, and buffers streamed pages within a bound. It never looks inside a request body or a page; those come from and go to Rust.
+The transport moves bytes. It knows the two HTTP routes and the WebSocket route, adds the bearer token, honors cancellation, and buffers streamed frames within a bound. It never looks inside a request body or a frame, not even to tell the acknowledgement from a page; those come from and go to Rust.
 
 ## 3. Context and Scope
 
@@ -16,17 +16,17 @@ Both transports do the same things with language-native tools:
 | --- | --- | --- |
 | HTTP | `fetch` with an `AbortSignal` | one `HttpClient` per request, force-closed on cancel |
 | WebSocket | `ws` with an 8 MiB frame limit | `dart:io` with an 8 MiB text check |
-| Page buffer | 64 pages; the socket is paused while a page is applied | 128 pages or 8 MiB in total |
-| Overflow | buffer cleared, recovery requested | same |
+| Frame buffer | 64 frames; the socket is paused while a frame is delivered | 128 frames or 8 MiB in total |
+| Overflow | buffer cleared, `overflow` reported to the session | same |
 | Cancellation | abort signal terminates the socket, even mid-upgrade | a future completes and closes the socket |
 
-Recovery means the [live session](controller/live-session.md) runs its HTTP catch-up again; overflowing never restarts an in-flight HTTP request, so a burst of pages cannot starve the catch-up that advances the durable cursor.
+The buffer only bounds delivery: frames are handed to the [live session](controller/live-session.md) one at a time, in order. On `overflow` the session recovers every channel from the durable cursor; overflowing never restarts an in-flight HTTP request, so a burst of pages cannot starve the catch-up that advances the durable cursor. The session's own bound on pages it holds during a catch-up is the same in both languages.
 
 Code: [client-js/transport.mts](../../../../../packages/client-js/transport.mts), [client-js/live.mts](../../../../../packages/client-js/live.mts), [dart/live.dart](../../../../../packages/dart/lib/src/live.dart).
 
 ## 10. Quality Requirements
 
-- **Cancellation ends a stalled token, an in-flight request and an opening handshake, and a token that resolves late cannot start a request.** Evidence: [live.test.mjs](../../../../../integration/bindings/client-js/live.test.mjs) `live transport cancellation does not wait for a stalled token`, `close cancels opening handshake…`, `client close abandons a stalled live token…`; [live_test.dart](../../../../../packages/dart/test/live_test.dart) `cancel push before token resolution prevents any later HTTP request`, `HTTP catch-up cancellation ends stalled token and in-flight response`.
+- **The socket sends the subscribe frame and delivers frames in order without interpreting them; cancellation ends a stalled token, an in-flight request and an opening handshake without reporting a close, and a token that resolves late cannot start a request.** Evidence: [live.test.mjs](../../../../../integration/bindings/client-js/live.test.mjs) `internal socket sends the subscribe frame, delivers frames in order, and cancellation ends the socket`, `live transport cancellation does not wait for a stalled token`, `close cancels opening handshake…`, `client close abandons a stalled live token…`; [live_test.dart](../../../../../packages/dart/test/live_test.dart) `the socket sends the subscribe frame and delivers frames in order`, `cancel push before token resolution prevents any later HTTP request`, `HTTP catch-up cancellation ends stalled token and in-flight response`.
 - **Overflow preserves in-flight HTTP progress and converges on the latest head.** Evidence: `bounded receive overflow preserves in-flight HTTP progress and recovers the latest head`; [live_test.dart](../../../../../packages/dart/test/live_test.dart) `bounded receive buffer (128 pages) overflows into recovery without restarting the in-flight HTTP catch-up` for the page bound and `bounded receive buffer (8 MiB) overflows on ten large pages without restarting the in-flight HTTP catch-up` for the byte bound.
 
 Tests read, not executed, except the live suites cited for overflow, run 2026-09-15.

@@ -53,7 +53,7 @@ Current test locations. Some suites support more than one responsibility.
 | Component / Schema | [core contracts](../../crates/core/tests/contracts.rs), [compiler/tests](../../crates/compiler/tests) |
 | Component / Protocol | [core contracts](../../crates/core/tests/contracts.rs) |
 | Component / Compiler | [compiler/tests](../../crates/compiler/tests) |
-| Component / Client | Engine scenarios in [sqlite/tests](../../crates/sqlite/tests); scheduling tests in [client/connection.rs](../../crates/client/src/connection.rs) |
+| Component / Client | Engine scenarios and live session transitions in [sqlite/tests](../../crates/sqlite/tests); scheduling tests in [client/connection.rs](../../crates/client/src/connection.rs) |
 | Component / Server | [server/tests](../../crates/server/tests) |
 | Simulation / Scenarios | [sim/tests](../../crates/sim/tests) |
 | Simulation / Invariants | Checks in [sim/src/invariants.rs](../../crates/sim/src/invariants.rs); runner in [sim/tests/invariants.rs](../../crates/sim/tests/invariants.rs) |

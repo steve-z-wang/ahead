@@ -17,7 +17,7 @@ The surface, grouped by purpose:
 | Session API for hosts that hold a transaction open across calls | `begin_session`, `session(\|tx\| …)`, `session_savepoint`, `session_release`, `session_rollback_savepoint`, `commit_session`, `rollback_session` |
 | Reads on the last commit | `read`, `query`, `query_spec`, `related`, `referencing`, `read_sql` |
 | Sync | `freeze`, `acknowledge`, `apply_page`, `receive_downlink`, `downlink_request`, plus the `SyncCycle` and `ConnectionDriver` state machines |
-| State and control | `pending_count`, `cursor`, `subscriptions`, `rejections`, `record_status`, `pending_tasks`, `set_readiness`, `drop_mutation`, `dismiss_rejection` |
+| State and control | `pending_count`, `cursor`, `subscriptions`, `subscription_generation` (how many subscribes and unsubscribes committed since open; the [live session](connection/controller/live-session.md) restarts when it changes), `rejections`, `record_status`, `pending_tasks`, `set_readiness`, `drop_mutation`, `dismiss_rejection` |
 | Notification | `watch(tables)` → a receiver signalled when a commit touched one of the tables |
 
 ## 5. Building Block View
