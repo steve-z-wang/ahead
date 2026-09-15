@@ -218,7 +218,7 @@ impl LiveSession {
             self.driver.complete(true, now, 0);
             return Ok(());
         }
-        let subscribe = SubscribeRequest::new(channels.clone())?;
+        let subscribe = SubscribeRequest::new(channels.clone(), client.declared_models())?;
         let frame = String::from_utf8(subscribe.encode()?).map_err(|_| invalid("utf8"))?;
         self.epoch += 1;
         self.session = Some(Session {

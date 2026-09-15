@@ -42,7 +42,7 @@ Code: [client/live.rs](../../../../../../crates/client/src/live.rs); disposition
 
 ## 6. Runtime View
 
-1. `start` or a `wake` on an idle lane snapshots the subscribed channels and the generation. With no channels the session ends successfully and the lane stays idle until a subscribe wakes it. Otherwise `open` carries the subscribe frame ([Protocol / Subscriptions](../../../protocol/subscriptions.md)).
+1. `start` or a `wake` on an idle lane snapshots the subscribed channels and the generation. With no channels the session ends successfully and the lane stays idle until a subscribe wakes it. Otherwise `open` carries the subscribe frame ([Protocol / Subscriptions](../../../protocol/subscriptions.md)), which declares the read contracts straight from the client's schema (`declared_models`: every model at the version its generated types read); the catch-up requests carry the same declaration, so both paths are served at the same versions and a reconnect or a subscription change declares them again.
 2. The first frame must be an acknowledgement confirming the requested set; then a `request` starts the catch-up. Every `catchUp` answer goes through the cursor gate: `continues` or `recover` repeats the request, otherwise the next channel's round begins, and the channel's held pages are applied.
 3. Streamed pages apply through the same gate: `covered` does nothing, `applied` wakes the push lane, `recover` queues a round from the durable cursor.
 4. The session ends with `close`: on a failure the answer also carries `wait`, and `next` after it opens a new socket that subscribes again from the durable cursor; on a subscription change the new session opens in the same answer; on `pause` or `stop` nothing follows.

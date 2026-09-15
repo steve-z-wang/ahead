@@ -6,6 +6,7 @@ use crate::{Error, Host, Result, code, head, principal, process_pull};
 use ahead_core::{PullPage, SubscribeRequest, SubscriptionAck};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -18,6 +19,9 @@ pub struct Subscription {
 pub struct Negotiation {
     pub response: String,
     pub subscriptions: Vec<Subscription>,
+    /// The read contracts the client declared; every page of the session is
+    /// pulled at these versions.
+    pub models: BTreeMap<String, u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -30,17 +34,21 @@ pub struct PageProgress {
 
 /// The subscribe frame's shape and scope normalization are protocol rules
 /// ([`SubscribeRequest`]); this maps their refusal to the request code.
-pub fn decode_subscribe(bytes: &[u8]) -> Result<Vec<String>> {
-    SubscribeRequest::decode(bytes)
-        .map(|request| request.scopes)
-        .map_err(|e| Error::new(code::REQUEST_INVALID, e.to_string()))
+pub fn decode_subscribe(bytes: &[u8]) -> Result<SubscribeRequest> {
+    SubscribeRequest::decode(bytes).map_err(|e| Error::new(code::REQUEST_INVALID, e.to_string()))
 }
 
-pub async fn negotiate(owner: &str, bytes: &[u8], host: &impl Host) -> Result<Negotiation> {
+pub async fn negotiate(
+    config: &crate::Config,
+    owner: &str,
+    bytes: &[u8],
+    host: &impl Host,
+) -> Result<Negotiation> {
     principal(owner)?;
-    let scopes = decode_subscribe(bytes)?;
+    let request = decode_subscribe(bytes)?;
+    config.check_declared(&request.models)?;
     let mut accepted = vec![];
-    for scope in scopes {
+    for scope in request.scopes {
         let from_cursor = head(host, &scope).await?;
         accepted.push(Subscription { scope, from_cursor });
     }
@@ -52,6 +60,7 @@ pub async fn negotiate(owner: &str, bytes: &[u8], host: &impl Host) -> Result<Ne
     Ok(Negotiation {
         response,
         subscriptions: accepted,
+        models: request.models,
     })
 }
 
@@ -81,11 +90,13 @@ pub async fn pull(
     owner: &str,
     scope: &str,
     from_cursor: u64,
+    models: &BTreeMap<String, u64>,
     host: &impl Host,
 ) -> Result<PageProgress> {
-    let request =
-        serde_json::to_vec(&json!({"clientId":"live","scope":scope,"fromCursor":from_cursor}))
-            .map_err(|error| Error::new(code::INTERNAL, error.to_string()))?;
+    let request = serde_json::to_vec(
+        &json!({"clientId":"live","scope":scope,"fromCursor":from_cursor,"models":models}),
+    )
+    .map_err(|error| Error::new(code::INTERNAL, error.to_string()))?;
     let page = process_pull(config, owner, &request, host).await?;
     page_progress(&page, scope, from_cursor)
 }
@@ -116,9 +127,14 @@ pub enum LiveAction {
     Listen { scope: String },
     /// Send this frame on the socket (the acknowledgement or a page).
     Send { frame: String },
-    /// Run `pull(owner, scope, from_cursor)` in a transaction and report the
-    /// page as [`LiveEvent::Pulled`]. At most one pull per scope is outstanding.
-    Pull { scope: String, from_cursor: u64 },
+    /// Run `pull(owner, scope, from_cursor, models)` in a transaction and
+    /// report the page as [`LiveEvent::Pulled`]. At most one pull per scope
+    /// is outstanding; `models` are the session's declared read contracts.
+    Pull {
+        scope: String,
+        from_cursor: u64,
+        models: BTreeMap<String, u64>,
+    },
 }
 
 /// One accepted scope: the cursor streamed so far, whether a commit arrived
@@ -142,6 +158,7 @@ pub struct ScopeState {
 pub struct Subscriptions {
     scopes: Vec<ScopeState>,
     closed: bool,
+    models: BTreeMap<String, u64>,
 }
 
 impl Subscriptions {
@@ -170,11 +187,13 @@ impl Subscriptions {
         actions.extend(scopes.iter().map(|state| LiveAction::Pull {
             scope: state.scope.clone(),
             from_cursor: state.cursor,
+            models: negotiation.models.clone(),
         }));
         (
             Self {
                 scopes,
                 closed: false,
+                models: negotiation.models,
             },
             actions,
         )
@@ -199,9 +218,11 @@ impl Subscriptions {
                 }
                 state.running = true;
                 state.pending = false;
+                let from_cursor = state.cursor;
                 Ok(vec![LiveAction::Pull {
                     scope,
-                    from_cursor: state.cursor,
+                    from_cursor,
+                    models: self.models.clone(),
                 }])
             }
             LiveEvent::Pulled { scope, page } => {
@@ -225,16 +246,19 @@ impl Subscriptions {
                     });
                 }
                 state.cursor = progress.to_cursor;
+                let from_cursor = state.cursor;
                 if progress.continues {
                     actions.push(LiveAction::Pull {
                         scope,
-                        from_cursor: state.cursor,
+                        from_cursor,
+                        models: self.models.clone(),
                     });
                 } else if state.pending {
                     state.pending = false;
                     actions.push(LiveAction::Pull {
                         scope,
-                        from_cursor: state.cursor,
+                        from_cursor,
+                        models: self.models.clone(),
                     });
                 } else {
                     state.running = false;

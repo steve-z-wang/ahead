@@ -90,6 +90,7 @@ impl<S: ClientStore> Client<S> {
             client_id: self.client_id().into(),
             channel: channel.into(),
             from_cursor,
+            models: self.declared_models(),
         };
         self.pulls.issue(channel, from_cursor);
         String::from_utf8(request.encode()?).map_err(|_| invalid("utf8"))
