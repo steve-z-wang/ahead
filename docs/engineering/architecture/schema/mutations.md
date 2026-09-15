@@ -31,7 +31,7 @@ The compiled descriptor `{name, version, slots, sequence}` goes to the client as
 
 **History.** Each version's input (the models and enums its slots touch, its requirements and its sequence) is snapshotted. A version may not decrease and a retained mutation may not disappear. Changing the input at the same version is refused unless the change is compatible: patch fields and enum values may grow, existing fields must be identical, and a model a `create` slot targets may not gain a non-nullable field, because old clients would send creates without it ([Compiler / Validate](../compiler/validate.md)).
 
-Code: parsing and checks in [compiler/lib.rs](../../../../crates/compiler/src/lib.rs); history in [compiler/history.rs](../../../../crates/compiler/src/history.rs); server decoding in [server/lib.rs](../../../../crates/server/src/lib.rs) (`decode`); client policies in [client/policies.rs](../../../../crates/client/src/policies.rs).
+Code: parsing in [compiler/parse.rs](../../../../crates/compiler/src/parse.rs) and checks in [compiler/validate.rs](../../../../crates/compiler/src/validate.rs); history in [compiler/history.rs](../../../../crates/compiler/src/history.rs); server decoding in [server/lib.rs](../../../../crates/server/src/lib.rs) (`decode`); client policies in [client/policies.rs](../../../../crates/client/src/policies.rs).
 
 ## 6. Runtime View
 

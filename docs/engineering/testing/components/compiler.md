@@ -2,7 +2,7 @@
 
 Verify that accepted schemas produce the intended descriptors and APIs, and invalid schemas fail with useful diagnostics. See [Compiler architecture](../../architecture/compiler/README.md).
 
-[Existing tests](../../../../crates/compiler/tests) cover parsing and validation, mutation history, CLI output and emitter content.
+[Existing tests](../../../../crates/compiler/tests) cover parsing (`parse.rs`: declarations, positions, syntax-only errors), validation, mutation history, CLI output and emitter content.
 
 ```sh
 cargo test -p ahead-compiler --locked
@@ -20,7 +20,8 @@ Reviewed 2026-09-14 against [Parse](../../architecture/compiler/parse.md), [Vali
 
 | Behavior | Existing tests | Coverage | Gap and next step |
 | --- | --- | --- | --- |
-| A syntax error reports its line | [compiler.rs](../../../../crates/compiler/tests/compiler.rs) `rejects_unknown_with_location` | covered | none |
+| A syntax error reports its line | [compiler.rs](../../../../crates/compiler/tests/compiler.rs) `rejects_unknown_with_location`; [parse.rs](../../../../crates/compiler/tests/parse.rs) `parse_reports_syntax_errors_with_the_found_token_and_nothing_semantic` | covered | none |
+| Parse produces typed declarations with positions and no semantic rule; `compile` equals `validate(parse(…))` ([#67](https://github.com/zanminwang/ahead/issues/67)) | `parse_keeps_every_declaration_with_its_position`, `compile_is_parse_then_validate_and_declarations_are_plain_data` | covered | Output equivalence with the pre-split compiler was checked by diffing fixture and example outputs (Parse §10). |
 | A semantic error reports the offending declaration ([#48](https://github.com/zanminwang/ahead/issues/48)) | `semantic_errors_report_the_offending_declaration` (twelve cases: relation field, `onTargetDelete`, singular inverse, field type, binding parent, sequence target, prerequisite, duplicate mutation, patch field, unique fields, duplicate model, missing identity) | covered | Rules refused only by the core descriptor backstop still report the end of input (Validate §11). |
 | Multi-file input maps a line back to its file | [cli.rs](../../../../crates/compiler/tests/cli.rs) `cli_relocates_errors_into_the_file_that_declares_them` | covered | Asserts `b.model:3:` for a semantic error and `b.model:5:` for a syntax error in the second file. |
 | Reserved model names are refused at compile time ([#64](https://github.com/zanminwang/ahead/issues/64)) | `rejects_reserved_model_names_at_the_declaration` | covered | Asserts `sqlite_`/`ahead_` in either case are refused at the model's line and that `Sqlite`, `sqlitex`, `my_sqlite_table`, `aheadEntry` stay valid. |

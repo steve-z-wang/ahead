@@ -27,7 +27,7 @@ The import specifiers for the runtime packages are configurable (`--backend-runt
 - **Dart.** The same surface with `Present<T>` wrappers for patch and filter presence, named parameters for mutations, and a `libraryPath` requirement outside iOS.
 - **Dates.** Encoded with `toISOString()` / `toUtc().toIso8601String()`, decoded with `new Date` / `DateTime.parse` ([Types](../schema/types.md)).
 
-Code: descriptors assembled at the end of `compile` in [compiler/lib.rs](../../../../crates/compiler/src/lib.rs); emitters in [compiler/emit.rs](../../../../crates/compiler/src/emit.rs); file output in [compiler/main.rs](../../../../crates/compiler/src/main.rs).
+Code: descriptors assembled at the end of `validate` in [compiler/validate.rs](../../../../crates/compiler/src/validate.rs); emitters in [compiler/emit.rs](../../../../crates/compiler/src/emit.rs); file output in [compiler/main.rs](../../../../crates/compiler/src/main.rs).
 
 ## 10. Quality Requirements
 
