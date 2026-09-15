@@ -2,24 +2,43 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:ahead/ahead.dart';
-import 'package:ahead/src/live.dart' show ServerSession;
+import 'package:ahead/src/live.dart' show ServerSession, SocketEvents;
 import 'package:test/test.dart';
+
+final subscribeFrame = jsonEncode({
+  'type': 'subscribe',
+  'scopes': ['scope'],
+});
+SocketEvents events({
+  Future<void> Function(String)? message,
+  void Function(Object, StackTrace?)? closed,
+}) => SocketEvents(
+  message: message ?? (_) async {},
+  overflow: () async {},
+  closed: closed ?? (_, _) {},
+);
 
 void main() {
   test('cancellation ends a stalled WebSocket token', () async {
     final cancel = Completer<void>();
+    var closed = 0;
     final live = ServerSession(
       SyncServer(
         url: 'http://127.0.0.1:1',
         token: () => Completer<String>().future,
       ),
     );
-    final running = live.stream(['scope'], (_) async {}, cancel.future);
+    live.open(
+      subscribeFrame,
+      cancel.future,
+      events(closed: (_, _) => closed++),
+    );
     cancel.complete();
-    await running.timeout(const Duration(seconds: 2));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(closed, 0, reason: 'a cancelled socket is not reported as closed');
   });
   test(
-    'WebSocket establishes listeners without cursor catch-up mode',
+    'the socket sends the subscribe frame and delivers frames in order',
     () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final handshake = Completer<Map>();
@@ -47,29 +66,37 @@ void main() {
         }, onDone: () => finished.complete());
       });
       final cancel = Completer<void>();
-      final received = Completer<Map>();
+      final frames = <Map>[];
+      final second = Completer<void>();
       final live = ServerSession(
         SyncServer(
           url: 'http://127.0.0.1:${server.port}',
           token: () => 'secret',
         ),
       );
-      final running = live.stream(['scope'], (page) async {
-        received.complete(page);
-      }, cancel.future);
+      live.open(
+        subscribeFrame,
+        cancel.future,
+        events(
+          message: (text) async {
+            frames.add(jsonDecode(text) as Map);
+            if (frames.length == 2) second.complete();
+          },
+        ),
+      );
       try {
         expect(await handshake.future.timeout(const Duration(seconds: 2)), {
           'type': 'subscribe',
           'scopes': ['scope'],
         });
+        await second.future.timeout(const Duration(seconds: 2));
         expect(
-          (await received.future.timeout(
-            const Duration(seconds: 2),
-          ))['toCursor'],
-          8,
+          frames[0]['type'],
+          'subscribed',
+          reason: 'the transport does not interpret frames',
         );
+        expect(frames[1]['toCursor'], 8);
         cancel.complete();
-        await running.timeout(const Duration(seconds: 2));
         await finished.future.timeout(const Duration(seconds: 2));
       } finally {
         if (!cancel.isCompleted) cancel.complete();
@@ -141,17 +168,25 @@ void main() {
   test('close during an opening handshake cancels its socket', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final entered = Completer<void>();
+    final requests = <HttpRequest>[];
     server.listen((r) {
+      requests.add(r);
       entered.complete();
     });
     final cancelled = Completer<void>();
+    var closed = 0;
     final live = ServerSession(
       SyncServer(url: 'http://127.0.0.1:${server.port}', token: () => 'secret'),
     );
-    final running = live.stream(['scope'], (_) async {}, cancelled.future);
+    live.open(
+      subscribeFrame,
+      cancelled.future,
+      events(closed: (_, _) => closed++),
+    );
     await entered.future.timeout(const Duration(seconds: 2));
     cancelled.complete();
-    await running.timeout(const Duration(seconds: 2));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(closed, 0);
     await server.close(force: true);
   });
 
