@@ -54,7 +54,7 @@ test('handler registration names every retained version and a function means v1 
  assert.throws(()=>register(both,{edit:{v1:async()=>{}}}),/Missing handler edit\.v2 for edit v2/);
  assert.throws(()=>register(both,{edit:{v1:async()=>{},v2:async()=>{},v3:async()=>{}}}),/Unknown handler edit\.v3 for edit: retained versions are v1, v2/);
  assert.throws(()=>register(both,{edit:{v1:async()=>{},v2:'later'}}),/Handler edit\.v2 for edit v2 must be a function/);
- assert.throws(()=>register(both,{edit:null}),/Missing handler edit for edit v1 and v2/);
+ assert.throws(()=>register(both,{edit:null}),/Missing handler edit for edit v1, v2/);
  register(both,{edit:{v1:async()=>{},v2:async()=>{}}});
  register([config.mutations[0]],{edit:{v1:async()=>{}}});
  register([config.mutations[0]],{edit:async()=>{}});

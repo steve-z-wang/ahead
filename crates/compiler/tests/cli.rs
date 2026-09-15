@@ -260,7 +260,7 @@ fn cli_output_is_deterministic() {
         .map(|e| e.unwrap().file_name())
         .collect();
     names.sort();
-    assert!(names.len() >= 6, "{names:?}");
+    assert_eq!(names.len(), 6, "{names:?}");
     assert!(input.join("history").join("mutations.json").exists());
     for name in names {
         assert_eq!(

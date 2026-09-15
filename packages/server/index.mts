@@ -351,9 +351,7 @@ export function createBackend<T>(options: BackendOptions<T>) {
         );
       table.set(1, registration);
     } else if (registration === null || typeof registration !== "object") {
-      throw new Error(
-        `Missing handler ${key} for ${name} ${versions.map((version) => `v${version}`).join(" and ")}`,
-      );
+      throw new Error(`Missing handler ${key} for ${name} ${list}`);
     } else {
       for (const version of versions) {
         const handler = (registration as Record<string, unknown>)[

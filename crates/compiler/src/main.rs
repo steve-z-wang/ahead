@@ -101,13 +101,13 @@ fn run() -> Result<(), String> {
     if fence_path.exists() {
         ahead_compiler::check_fence(&read_json(&fence_path)?, &config["schema"])?;
     }
-    let source = if relocate {
+    let history_source = if relocate {
         superseded.clone()
     } else {
         history_path.clone()
     };
-    let previous = if source.exists() {
-        Some(read_json(&source)?)
+    let previous = if history_source.exists() {
+        Some(read_json(&history_source)?)
     } else {
         None
     };
