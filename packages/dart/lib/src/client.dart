@@ -364,26 +364,35 @@ class Client implements ReadPort {
   ) => _tasks ??= _runPrerequisites(handlers).whenComplete(() {
     _tasks = null;
   });
+  // Rust picks the task and settles it; this loop only calls the handler.
   Future<void> _runPrerequisites(
     Map<String, Future<void> Function(Map<String, dynamic>)> handlers,
   ) async {
+    final names = handlers.keys.toList();
     while (true) {
-      final tasks = (await pendingTasks()).where(
-        (task) => task['state'] == 'pending',
+      final task = await _exclusive(
+        () async =>
+            await _send({'op': 'task', 'handlers': names})
+                as Map<String, dynamic>?,
       );
-      if (tasks.isEmpty) return;
-      final task = tasks.first;
-      final handler = handlers[task['name']];
-      if (handler == null)
-        throw StateError('Missing prerequisite handler: ${task['name']}');
+      if (task == null) return;
+      String? error;
       try {
-        await handler(task['arguments'] as Map<String, dynamic>);
-        await setReadiness(task['key'] as String, 'ready');
-      } catch (_) {
-        await setReadiness(task['key'] as String, 'failed');
+        await handlers[task['name']]!(
+          task['arguments'] as Map<String, dynamic>,
+        );
+      } catch (thrown) {
+        error = _reason(thrown);
       }
+      await _exclusive(() async {
+        await _send({'op': 'outcome', 'key': task['key'], 'error': error});
+      });
+      _work.add(null);
     }
   }
+
+  /// The text a failed prerequisite keeps.
+  static String _reason(Object thrown) => thrown.toString();
 
   Future<String?> freeze() =>
       _exclusive(() async => await _send({'op': 'freeze'}) as String?);

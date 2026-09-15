@@ -572,18 +572,41 @@ impl<S: ClientStore> Client<S> {
         self.view(|e| {
             Ok(e.prerequisite_keys()?
                 .into_iter()
-                .map(|(key, error)| {
-                    // Schema-derived keys are canonical JSON invocations; any other
-                    // key is opaque and carries no fields of its own.
-                    let mut value = serde_json::from_str::<Value>(&key)
-                        .ok()
-                        .filter(Value::is_object)
-                        .unwrap_or_else(|| json!({}));
-                    value["key"] = json!(key);
-                    value["state"] = json!(if error.is_some() { "failed" } else { "pending" });
-                    value
-                })
+                .map(|(key, error)| task(&key, error.as_deref()))
                 .collect())
+        })
+    }
+    /// The next task the host can run, given the names it has handlers for.
+    /// A pending task no handler covers fails with that reason and the walk
+    /// goes on, so the host only calls handlers; which task, whether one is
+    /// runnable and when the run ends are decided here.
+    pub fn next_task(&mut self, handlers: &[String]) -> Result<Option<Value>> {
+        self.write(|e| {
+            for (key, error) in e.prerequisite_keys()? {
+                if error.is_some() {
+                    continue;
+                }
+                let task = task(&key, None);
+                let handled = task["name"]
+                    .as_str()
+                    .is_some_and(|name| handlers.iter().any(|h| h == name));
+                if handled {
+                    return Ok(Some(task));
+                }
+                e.fail_prerequisite(&key, "missing prerequisite handler")?;
+            }
+            Ok(None)
+        })
+    }
+    /// What running a task came to: `None` resolves it, `Some(reason)` fails
+    /// it and keeps the reason for `pending_tasks` and `record_status`.
+    pub fn outcome(&mut self, key: &str, error: Option<&str>) -> Result<()> {
+        self.write(|e| {
+            match error {
+                None => e.resolve_prerequisite(key)?,
+                Some(reason) => e.fail_prerequisite(key, reason)?,
+            };
+            Ok(())
         })
     }
     pub fn dismiss_rejection(&mut self, ordinal: u64) -> Result<()> {
@@ -618,11 +641,11 @@ impl<S: ClientStore> Client<S> {
                     .prerequisites
                     .iter()
                     .map(|k| {
-                        json!({"key":k,"state":match prerequisites.get(k) {
-                            None => "ready",
-                            Some(Some(_)) => "failed",
-                            Some(None) => "pending",
-                        }})
+                        match prerequisites.get(k) {
+                            None => json!({"key":k,"state":"ready"}),
+                            Some(Some(error)) => json!({"key":k,"state":"failed","error":error}),
+                            Some(None) => json!({"key":k,"state":"pending"}),
+                        }
                     })
                     .collect();
                 pending.push(json!({"ordinal":q.ordinal,"name":q.mutation.name,"phase":phase,"prerequisites":prerequisites}));
@@ -712,4 +735,23 @@ impl<S: ClientStore> ClientTransaction<'_, S> {
     pub fn direct(&mut self, operation: Operation) -> Result<()> {
         self.savepoint(|tx| tx.engine.direct(operation))
     }
+}
+
+/// A task as the host sees it: the fields of a schema-derived key (a canonical
+/// JSON invocation; an opaque key carries none), its key, its state and, when
+/// failed, the reason.
+fn task(key: &str, error: Option<&str>) -> Value {
+    let mut value = serde_json::from_str::<Value>(key)
+        .ok()
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}));
+    value["key"] = json!(key);
+    match error {
+        None => value["state"] = json!("pending"),
+        Some(reason) => {
+            value["state"] = json!("failed");
+            value["error"] = json!(reason);
+        }
+    }
+    value
 }

@@ -357,7 +357,7 @@ fn transaction_scoped_commands_and_sync_commands_are_refused_by_code() {
     host.call(json!({"op":"begin","handle":id})).unwrap();
     host.call(json!({"op":"direct","handle":id,"transaction":true,"operation":{"model":"Entry","op":"create","identity":{"id":"e"},"values":{"text":"hi"}}})).unwrap();
     // While the session is open, sync commands are refused and change nothing.
-    for op in ["freeze", "status", "tasks"] {
+    for op in ["freeze", "status", "tasks", "task", "outcome"] {
         let e = host.call(json!({"op":op,"handle":id})).unwrap_err();
         assert_eq!(e.to_string(), "client transaction active", "{op}");
     }

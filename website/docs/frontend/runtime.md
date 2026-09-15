@@ -283,11 +283,11 @@ A schema can require host I/O, such as an upload, before a mutation can be sent.
 
 | Method | Behavior |
 | --- | --- |
-| `pendingTasks()` | Return unresolved tasks, including `key`, `state` and schema-derived `name`/`arguments` |
-| `runPrerequisites(handlers)` | Run pending tasks; success marks ready, callback failure marks failed; missing handler rejects |
+| `pendingTasks()` | Return unresolved tasks, including `key`, `state`, schema-derived `name`/`arguments` and, for a failed task, `error` |
+| `runPrerequisites(handlers)` | Run pending tasks; success marks ready, a callback failure marks failed with the error's text, a task with no handler is marked failed with `missing prerequisite handler` |
 | `setReadiness(key, state)` | Set `ready`, `pending` or `failed`; use the task's opaque key, not a reconstructed key |
 
-Callback failures are recorded as failed tasks rather than rethrown by the runner. Inspect `pendingTasks` or `recordStatus` to display them. To retry, set the failed key to `pending`, then run callbacks again. Mark ready only when the prerequisite actually completed.
+Callback failures are recorded as failed tasks with their reason rather than rethrown by the runner; a task no handler covers is recorded the same way and the run goes on. Inspect `pendingTasks` or `recordStatus` to display them. To retry, set the failed key to `pending`, then run callbacks again. Mark ready only when the prerequisite actually completed.
 
 ## Protocol primitives
 

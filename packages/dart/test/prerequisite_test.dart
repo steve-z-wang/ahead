@@ -59,7 +59,7 @@ void main() {
         var calls = 0;
         final handlers = <String, Future<void> Function(Map<String, dynamic>)>{
           'Upload': (args) async {
-            expect(args['key'], 'asset');
+            expect(args['key'], anyOf('asset', 'second'));
             if (++calls == 1) throw StateError('offline');
           },
         };
@@ -70,9 +70,14 @@ void main() {
           isNull,
           reason: 'a failed prerequisite blocks the push',
         );
-        final task = (await client.pendingTasks()).single;
+        var task = (await client.pendingTasks()).single;
         expect(task['state'], 'failed');
         expect(task['name'], 'Upload');
+        expect(task['error'], 'Bad state: offline');
+        final status = await client.recordStatus('Entry', {'id': 'e'});
+        final prerequisite =
+            (status['pending'] as List).first['prerequisites'].first;
+        expect(prerequisite['error'], 'Bad state: offline');
         await client.setReadiness(task['key'] as String, 'pending');
         await client.runPrerequisites(handlers);
         expect(calls, 2);
@@ -83,6 +88,27 @@ void main() {
           completes,
           reason: 'nothing pending needs no handler',
         );
+        // A task nobody handles fails with a reason instead of stopping the
+        // run; once reset it is taken by a run that has the handler.
+        await client.mutate({
+          'name': 'Edit',
+          'operations': [
+            {
+              'model': 'Entry',
+              'op': 'update',
+              'identity': {'id': 'e'},
+              'values': {'note': 'second'},
+            },
+          ],
+        });
+        await client.runPrerequisites({});
+        task = (await client.pendingTasks()).single;
+        expect(task['state'], 'failed');
+        expect(task['error'], 'missing prerequisite handler');
+        await client.setReadiness(task['key'] as String, 'pending');
+        await client.runPrerequisites(handlers);
+        expect(calls, 3);
+        expect(await client.pendingTasks(), isEmpty);
       } finally {
         await client.close();
         await dir.delete(recursive: true);

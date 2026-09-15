@@ -173,6 +173,76 @@ fn accepted_wire_rows_do_not_promote_companion_over_server_authority() {
     assert_eq!(c.pending_count().unwrap(), 0);
 }
 
+/// The runner's decisions are Rust's: which task comes next, that a task
+/// nobody handles fails with a reason instead of stopping the run, and that a
+/// reported failure keeps its reason where `pending_tasks` and the record
+/// status show it.
+#[test]
+fn next_task_walks_pending_tasks_fails_unhandled_ones_and_records_reasons() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut value = serde_json::to_value(schema()).unwrap();
+    value["requirements"] =
+        json!([{"model":"Entry","field":"note","name":"Upload","arguments":{"key":"self"}}]);
+    value["prerequisites"] = json!([{"name":"Upload","fields":[{"name":"key","type":"String"}]}]);
+    let schema = Schema::from_value(value).unwrap();
+    let mut c = Client::open(SqliteStore::open(&dir.path().join("db")).unwrap(), schema).unwrap();
+    subscribe(&mut c, "book");
+    c.apply_page(page("book", 0, 1, Some("A"))).unwrap();
+    c.transaction(|tx| {
+        tx.enqueue(Mutation::new(
+            "Edit",
+            vec![Operation {
+                values: Some(json!({"note":"asset"})),
+                ..update("x")
+            }],
+        ))?;
+        let mut m = mutation("B");
+        m.prerequisites.push("scan:1".into());
+        tx.enqueue(m)?;
+        Ok(())
+    })
+    .unwrap();
+    let handlers = vec!["Upload".to_string()];
+    // The opaque key has no name, so no handler can take it: it fails with a
+    // reason and the walk continues to the task the host can run.
+    let task = c.next_task(&handlers).unwrap().unwrap();
+    assert_eq!(task["name"], "Upload");
+    assert_eq!(task["arguments"], json!({"key":"asset"}));
+    let upload_key = task["key"].as_str().unwrap().to_string();
+    let tasks = c.pending_tasks().unwrap();
+    let scan = tasks.iter().find(|t| t["key"] == "scan:1").unwrap();
+    assert_eq!(scan["state"], "failed");
+    assert_eq!(scan["error"], "missing prerequisite handler");
+    // A failure reported by the host keeps its reason.
+    c.outcome(&upload_key, Some("offline")).unwrap();
+    assert!(
+        c.next_task(&handlers).unwrap().is_none(),
+        "failed tasks are not retried"
+    );
+    let tasks = c.pending_tasks().unwrap();
+    let upload = tasks.iter().find(|t| t["key"] == upload_key).unwrap();
+    assert_eq!(upload["state"], "failed");
+    assert_eq!(upload["error"], "offline");
+    let status = c.record_status(&key()).unwrap();
+    let prerequisite = status["pending"][0]["prerequisites"][0].clone();
+    assert_eq!(prerequisite["state"], "failed");
+    assert_eq!(prerequisite["error"], "offline");
+    assert!(c.freeze().unwrap().is_none());
+    // Reset and succeed: the task is gone and the mutation can be sent.
+    c.set_readiness(&upload_key, Readiness::Pending).unwrap();
+    let again = c.next_task(&handlers).unwrap().unwrap();
+    assert_eq!(again["key"], upload_key);
+    assert!(again.get("error").is_none());
+    c.outcome(&upload_key, None).unwrap();
+    assert!(c.next_task(&handlers).unwrap().is_none());
+    assert_eq!(
+        c.pending_tasks().unwrap().len(),
+        1,
+        "only the unhandled key remains"
+    );
+    assert!(c.freeze().unwrap().is_some());
+}
+
 #[test]
 fn schema_requirements_create_durable_tasks_and_gate_only_dependent_mutation() {
     let dir = tempfile::tempdir().unwrap();
