@@ -107,6 +107,9 @@ pub(crate) async fn read_back(
         let rows = match loaded {
             Loaded::Refused { rejection } => return Ok(Outcome::Refused(rejection)),
             Loaded::Rows(rows) => rows,
+            // A loader failure aborts the whole delivery, same as a thrown
+            // error; mapping it to a rejection is [#95](https://github.com/zanminwang/ahead/issues/95).
+            Loaded::Failed { error } => return Err(Error::host(error)),
         };
         if rows.len() != encoded_keys.len() {
             return Err(Error::new(code::LOADER_INVALID, "misaligned loader result"));

@@ -558,6 +558,9 @@ pub async fn process_push(
             .await?;
         let outcome = match settlement {
             Handled::Rejected { rejection } => Outcome::Refused(rejection),
+            // A handler failure aborts the whole delivery, same as a thrown
+            // error; mapping it to a rejection is [#95](https://github.com/zanminwang/ahead/issues/95).
+            Handled::Failed { error } => return Err(Error::host(error)),
             Handled::Settled {
                 changes,
                 publications,
@@ -705,6 +708,9 @@ pub async fn process_pull(
                 )
                 .with_details(json!({"model":model,"rejection":rejection})));
             }
+            // A loader failure aborts the whole page, same as a thrown error;
+            // mapping it to a rejection is [#95](https://github.com/zanminwang/ahead/issues/95).
+            Loaded::Failed { error } => return Err(Error::host(error)),
         };
         if loaded.len() != indexes.len() {
             return Err(Error::new(code::LOADER_INVALID, "misaligned loader result"));
