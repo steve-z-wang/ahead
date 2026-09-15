@@ -947,6 +947,7 @@ void moreTests() {
       final errors = <Object>[];
       final entered = Completer<void>(), gate = Completer<void>();
       var head = 1, pulls = 0;
+      final pullCursors = <int>[];
       Map<String, dynamic> page(String text, int cursor, int to) => {
         'scope': 'scope',
         'fromCursor': cursor,
@@ -989,6 +990,7 @@ void moreTests() {
         final body = jsonDecode(await utf8.decoder.bind(r).join()) as Map;
         pulls++;
         final from = body['fromCursor'] as int;
+        pullCursors.add(from);
         final response = page('head $head', from, head);
         if (pulls == 1) {
           entered.complete();
@@ -1008,16 +1010,31 @@ void moreTests() {
           onError: errors.add,
         );
         await entered.future.timeout(const Duration(seconds: 5));
-        // More live pages than the 128-page bound while the first catch-up is held.
-        for (var cursor = 1; cursor <= 200; cursor++) {
-          sockets.first.add(
-            jsonEncode(page('live $cursor', cursor, cursor + 1)),
-          );
-        }
-        head = 201;
+        // Flush more pages than the 128-page bound, then let the listener
+        // receive them while the initial HTTP response remains held.
+        await sockets.first.addStream(
+          Stream.fromIterable([
+            for (var cursor = 1; cursor <= 200; cursor++)
+              jsonEncode(page('live $cursor', cursor, cursor + 1)),
+          ]),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        // Only HTTP can reveal this state: replaying every buffered live page
+        // reaches 201, so an unbounded buffer cannot satisfy this assertion.
+        head = 202;
         gate.complete();
         await until(
-          () async => (await client.status())['cursors']['scope'] == 201,
+          () async => (await client.status())['cursors']['scope'] >= 201,
+        );
+        expect((await client.status())['cursors']['scope'], 202);
+        expect(
+          (await client.read('Entry', {'id': 'live'}))?['text'],
+          'head 202',
+        );
+        expect(
+          pullCursors,
+          contains(1),
+          reason: 'recovery preserves the held HTTP page before pulling again',
         );
         expect(
           sockets.length,
@@ -1026,8 +1043,8 @@ void moreTests() {
         );
         expect(
           pulls,
-          lessThanOrEqualTo(4),
-          reason: 'bounded buffer coalesces recovery work',
+          inInclusiveRange(2, 4),
+          reason: 'overflow requires HTTP recovery and coalesces its work',
         );
         expect(errors, isEmpty);
         await connection.close();
