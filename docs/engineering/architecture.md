@@ -58,7 +58,7 @@ See the [component documentation index](architecture/README.md) for individual d
 
 ## Component graph
 
-Target architecture. The client connection controller, including its live session, is Rust; the language packages execute its actions. The server controller's state machine still lives in the TypeScript package ([Server / Connection / Controller](architecture/server/connection/controller.md)).
+Target architecture. Both connection controllers are Rust: the client's live session (`LiveSession`) and the server's subscription controller (`Subscriptions`); the language packages execute their actions and keep no sync decision.
 
 Solid lines show composition; dashed lines are labeled with contract use or data flow.
 
@@ -160,4 +160,4 @@ Current code locations for the components above. Some responsibilities still sha
 | Server / Engine / Notify | [server/lib.rs](../../crates/server/src/lib.rs) (`publish`) |
 | Server / Persistence | Interface in [server/index.mts](../../packages/server/index.mts); adapter in [persistence-prisma](../../packages/persistence-prisma); tables in [migration.sql](../../packages/persistence-prisma/migration.sql) |
 | Server / Connection / Transport | [server/index.mts](../../packages/server/index.mts) |
-| Server / Connection / Controller | [server/live.rs](../../crates/server/src/live.rs), [server/index.mts](../../packages/server/index.mts) |
+| Server / Connection / Controller | [server/live.rs](../../crates/server/src/live.rs) (`Subscriptions`); executor `serveLive` in [server/index.mts](../../packages/server/index.mts) |

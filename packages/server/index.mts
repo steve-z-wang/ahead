@@ -26,6 +26,7 @@ export type Native = {
     channels: string,
     callback: (request: string) => Promise<string>,
   ): Promise<string>;
+  /** Negotiates and opens the socket's `Subscriptions`; answers `{handle, actions}` JSON. */
   negotiateLive(
     owner: string,
     request: string,
@@ -38,7 +39,21 @@ export type Native = {
     fromCursor: number,
     callback: (request: string) => Promise<string>,
   ): Promise<string>;
+  /** Applies one `LiveEvent` JSON to the session and answers its `LiveAction[]` JSON. */
+  liveEvent(handle: number, event: string): string;
+  /** Forgets the session; idempotent. */
+  liveClose(handle: number): void;
 };
+/** What the executor reports to the Rust `Subscriptions` controller. */
+export type LiveEvent =
+  | { type: "committed"; scope: string }
+  | { type: "pulled"; scope: string; page: string }
+  | { type: "closed" };
+/** What the controller asks the executor to do, in order. */
+export type LiveAction =
+  | { type: "listen"; scope: string }
+  | { type: "send"; frame: string }
+  | { type: "pull"; scope: string; fromCursor: number };
 export interface Persistence {
   call(request: Record<string, any>): Promise<unknown>;
 }
@@ -109,29 +124,39 @@ function engineError(error: unknown): unknown {
   }
   return error;
 }
-/** Wrap every native function so its rejections surface as `EngineError`. */
+/** Wrap every native function so its failures surface as `EngineError`. */
 function typedNative(native: Native): Native {
+  type Async =
+    "processPush" | "processPull" | "publish" | "negotiateLive" | "pullLive";
+  type Sync = "validateConfig" | "liveEvent" | "liveClose";
   const wrap =
-    <K extends Exclude<keyof Native, "validateConfig">>(key: K) =>
+    <K extends Async>(key: K) =>
     (...args: Parameters<Native[K]>): ReturnType<Native[K]> =>
       (native[key] as (...a: Parameters<Native[K]>) => ReturnType<Native[K]>)(
         ...args,
       ).catch((error: unknown) => {
         throw engineError(error);
       }) as ReturnType<Native[K]>;
-  return {
-    validateConfig: (config) => {
+  const wrapSync =
+    <K extends Sync>(key: K) =>
+    (...args: Parameters<Native[K]>): ReturnType<Native[K]> => {
       try {
-        native.validateConfig(config);
+        return (
+          native[key] as (...a: Parameters<Native[K]>) => ReturnType<Native[K]>
+        )(...args);
       } catch (error) {
         throw engineError(error);
       }
-    },
+    };
+  return {
+    validateConfig: wrapSync("validateConfig"),
     processPush: wrap("processPush"),
     processPull: wrap("processPull"),
     publish: wrap("publish"),
     negotiateLive: wrap("negotiateLive"),
     pullLive: wrap("pullLive"),
+    liveEvent: wrapSync("liveEvent"),
+    liveClose: wrapSync("liveClose"),
   };
 }
 /**
@@ -594,14 +619,24 @@ export function createBackend<T>(options: BackendOptions<T>) {
       run((tx, session) =>
         native.processPull(config, owner, text(request), host(tx, session)),
       ),
-    negotiateLive: (owner: string, request: Uint8Array | string) =>
+    negotiateLive: (
+      owner: string,
+      request: Uint8Array | string,
+    ): Promise<{ handle: number; actions: LiveAction[] }> =>
       run((tx, session) =>
         native.negotiateLive(owner, text(request), host(tx, session)),
       ).then(JSON.parse),
-    pullLive: (owner: string, scope: string, fromCursor: number) =>
+    pullLive: (
+      owner: string,
+      scope: string,
+      fromCursor: number,
+    ): Promise<{ page: string; toCursor: number; continues: boolean }> =>
       run((tx, session) =>
         native.pullLive(config, owner, scope, fromCursor, host(tx, session)),
       ).then(JSON.parse),
+    liveEvent: (handle: number, event: LiveEvent): LiveAction[] =>
+      JSON.parse(native.liveEvent(handle, JSON.stringify(event))),
+    liveClose: (handle: number): void => native.liveClose(handle),
     onCommitted: (scope: string, wake: () => void) =>
       wakes.subscribe(scope, wake),
     notifyCommitted: (scopes: readonly string[]) => wakes.notify(scopes),
@@ -748,19 +783,23 @@ function createHttpHandler(options: {
   };
 }
 
+/**
+ * The live executor's seams: the Rust `Subscriptions` controller behind
+ * `negotiateLive`, `liveEvent` and `liveClose`, plus the database pull and the
+ * commit hub it asks the executor to use.
+ */
 interface LiveBackend {
   negotiateLive(
     owner: string,
     request: Uint8Array | string,
-  ): Promise<{
-    response: string;
-    subscriptions: { scope: string; fromCursor: number }[];
-  }>;
+  ): Promise<{ handle: number; actions: LiveAction[] }>;
   pullLive(
     owner: string,
     scope: string,
     fromCursor: number,
   ): Promise<{ page: string; toCursor: number; continues: boolean }>;
+  liveEvent(handle: number, event: LiveEvent): LiveAction[];
+  liveClose(handle: number): void;
   onCommitted(scope: string, wake: () => void): () => void;
 }
 
@@ -823,6 +862,12 @@ function attachLive(
   };
 }
 
+/**
+ * Executes the Rust controller's actions for one socket. Every sync decision
+ * (what to pull, when, what to send) is the controller's; this only carries
+ * events in and performs actions out. Pulls for different scopes may run
+ * concurrently; the controller keeps at most one outstanding per scope.
+ */
 async function serveLive(
   connection: WebSocket,
   owner: string,
@@ -830,13 +875,6 @@ async function serveLive(
   onError?: (error: unknown) => void,
 ): Promise<void> {
   const cleanups: (() => void)[] = [];
-  let states: {
-    scope: string;
-    fromCursor: number;
-    pending: boolean;
-    running: boolean;
-    closed: boolean;
-  }[] = [];
   let settled = false;
   let handshakeReject: ((error: Error) => void) | undefined;
   const transportError = (error: Error) => {
@@ -844,6 +882,48 @@ async function serveLive(
   };
   connection.on("error", transportError);
   cleanups.push(() => connection.off("error", transportError));
+  let handle: number | undefined;
+  let released = false;
+  const open = () => connection.readyState === WebSocket.OPEN;
+  const fail = (error: unknown) => {
+    onError?.(error);
+    if (open()) connection.close(1011, "server");
+  };
+  const dispatch = (event: LiveEvent) => {
+    if (handle === undefined || released) return;
+    let actions: LiveAction[];
+    try {
+      actions = backend.liveEvent(handle, event);
+    } catch (error) {
+      fail(error);
+      return;
+    }
+    execute(actions);
+  };
+  const execute = (actions: LiveAction[]) => {
+    for (const action of actions) {
+      if (action.type === "listen") {
+        const { scope } = action;
+        cleanups.push(
+          backend.onCommitted(scope, () =>
+            dispatch({ type: "committed", scope }),
+          ),
+        );
+      } else if (action.type === "send") {
+        if (open()) connection.send(action.frame);
+      } else {
+        const { scope } = action;
+        backend
+          .pullLive(owner, scope, action.fromCursor)
+          .then(
+            (progress) =>
+              dispatch({ type: "pulled", scope, page: progress.page }),
+            fail,
+          );
+      }
+    }
+  };
+  const closed = () => dispatch({ type: "closed" });
   try {
     const first = await new Promise<Buffer>((resolve, reject) => {
       const message = (data: Buffer) => {
@@ -854,109 +934,40 @@ async function serveLive(
         settled = true;
         resolve(Buffer.from(data));
       };
-      const closed = () => reject(new Error("live handshake closed"));
+      const handshakeClosed = () => reject(new Error("live handshake closed"));
       handshakeReject = reject;
       connection.on("message", message);
-      connection.once("close", closed);
+      connection.once("close", handshakeClosed);
       cleanups.push(
         () => connection.off("message", message),
-        () => connection.off("close", closed),
+        () => connection.off("close", handshakeClosed),
       );
     });
-    const negotiation = await backend.negotiateLive(owner, first);
+    const opened = await backend.negotiateLive(owner, first);
     handshakeReject = undefined;
-    states = negotiation.subscriptions.map((subscription) => ({
-      ...subscription,
-      pending: false,
-      running: false,
-      closed: false,
-    }));
-    const stop = () => {
-      for (const state of states) {
-        state.closed = true;
-        state.pending = false;
-      }
-    };
-    connection.once("close", stop);
-    connection.once("error", stop);
+    handle = opened.handle;
+    connection.once("close", closed);
+    connection.once("error", closed);
     cleanups.push(
-      () => connection.off("close", stop),
-      () => connection.off("error", stop),
+      () => connection.off("close", closed),
+      () => connection.off("error", closed),
     );
-    const drain = async (state: (typeof states)[number]) => {
-      if (
-        state.running ||
-        state.closed ||
-        connection.readyState !== WebSocket.OPEN
-      )
-        return;
-      state.running = true;
-      try {
-        while (
-          state.pending &&
-          !state.closed &&
-          connection.readyState === WebSocket.OPEN
-        ) {
-          state.pending = false;
-          do {
-            const progress = await backend.pullLive(
-              owner,
-              state.scope,
-              state.fromCursor,
-            );
-            if (state.closed || connection.readyState !== WebSocket.OPEN)
-              return;
-            if (progress.toCursor > state.fromCursor)
-              connection.send(progress.page);
-            state.fromCursor = progress.toCursor;
-            if (!progress.continues) break;
-          } while (!state.closed);
-        }
-      } catch (error) {
-        onError?.(error);
-        if (connection.readyState === WebSocket.OPEN)
-          connection.close(1011, "server");
-      } finally {
-        state.running = false;
-        if (
-          state.pending &&
-          !state.closed &&
-          connection.readyState === WebSocket.OPEN
-        )
-          void drain(state);
-      }
-    };
-    for (const state of states)
-      cleanups.push(
-        backend.onCommitted(state.scope, () => {
-          state.pending = true;
-          void drain(state);
-        }),
-      );
-    if (connection.readyState !== WebSocket.OPEN) {
-      stop();
-      return;
-    }
-    connection.send(negotiation.response);
-    for (const state of states) {
-      state.pending = true;
-      void drain(state);
-    }
+    if (!open()) return;
+    execute(opened.actions);
     await new Promise<void>((resolve) => {
       connection.once("close", () => resolve());
       connection.once("error", () => resolve());
     });
-    stop();
   } catch (error) {
     const invalid =
       error instanceof EngineError && error.code === "request.invalid";
-    if (connection.readyState === WebSocket.OPEN)
-      connection.close(invalid ? 1002 : 1011, "request.invalid");
+    if (open()) connection.close(invalid ? 1002 : 1011, "request.invalid");
     if (!invalid) onError?.(error);
   } finally {
-    for (const state of states) {
-      state.closed = true;
-      state.pending = false;
+    if (handle !== undefined) {
+      closed();
+      released = true;
+      backend.liveClose(handle);
     }
     for (const cleanup of cleanups) cleanup();
   }
