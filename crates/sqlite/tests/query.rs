@@ -94,7 +94,7 @@ fn readonly_sql_sees_optimistic_rows_and_refuses_write_statements() {
 }
 
 #[test]
-fn transport_pulls_only_subscribed_channels_and_unawaitable_checkpoints_settle() {
+fn transport_pulls_only_subscribed_channels_and_the_receipt_completes_the_push() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = open(&dir.path().join("db"));
     subscribe(&mut c, "book");
@@ -107,22 +107,13 @@ fn transport_pulls_only_subscribed_channels_and_unawaitable_checkpoints_settle()
     let mut cycle = SyncCycle::default();
     let push = cycle.next(&mut c).unwrap().unwrap();
     assert_eq!(push.kind, "push");
-    let receipt = PushReceipt {
-        required_channel: "other".into(),
-        required_cursor: 3,
-        required_checkpoints: vec![ChannelCheckpoint {
-            channel: "other".into(),
-            cursor: 3,
-        }],
-        rejections: vec![],
-    };
+    let receipt = receipt(&mut c, 1, vec![authority(Some("B"), 1)]);
     cycle.complete(&mut c, &receipt.encode().unwrap()).unwrap();
     assert_eq!(
         c.pending_count().unwrap(),
         0,
-        "a checkpoint on a channel nothing pulls cannot be awaited, so the push settles"
+        "the receipt's authority completes the push; no channel is awaited"
     );
-    assert_eq!(table_count(&mut c, "ahead_push_checkpoint"), 0);
     let first = cycle.next(&mut c).unwrap().unwrap();
     assert_eq!(first.kind, "pull");
     let request = PullRequest::decode(first.body.as_bytes()).unwrap();
@@ -142,7 +133,7 @@ fn transport_pulls_only_subscribed_channels_and_unawaitable_checkpoints_settle()
         .unwrap();
     assert!(
         cycle.next(&mut c).unwrap().is_none(),
-        "the unsubscribed checkpoint channel is never pulled"
+        "only subscribed channels are pulled"
     );
 }
 

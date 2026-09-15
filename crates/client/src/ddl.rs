@@ -9,32 +9,37 @@ use std::collections::BTreeMap;
 pub const FRAMEWORK_TABLES: &[&str] = &[
     "ahead_client",
     "ahead_record",
-    "ahead_claim",
     "ahead_subscription",
     "ahead_mutation",
     "ahead_mutation_operation",
     "ahead_mutation_dependency",
     "ahead_mutation_prerequisite",
-    "ahead_push_checkpoint",
     "ahead_rejection",
 ];
+
+/// Framework tables an earlier layout kept and this one refuses to open:
+/// channel claims owned records and push checkpoints settled batches, both
+/// replaced by receipt completion ([#55](https://github.com/zanminwang/ahead/issues/55)).
+pub const LEGACY_TABLES: &[&str] = &["ahead_claim", "ahead_push_checkpoint"];
+
+/// `ahead_client` columns this layout requires beyond the original ones. A
+/// database created before they existed holds pending work under the old
+/// contract; it is refused, never converted or wiped.
+const CLIENT_COLUMNS: &[&str] = &["last_completed_push", "push_models"];
 
 pub const FRAMEWORK_DDL: &str = "
 CREATE TABLE IF NOT EXISTS ahead_client (
   client_id    TEXT PRIMARY KEY,
   next_ordinal INTEGER NOT NULL,
   next_push    INTEGER NOT NULL,
-  generation   INTEGER NOT NULL
+  generation   INTEGER NOT NULL,
+  last_completed_push INTEGER NOT NULL DEFAULT 0,
+  push_models  TEXT
 );
 CREATE TABLE IF NOT EXISTS ahead_record (
   model TEXT NOT NULL, identity TEXT NOT NULL, stamp INTEGER NOT NULL,
   PRIMARY KEY (model, identity)
 );
-CREATE TABLE IF NOT EXISTS ahead_claim (
-  channel TEXT NOT NULL, model TEXT NOT NULL, identity TEXT NOT NULL,
-  PRIMARY KEY (channel, model, identity)
-);
-CREATE INDEX IF NOT EXISTS ahead_claim_record ON ahead_claim (model, identity);
 CREATE TABLE IF NOT EXISTS ahead_subscription (
   channel TEXT PRIMARY KEY, cursor INTEGER NOT NULL
 );
@@ -63,14 +68,44 @@ CREATE TABLE IF NOT EXISTS ahead_mutation_prerequisite (
   key TEXT NOT NULL, error TEXT,
   PRIMARY KEY (ordinal, key)
 );
-CREATE TABLE IF NOT EXISTS ahead_push_checkpoint (
-  push INTEGER NOT NULL, channel TEXT NOT NULL, cursor INTEGER NOT NULL,
-  PRIMARY KEY (push, channel)
-);
 CREATE TABLE IF NOT EXISTS ahead_rejection (
   ordinal INTEGER PRIMARY KEY, name TEXT NOT NULL, code TEXT NOT NULL, detail TEXT
 );
 ";
+
+/// Refuse a database laid out by an earlier runtime before anything is
+/// written to it. Reads only: a refused database is left exactly as found,
+/// pending work included ([Reconciliation](../../../docs/engineering/architecture/client/storage/reconciliation.md)).
+pub fn check_layout<S: ClientStore>(store: &mut S) -> Result<()> {
+    let tables = store.query_committed(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'ahead\\_%' ESCAPE '\\'",
+        &[],
+    )?;
+    let names: Vec<String> = tables
+        .rows
+        .iter()
+        .filter_map(|r| r[0].as_str().map(str::to_owned))
+        .collect();
+    let refuse = |what: &str| {
+        Err(invalid(format!(
+            "this database was created by an earlier Ahead runtime ({what}); it cannot be opened by this one. Open a fresh database; the old file is left untouched"
+        )))
+    };
+    for table in LEGACY_TABLES {
+        if names.iter().any(|n| n == table) {
+            return refuse(&format!("table {table}"));
+        }
+    }
+    if names.iter().any(|n| n == "ahead_client") {
+        let columns = store.query_committed("PRAGMA table_info(ahead_client)", &[])?;
+        for column in CLIENT_COLUMNS {
+            if !columns.rows.iter().any(|r| r[1].as_str() == Some(column)) {
+                return refuse(&format!("ahead_client lacks {column}"));
+            }
+        }
+    }
+    Ok(())
+}
 
 pub fn quote(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))

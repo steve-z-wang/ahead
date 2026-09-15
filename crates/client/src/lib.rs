@@ -1,4 +1,5 @@
 //! Client engine over per-model SQLite tables. No state lives in memory between calls.
+pub mod authority;
 pub mod connection;
 pub mod ddl;
 mod downlink;
@@ -62,6 +63,17 @@ pub struct Mutation {
 }
 fn one() -> u64 {
     1
+}
+/// The read contracts a client of `schema` expects: every model with the
+/// version its generated types read. Declared on every push, pull and
+/// subscribe so receipts, HTTP catch-up and the live stream are served alike
+/// ([#91](https://github.com/zanminwang/ahead/issues/91)).
+pub fn declared_models(schema: &Schema) -> BTreeMap<String, u64> {
+    schema
+        .models
+        .iter()
+        .map(|m| (m.name.clone(), m.version))
+        .collect()
 }
 impl Mutation {
     pub fn new(name: impl Into<String>, operations: Vec<Operation>) -> Self {
@@ -198,6 +210,8 @@ impl PullLedger {
 impl<S: ClientStore> Client<S> {
     pub fn open(mut store: S, schema: Schema) -> Result<Self> {
         schema.validate()?;
+        // An earlier layout is refused before any statement runs against it.
+        ddl::check_layout(&mut store)?;
         store.execute_batch(ddl::FRAMEWORK_DDL)?;
         store.begin()?;
         let opened = (|| {
@@ -214,10 +228,6 @@ impl<S: ClientStore> Client<S> {
                     (id, 1)
                 }
             };
-            // Settling belongs to the opening transaction: it must not consume a
-            // generation, or opening a second handle would fence out the first.
-            let mut changed = BTreeSet::new();
-            Engine::new(&mut store, &schema, &mut changed, false).settle()?;
             Ok::<_, Error>((client_id, generation))
         })();
         let (client_id, generation) = match opened {
@@ -495,9 +505,15 @@ impl<S: ClientStore> Client<S> {
     pub fn cursor(&mut self, channel: &str) -> Result<u64> {
         self.view(|e| Ok(e.cursor(channel)?.unwrap_or(0)))
     }
-    /// Channels currently claiming a record, sorted by name. Test and diagnostic surface.
-    pub fn claims_of(&mut self, key: &RecordKey) -> Result<Vec<String>> {
-        self.view(|e| e.claims(key))
+    /// The record's stamp evidence: the last authoritative version this client
+    /// applied, retained across deletion and unsubscription; 0 when none.
+    pub fn record_stamp(&mut self, key: &RecordKey) -> Result<u64> {
+        let key = self.schema.record_key(&key.model, &key.identity)?;
+        self.view(|e| e.record_stamp(&key))
+    }
+    /// The sequence of the last push a receipt completed.
+    pub fn last_completed_push(&mut self) -> Result<u64> {
+        self.view(|e| e.last_completed_push())
     }
     pub fn subscriptions(&mut self) -> Result<Vec<(String, u64)>> {
         self.view(|e| e.subscriptions())
@@ -505,24 +521,12 @@ impl<S: ClientStore> Client<S> {
     pub fn desired_channels(&mut self) -> Result<BTreeSet<String>> {
         Ok(self.subscriptions()?.into_iter().map(|(c, _)| c).collect())
     }
-    /// How many times the channel set changed since open. Not durable: a
-    /// process restart cannot have a session in flight.
-    /// The read contracts this client expects, straight from its schema: every
-    /// model with the version its generated types read. Declared on every pull
-    /// and subscribe so HTTP catch-up and the live stream are served alike
-    /// ([#91](https://github.com/zanminwang/ahead/issues/91)).
+    /// The read contracts this client expects; see [`declared_models`].
     pub fn declared_models(&self) -> std::collections::BTreeMap<String, u64> {
-        self.schema
-            .models
-            .iter()
-            .map(|m| (m.name.clone(), m.version))
-            .collect()
+        declared_models(&self.schema)
     }
     pub fn subscription_generation(&self) -> u64 {
         self.pulls.generation
-    }
-    pub fn checkpoint_channels(&mut self) -> Result<BTreeSet<String>> {
-        self.view(|e| e.checkpoint_channels())
     }
     pub fn drop_mutation(&mut self, ordinal: u64) -> Result<()> {
         self.write(|e| {
@@ -547,7 +551,10 @@ impl<S: ClientStore> Client<S> {
     pub fn freeze_with_limit(&mut self, max_bytes: usize) -> Result<Option<Vec<u8>>> {
         self.write(|e| e.freeze(max_bytes))
     }
-    pub fn acknowledge(&mut self, sequence: u64, receipt: PushReceipt) -> Result<()> {
+    /// Complete the push in flight from its receipt: the returned authority
+    /// lands, the completed operations leave the queue and what remains
+    /// replays, in one transaction. Nothing waits for a channel.
+    pub fn acknowledge(&mut self, sequence: u64, receipt: PushReceipt) -> Result<ApplyReport> {
         let receipt = PushReceipt::decode(&receipt.encode()?)?;
         self.write(|e| e.acknowledge(sequence, &receipt))
     }
@@ -604,8 +611,7 @@ impl<S: ClientStore> Client<S> {
                 }
                 let phase = match q.push {
                     None => "queued",
-                    Some(push) if e.checkpoints(push)?.is_empty() => "frozen",
-                    Some(_) => "accepted",
+                    Some(_) => "frozen",
                 };
                 let prerequisites: Vec<Value> = q
                     .mutation

@@ -1,28 +1,14 @@
-//! Freeze pushes from queued rows, record receipts, settle the accepted prefix.
+//! Freeze pushes from queued rows and complete them from their receipts.
+use crate::authority::{Disposition, Held};
 use crate::engine::Engine;
 use crate::queue::Queued;
 use crate::store::ClientStore;
-use crate::{Mutation, Operation, OperationKind, mutate::apply_to_row};
+use crate::{ApplyReport, Mutation, Operation, OperationKind, mutate::apply_to_row};
 use ahead_core::{
-    ChannelCheckpoint, PushReceipt, PushRequest, RecordKey, Rejection, Result, canonical_json,
-    invalid, limits,
+    PushReceipt, PushRequest, RecordKey, Rejection, Result, canonical_json, invalid, limits,
 };
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
-
-/// A checkpoint row on this channel marks a batch whose receipt named nothing the
-/// client can await. Its cursor is 0, which every channel has reached, so the
-/// ordered walk settles the batch as soon as every earlier batch has settled
-/// (guarantee A5) and never before. Without the row the batch would read as in
-/// flight and be sent again.
-pub(crate) const NOTHING_AWAITED: &str = "";
-
-fn nothing_awaited() -> ChannelCheckpoint {
-    ChannelCheckpoint {
-        channel: NOTHING_AWAITED.into(),
-        cursor: 0,
-    }
-}
 
 fn keys_of<'a>(
     schema: &ahead_core::Schema,
@@ -42,30 +28,28 @@ impl<S: ClientStore> Engine<'_, S> {
             .and_then(|v| v.as_str().map(str::to_owned))
             .unwrap_or_default())
     }
-    fn request_json(&mut self, push: u64, mutations: &[Queued]) -> Result<Value> {
+    fn request_json(&mut self, push: u64, models: &Value, mutations: &[Queued]) -> Result<Value> {
         let acts: Vec<Value> = mutations
             .iter()
             .map(|q| json!({"ordinal":q.ordinal,"name":q.mutation.name,"version":q.mutation.version,"operations":q.mutation.operations}))
             .collect();
-        Ok(json!({"clientId":self.client_id()?,"batchSequence":push,"mutations":acts}))
+        Ok(
+            json!({"clientId":self.client_id()?,"batchSequence":push,"models":models,"mutations":acts}),
+        )
     }
+    /// The bytes of the push in flight, re-encoded from its rows and its
+    /// frozen declaration: byte for byte what was sent, across restarts.
     pub fn encode_push(&mut self, push: u64) -> Result<Vec<u8>> {
         let mutations: Vec<Queued> = self
             .queued()?
             .into_iter()
             .filter(|q| q.push == Some(push))
             .collect();
-        let request = self.request_json(push, &mutations)?;
+        let models = self
+            .push_models()?
+            .ok_or_else(|| invalid("push in flight has no frozen declaration"))?;
+        let request = self.request_json(push, &models, &mutations)?;
         PushRequest::decode(canonical_json(&request)?.as_bytes())?.encode()
-    }
-    /// The push that was sent and not yet acknowledged, if any.
-    fn in_flight(&mut self) -> Result<Option<u64>> {
-        for push in self.pushes()? {
-            if self.checkpoints(push)?.is_empty() {
-                return Ok(Some(push));
-            }
-        }
-        Ok(None)
     }
     pub fn freeze(&mut self, max_bytes: usize) -> Result<Option<Vec<u8>>> {
         if max_bytes == 0 {
@@ -92,6 +76,7 @@ impl<S: ClientStore> Engine<'_, S> {
             .map(|v| crate::engine::as_u64(&v))
             .transpose()?
             .unwrap_or(1);
+        let models = serde_json::to_value(crate::declared_models(self.schema))?;
         for q in queue.iter().filter(|q| q.push.is_none()) {
             if q.mutation
                 .prerequisites
@@ -115,7 +100,9 @@ impl<S: ClientStore> Engine<'_, S> {
             if !selected.is_empty() {
                 let mut candidate = selected.clone();
                 candidate.push(q.clone());
-                if canonical_json(&self.request_json(next_push, &candidate)?)?.len() > max_bytes {
+                if canonical_json(&self.request_json(next_push, &models, &candidate)?)?.len()
+                    > max_bytes
+                {
                     continue;
                 }
             }
@@ -131,30 +118,38 @@ impl<S: ClientStore> Engine<'_, S> {
         let push = self.allocate_push()?;
         let ordinals: Vec<u64> = selected.iter().map(|q| q.ordinal).collect();
         self.assign_push(&ordinals, push)?;
+        self.set_push_models(&models)?;
         Ok(Some(self.encode_push(push)?))
     }
-    pub fn acknowledge(&mut self, push: u64, receipt: &PushReceipt) -> Result<()> {
+    /// Complete the push in flight from its receipt, all in the caller's
+    /// transaction: stage the returned authority beneath the queue as it was
+    /// sent, record rejections, remove the completed operations, replay what
+    /// remains, and remember the completion. Any failure leaves the frozen
+    /// batch for retry. A duplicate receipt changes nothing.
+    pub fn acknowledge(&mut self, sequence: u64, receipt: &PushReceipt) -> Result<ApplyReport> {
+        let mut report = ApplyReport::default();
+        if receipt.batch_sequence != sequence {
+            return Err(invalid("receipt answers another batch"));
+        }
+        if receipt.client_id != self.client_id()? {
+            return Err(invalid("receipt answers another client"));
+        }
+        if sequence <= self.last_completed_push()? {
+            report.stale = true;
+            return Ok(report);
+        }
+        let Some(push) = self.in_flight()? else {
+            return Err(invalid("unknown batch receipt"));
+        };
+        if push != sequence {
+            return Err(invalid("receipt does not answer the push in flight"));
+        }
+        let schema = self.schema;
         let mutations: Vec<Queued> = self
             .queued()?
             .into_iter()
             .filter(|q| q.push == Some(push))
             .collect();
-        let existing = self.checkpoints(push)?;
-        if !existing.is_empty() {
-            let awaited = self.awaitable(&receipt.required_checkpoints)?;
-            let same = if existing == [nothing_awaited()] {
-                awaited.is_empty()
-            } else {
-                awaited == existing
-            };
-            if !same {
-                return Err(invalid("receipt changed"));
-            }
-            return Ok(());
-        }
-        if mutations.is_empty() {
-            return Err(invalid("unknown batch receipt"));
-        }
         let ordinals: BTreeSet<u64> = mutations.iter().map(|q| q.ordinal).collect();
         if receipt
             .rejections
@@ -163,74 +158,42 @@ impl<S: ClientStore> Engine<'_, S> {
         {
             return Err(invalid("rejection ordinal not in batch"));
         }
-        self.remove_rejected(&receipt.rejections)?;
-        let remaining = self.queued()?.into_iter().any(|q| q.push == Some(push));
-        if !remaining {
-            return Ok(());
-        }
-        let awaited = self.awaitable(&receipt.required_checkpoints)?;
-        if awaited.is_empty() {
-            // Nothing to wait for, but the batch still settles in sequence order
-            // behind any earlier batch that is waiting (guarantee A5).
-            self.insert_checkpoints(push, &[nothing_awaited()])?;
-        } else {
-            self.insert_checkpoints(push, &awaited)?;
-        }
-        self.settle()
-    }
-    /// The checkpoints this client can ever meet: only a subscribed channel has a
-    /// cursor that advances, so a checkpoint on any other channel cannot be awaited
-    /// and is dropped, which settles the push as if the receipt had not named it.
-    fn awaitable(&mut self, checkpoints: &[ChannelCheckpoint]) -> Result<Vec<ChannelCheckpoint>> {
-        let mut awaited = vec![];
-        for cp in checkpoints {
-            if self.cursor(&cp.channel)?.is_some() {
-                awaited.push(cp.clone());
-            }
-        }
-        awaited.sort_by(|a, b| a.channel.cmp(&b.channel));
-        Ok(awaited)
-    }
-    /// Settle the accepted prefix of frozen pushes.
-    pub fn settle(&mut self) -> Result<()> {
-        self.settle_satisfied(&BTreeSet::new())
-    }
-    /// `satisfied` names acknowledged pushes whose last checkpoint row was just
-    /// deleted (an unsubscribe); without it they would read as in flight forever.
-    pub fn settle_satisfied(&mut self, satisfied: &BTreeSet<u64>) -> Result<()> {
-        loop {
-            let Some(push) = self.pushes()?.into_iter().next() else {
-                return Ok(());
-            };
-            let checkpoints = self.checkpoints(push)?;
-            if checkpoints.is_empty() && !satisfied.contains(&push) {
-                return Ok(()); // in flight; nothing later may settle first
-            }
-            for cp in &checkpoints {
-                if self.cursor(&cp.channel)?.unwrap_or(0) < cp.cursor {
-                    return Ok(());
-                }
-            }
-            self.settle_push(push)?;
-        }
-    }
-    pub fn settle_push(&mut self, push: u64) -> Result<()> {
-        let schema = self.schema;
-        let mutations: Vec<Queued> = self
-            .queued()?
-            .into_iter()
-            .filter(|q| q.push == Some(push))
+        let rejected: BTreeSet<u64> = receipt.rejections.iter().map(|r| r.ordinal).collect();
+        let accepted: Vec<&Queued> = mutations
+            .iter()
+            .filter(|q| !rejected.contains(&q.ordinal))
             .collect();
+        // Every record the accepted operations targeted must come back with
+        // its authority: a receipt that omits one cannot complete the batch.
+        let mut covered = BTreeSet::new();
+        for record in &receipt.records {
+            covered.insert(
+                schema
+                    .record_key(&record.model, &record.identity)?
+                    .encoded()?,
+            );
+        }
         let mut wire_rows = BTreeSet::new();
-        let mut affected: BTreeMap<String, RecordKey> = BTreeMap::new();
-        for q in &mutations {
+        for q in &accepted {
             wire_rows.extend(keys_of(schema, q.mutation.operations.iter())?);
+        }
+        if let Some(missing) = wire_rows.iter().find(|k| !covered.contains(*k)) {
+            return Err(invalid(format!(
+                "receipt omits the authority of accepted record {missing}"
+            )));
+        }
+        // Every record the batch touched is rebuilt once the rows are gone.
+        let mut affected: Held = Held::new();
+        for q in &mutations {
             for op in all_ops(&q.mutation) {
                 let key = schema.record_key(&op.model, &op.identity)?;
                 affected.insert(key.encoded()?, key);
             }
         }
-        for q in &mutations {
+        // Accepted local-only companions settle as they always have: folded
+        // into the base of records the server did not report. A record the
+        // receipt covers takes the server's authority instead.
+        for q in &accepted {
             let mut local_ops = q.mutation.companion.clone();
             for op in &q.mutation.companion {
                 if op.op == OperationKind::Delete {
@@ -249,27 +212,48 @@ impl<S: ClientStore> Engine<'_, S> {
             }
             for op in &local_ops {
                 let key = schema.record_key(&op.model, &op.identity)?;
-                if wire_rows.contains(&key.encoded()?) {
+                let encoded = key.encoded()?;
+                if wire_rows.contains(&encoded) || covered.contains(&encoded) {
                     continue;
                 }
                 let mut truth = self.before_get(&key)?;
                 if apply_to_row(&mut truth, op).is_ok() {
                     self.before_set(&key, truth.as_ref())?;
                 }
-                affected.insert(key.encoded()?, key);
+                affected.insert(encoded, key);
             }
         }
-        let ordinals: Vec<u64> = mutations.iter().map(|q| q.ordinal).collect();
-        self.delete_mutations(&ordinals)?;
-        self.delete_checkpoints(push)?;
-        for key in affected.values() {
-            self.rebuild(key)?;
+        // Authority is staged while the queue still says which records hold a
+        // base; equal stamps compare against that base, not the optimism.
+        for record in &receipt.records {
+            match self.stage_authority(record, &mut affected)? {
+                Disposition::Applied => report.applied += 1,
+                Disposition::Older | Disposition::Same => {}
+                Disposition::Conflict { local, incoming } => {
+                    report.conflicts += 1;
+                    report.diagnostics.push(json!({
+                        "model": record.model, "identity": record.identity, "stamp": record.stamp,
+                        "batch": sequence, "local": local, "incoming": incoming,
+                    }));
+                }
+            }
         }
-        Ok(())
+        affected.extend(self.mark_rejected(&receipt.rejections)?);
+        let completed: Vec<u64> = accepted.iter().map(|q| q.ordinal).collect();
+        self.delete_mutations(&completed)?;
+        self.rebuild_held(&affected)?;
+        self.set_last_completed_push(push)?;
+        Ok(report)
     }
     /// Drop rejected mutations and everything whose lifecycle depended on them,
     /// keep a durable record of why, and rebuild the rows they touched.
     pub fn remove_rejected(&mut self, rejections: &[Rejection]) -> Result<()> {
+        let affected = self.mark_rejected(rejections)?;
+        self.rebuild_held(&affected)
+    }
+    /// Record the rejections, drop their mutations and lifecycle dependents,
+    /// and return the records they touched for the caller to rebuild.
+    pub fn mark_rejected(&mut self, rejections: &[Rejection]) -> Result<Held> {
         let schema = self.schema;
         let queue = self.queued()?;
         let mut rejected: BTreeMap<u64, String> = rejections
@@ -311,9 +295,6 @@ impl<S: ClientStore> Engine<'_, S> {
         }
         let ordinals: Vec<u64> = rejected.keys().copied().collect();
         self.delete_mutations(&ordinals)?;
-        for key in affected.values() {
-            self.rebuild(key)?;
-        }
-        Ok(())
+        Ok(affected)
     }
 }
