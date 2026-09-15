@@ -226,4 +226,22 @@ fn field_default_and_record_stamp_round_trip_and_ahead_prefix_is_rejected() {
         json!({"enums":[],"models":[{"name":"ahead_x","identity":["id"],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}}]}]}),
     );
     assert!(bad.is_err());
+    for name in ["sqlite_x", "SQLITE_x", "Ahead_x"] {
+        let reserved = Schema::from_value(
+            json!({"enums":[],"models":[{"name":name,"identity":["id"],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}}]}]}),
+        );
+        assert!(
+            reserved.unwrap_err().to_string().contains("reserved"),
+            "{name} must be refused as reserved"
+        );
+    }
+    for name in ["sqlitex", "Sqlite", "aheadx"] {
+        assert!(
+            Schema::from_value(
+                json!({"enums":[],"models":[{"name":name,"identity":["id"],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}}]}]}),
+            )
+            .is_ok(),
+            "{name} must stay valid"
+        );
+    }
 }

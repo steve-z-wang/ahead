@@ -93,6 +93,14 @@ impl RecordKey {
     }
 }
 
+/// Model names that must not become SQLite tables. `ahead_` is the framework's
+/// own table prefix and `sqlite_` is reserved by SQLite; both are compared
+/// case-insensitively because SQLite table names are.
+pub fn reserved_model_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.starts_with("ahead_") || lower.starts_with("sqlite_")
+}
+
 impl Schema {
     pub fn from_value(value: Value) -> Result<Self> {
         let schema: Self = serde_json::from_value(value)?;
@@ -115,8 +123,13 @@ impl Schema {
             }
         }
         for model in &self.models {
+            if reserved_model_name(&model.name) {
+                return Err(invalid(format!(
+                    "model name {} uses a reserved prefix",
+                    model.name
+                )));
+            }
             if model.name.is_empty()
-                || model.name.starts_with("ahead_")
                 || !names.insert(model.name.as_str())
                 || model.identity.is_empty()
             {

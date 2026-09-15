@@ -76,3 +76,151 @@ fn cli_writes_backend_ts_with_the_requested_runtime_import() {
     assert!(!client.contains("owner"));
     fs::remove_dir_all(root).unwrap();
 }
+
+fn workspace(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    let root = std::env::temp_dir().join(format!("ahead-compiler-{tag}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let input = root.join("input");
+    fs::create_dir_all(&input).unwrap();
+    (root, input)
+}
+
+fn ahead(args: &[&std::ffi::OsStr]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_ahead"))
+        .arg("compile")
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn cli_relocates_errors_into_the_file_that_declares_them() {
+    let (root, input) = workspace("relocate");
+    let out = root.join("out");
+    fs::write(
+        input.join("a.model"),
+        "model Parent {\n id UUID\n @@id(id)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        input.join("b.model"),
+        "model Child {\n id UUID\n parent Parent @reference(via: [missing])\n @@id(id)\n}\n",
+    )
+    .unwrap();
+    let rejected = ahead(&[input.as_os_str(), out.as_os_str()]);
+    assert!(!rejected.status.success());
+    let stderr = String::from_utf8_lossy(&rejected.stderr);
+    assert!(
+        stderr.contains(&format!("{}:3:", input.join("b.model").display())),
+        "{stderr}"
+    );
+    assert!(stderr.contains("unknown reference field"), "{stderr}");
+    fs::write(
+        input.join("b.model"),
+        "model Child {\n id UUID\n @@id(id)\n}\nbogus Stuff {}\n",
+    )
+    .unwrap();
+    let rejected = ahead(&[input.as_os_str(), out.as_os_str()]);
+    let stderr = String::from_utf8_lossy(&rejected.stderr);
+    assert!(
+        stderr.contains(&format!("{}:5:", input.join("b.model").display())),
+        "{stderr}"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cli_output_is_deterministic() {
+    let (root, input) = workspace("determinism");
+    fs::copy(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/compiler/relations.model"
+        ),
+        input.join("relations.model"),
+    )
+    .unwrap();
+    let first = root.join("first");
+    let second = root.join("second");
+    assert!(
+        ahead(&[input.as_os_str(), first.as_os_str()])
+            .status
+            .success()
+    );
+    assert!(
+        ahead(&[input.as_os_str(), second.as_os_str()])
+            .status
+            .success()
+    );
+    let mut names: Vec<_> = fs::read_dir(&first)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    names.sort();
+    assert!(names.len() >= 7, "{names:?}");
+    for name in names {
+        assert_eq!(
+            fs::read(first.join(&name)).unwrap(),
+            fs::read(second.join(&name)).unwrap(),
+            "{name:?} differs between runs"
+        );
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cli_refuses_misuse_of_the_mutation_history() {
+    let (root, input) = workspace("history");
+    let out = root.join("out");
+    fs::write(
+        input.join("test.model"),
+        "model A { id UUID @@id(id) } mutation Save { a A.create @@version(2) }",
+    )
+    .unwrap();
+    let history = root.join("history.json");
+    let missing = ahead(&[
+        input.as_os_str(),
+        out.as_os_str(),
+        "--mutation-history".as_ref(),
+        history.as_os_str(),
+    ]);
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("missing mutation history"));
+    assert!(!out.exists(), "a refused compile must not write outputs");
+    let not_first = ahead(&[
+        input.as_os_str(),
+        out.as_os_str(),
+        "--mutation-history".as_ref(),
+        history.as_os_str(),
+        "--initialize-mutation-history".as_ref(),
+    ]);
+    assert!(!not_first.status.success());
+    assert!(String::from_utf8_lossy(&not_first.stderr).contains("begin at version 1"));
+    fs::write(
+        input.join("test.model"),
+        "model A { id UUID @@id(id) } mutation Save { a A.create }",
+    )
+    .unwrap();
+    assert!(
+        ahead(&[
+            input.as_os_str(),
+            out.as_os_str(),
+            "--mutation-history".as_ref(),
+            history.as_os_str(),
+            "--initialize-mutation-history".as_ref(),
+        ])
+        .status
+        .success()
+    );
+    assert!(history.exists());
+    let again = ahead(&[
+        input.as_os_str(),
+        out.as_os_str(),
+        "--mutation-history".as_ref(),
+        history.as_os_str(),
+        "--initialize-mutation-history".as_ref(),
+    ]);
+    assert!(!again.status.success());
+    assert!(String::from_utf8_lossy(&again.stderr).contains("already exists"));
+    fs::remove_dir_all(root).unwrap();
+}
