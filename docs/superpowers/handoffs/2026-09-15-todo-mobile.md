@@ -2,7 +2,9 @@
 
 ## Copyable agent prompt
 
-Implement [Ahead issue #31](https://github.com/zanminwang/ahead/issues/31) using these documents, in order:
+**Scope correction:** Work is split into two issues. [React Native support #100](https://github.com/zanminwang/ahead/issues/100) blocks [To-do demo #31](https://github.com/zanminwang/ahead/issues/31). Complete #100 using `docs/superpowers/plans/2026-09-15-react-native-support.md` first. If already working from the original handoff, preserve current changes and separate SDK work under #100; do not continue treating both as one demo issue.
+
+After #100 supplies its verified integration, implement #31 using these documents, in order:
 
 1. `docs/superpowers/specs/2026-09-15-todo-mobile-design.md`
 2. `docs/superpowers/plans/2026-09-15-todo-mobile.md`
@@ -19,7 +21,9 @@ Read `AGENTS.md` and inspect branch/status first. Preserve the planning document
 
 The user has settled the product scope: **React Native + TypeScript, Add task and Done only**. Two independent phones use Alice and Bob identities with simple initial avatars and show the same shared task list. Exactly two business tables: `User(id, name)` and `Todo(id, title, done, createdById)`. Creator is not assignee. There are no replies, assignment, edit/delete controls, multiple lists, or extra dashboard UI. The app renders one phone screen; the marketing demonstration shows two app instances side by side.
 
-Use the existing Rust/SQLite engine, generated clients and TypeScript/Prisma/PostgreSQL backend. Include the required React Native native carrier and JS host adaptation: today's Node SDK is not directly mobile-compatible. Use an Expo development build; iOS is the first required target. Preserve Node transaction/savepoint behavior and existing Dart coverage. Check whether #58's Rust live-session migration has landed; use current implemented APIs, not a planned command family.
+Use the existing Rust/SQLite engine, generated clients and TypeScript/Prisma/PostgreSQL backend. Consume the React Native native carrier and client integration delivered by #100; do not implement them inside #31. Use an Expo development build; iOS is the first required target. Preserve Node transaction/savepoint behavior and existing Dart coverage. Check whether #58's Rust live-session migration has landed; use current implemented APIs, not a planned command family.
+
+**Implementation simplicity:** #100 provides the necessary React Native adapter; #31 consumes it. Reuse existing code and extract shared helpers only for concrete needs. A generic client factory, broad SDK refactor, or complete Node raw-API parity is not required. Preserve transaction/offline/sync correctness and their verification. This clarification supersedes the earlier plan's mandatory shared-runtime extraction.
 
 Work through the plan and verify each deliverable. The decisive mobile test uses two separate simulator installations/databases/client IDs, actual backend synchronization, offline add-then-done, app termination/relaunch while disconnected, and convergence after reconnect. Build with embedded JavaScript for the offline-relaunch test. A mockup, SDK pause alone, Node-only tests, or native link success does not complete that test.
 
@@ -29,6 +33,7 @@ Proceed with implementation within this scope. Keep user updates concise. Finish
 
 ## State at preparation
 
+- #100 owns React Native support and formally blocks #31.
 - #31 exists and owns the mobile demo; its previous Flutter/assignment/CRUD description is superseded by this spec.
 - #59 owns browser/WASM/runtime/storage/transport dependencies.
 - #72 is the web version of this same demo. #31 and #59 block #72; mobile is not blocked by browser work.

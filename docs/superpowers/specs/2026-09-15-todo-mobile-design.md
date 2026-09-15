@@ -6,6 +6,8 @@ Tracking: [mobile #31](https://github.com/zanminwang/ahead/issues/31), [browser 
 
 ## 1. Goal and scope
 
+**Delivery order:** [React Native support #100](https://github.com/zanminwang/ahead/issues/100) blocks [demo #31](https://github.com/zanminwang/ahead/issues/31). #100 owns native carrier, SDK/transport adaptation, and independent iOS runtime validation. #31 consumes that supported integration and owns the To-do schema/backend/UI, example migration, and application-level demonstration.
+
 Replace `examples/rust-round-trip` with a small, understandable collaborative To-do example at `examples/todo`. A developer should be able to understand the schema, run two independent phones, and observe local writes, durable offline work, and synchronization through an application-owned backend.
 
 The user selected React Native with TypeScript and reduced the application to **Add task and Done**. Two phones show the same shared list. Their headers identify different signed-in demo participants with avatars. The two-card presentation belongs to the demonstration; an installed app renders one screen.
@@ -103,6 +105,8 @@ Authenticate only the two demo identities. Loaders allow those identities to rea
 
 ## 5. Architecture and ownership
 
+The platform requirements below belong to #100 and describe what #31 consumes. They are not SDK implementation tasks for the demo agent.
+
 ```text
 React Native / TypeScript             TypeScript / Node
 generated client                     generated backend
@@ -114,13 +118,13 @@ Expo iOS string bridge                Prisma transaction
 Rust RuntimeHost + SQLite             PostgreSQL
 ```
 
-The existing [JS client](../../../packages/client-js/index.mts) imports `node:module`, `node:events`, `node:async_hooks`, and `ws`. Installing it in React Native is insufficient. The implementation includes a native carrier and platform adaptation; it must not substitute an in-memory store, REST-only UI, Node shim bundle, or custom synchronization engine.
+The existing [JS client](../../../packages/client-js/index.mts) imports `node:module`, `node:events`, `node:async_hooks`, and `ws`. Installing it in React Native is insufficient. Prerequisite #100 supplies a native carrier and platform adaptation; it must not substitute an in-memory store, REST-only UI, Node shim bundle, or custom synchronization engine.
 
 Use a small native carrier over [RuntimeHost](../../../bindings/common/src/lib.rs). Dispatch SQLite work on a serial background queue; preserve UTF-8, free every Rust-owned returned string exactly once, and convert failures into rejected promises. Open each database in persistent application storage. Do not generate a new client identity on every launch or reuse one identity across independent installations.
 
-Extract reusable TypeScript client orchestration behind explicit native-call, event, transaction, and transport interfaces. Keep Node's existing entry point and transaction/savepoint behavior unchanged. React Native uses its own HTTP/WebSocket carrier and transaction adapter. The initial mobile adapter supports the generated read/watch/mutation and transaction surface needed by this example; do not advertise full Node raw-API parity. It need not expose raw nested savepoints. It must still reject operations after transaction completion, drain queued work before rollback, detect unawaited operations, and keep transactions isolated.
+Keep the implementation small: first build the React Native adapter needed by this demo. Reuse existing platform-neutral code directly; extract a shared helper only when a concrete Node/mobile use requires it. A generic client factory or broad SDK refactor is not a prerequisite. Keep Node's existing entry point and transaction/savepoint behavior unchanged. React Native uses its own HTTP/WebSocket carrier and transaction adapter. The initial mobile adapter supports the generated read/watch/mutation and transaction surface needed by this example; do not advertise full Node raw-API parity. It need not expose raw nested savepoints. It must still reject operations after transaction completion, drain queued work before rollback, detect unawaited operations, and keep transactions isolated.
 
-Rust owns storage, queueing, receipts, replay, cursors, and connection scheduling. Follow [architecture](../../engineering/architecture.md), [guarantees](../../engineering/guarantees.md), and the [live-session decision](../../engineering/architecture/client/connection/controller/live-session.md). At the planning baseline, the Rust `LiveSession` migration in #58 is a design rather than an available command family. Reuse it if it has landed when implementation begins. Otherwise share current host orchestration between Node and mobile; avoid a third independent copy or making #31 silently implement all of #58.
+Rust owns storage, queueing, receipts, replay, cursors, and connection scheduling. Follow [architecture](../../engineering/architecture.md), [guarantees](../../engineering/guarantees.md), and the [live-session decision](../../engineering/architecture/client/connection/controller/live-session.md). At the planning baseline, the Rust `LiveSession` migration in #58 is a design rather than an available command family. Reuse it if it has landed when implementation begins. Otherwise adapt the existing host orchestration with the smallest necessary platform boundary. Avoid copying a whole SDK or making #31 silently implement all of #58; explain any shared-code extraction in terms of the behavior it enables.
 
 HTTP push and post-subscription HTTP catch-up accompany WebSocket live delivery. Preserve cancellation, stale-session invalidation, bounded buffering, and catch-up on overflow. Do not replace live delivery with periodic polling. Verify authentication on the actual React Native WebSocket implementation.
 

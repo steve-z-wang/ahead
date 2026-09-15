@@ -4,17 +4,20 @@
 
 **Goal:** Deliver issue #31: a minimal React Native To-do app that demonstrates real Ahead collaboration on two independent iOS clients.
 
-**Architecture:** One generated User/Todo schema, one TypeScript/Prisma/PostgreSQL backend, and one React Native app using the existing Rust/SQLite engine through an Expo native carrier. Share platform-neutral client orchestration with Node; preserve its public behavior. Move the old example's regression harness into integration fixtures before deleting the public example.
+**Architecture:** One generated User/Todo schema, one TypeScript/Prisma/PostgreSQL backend, and one React Native app using the existing Rust/SQLite engine through an Expo native carrier. Consume the verified React Native client/native module from #100; SDK implementation is outside this demo issue. Move the old example's regression harness into integration fixtures before deleting the public example.
 
 **Tech Stack:** React Native, TypeScript, Expo development build/local iOS module, Rust, SQLite, Node, Prisma, PostgreSQL. Existing repository versions remain unchanged unless the mobile dependency resolver requires an isolated app toolchain adjustment.
 
 ## Global constraints
+
+- **Blocked by [React Native support #100](https://github.com/zanminwang/ahead/issues/100).** Complete SDK/native integration and its iOS validation first, then execute this demo plan.
 
 - Source of requirements: [design spec](../specs/2026-09-15-todo-mobile-design.md).
 - Use React Native with TypeScript. First required target: two independent iOS simulator installations.
 - Exactly two business models: `User` and `Todo`; one shared channel: `todo:demo`.
 - UI actions: Add task and Done only. No assign, replies, edit/delete, filters, counters, or always-visible diagnostics.
 - Use an Expo development build; do not rely on Expo Go or Metro for offline relaunch evidence.
+- Keep implementation simple: no mandatory generic client factory or broad SDK refactor; extract shared helpers only for a concrete need.
 - Preserve the existing Rust sync contract and Node/Dart regression coverage. No custom sync engine, periodic polling, or in-memory substitute.
 - Keep repository documentation in English. Keep video production assets under `marketing/`.
 - Scope excludes browser/WASM (#59/#72), Android verification, production login, deployment, and video production.
@@ -29,11 +32,7 @@ Paths below are relative to the repository root. New names are implementation ta
 | Shared example | `examples/todo/models/todo.model`, `prisma/schema.prisma`, `server.mts`, `seed.mts`, `generate.sh`, `run.sh`, `package.json`, `package-lock.json`, `README.md` | Schema, backend, launch, repeatable seed, developer guide |
 | Generated code | `examples/todo/generated/node/`, `examples/todo/generated/mobile/` | Compiler output from the same schema with different runtime imports |
 | Mobile app | `examples/todo/mobile/App.tsx`, `src/todo.ts`, `src/config.ts`, `src/useTodos.ts`, `src/TodoScreen.tsx`, `app.config.ts`, `metro.config.js`, `package.json`, `package-lock.json`, `tsconfig.json` | Identity/configuration, domain adapter, local watch, one screen, build configuration |
-| Native carrier | `bindings/mobile/Cargo.toml`, `bindings/mobile/src/lib.rs`, `bindings/mobile/include/ahead_mobile.h`, `bindings/mobile/build-ios.sh`; root `Cargo.toml` and `Cargo.lock` | Rust string ABI and simulator static library |
-| Expo module | `examples/todo/mobile/modules/ahead-native/ios/AheadNativeModule.swift`, `ios/AheadNative.podspec`, `expo-module.config.json`, `index.ts` | Serial background dispatch, owned strings, persistent data path, promise boundary |
-| Shared TS host | `packages/client-js/runtime.mts`, `runtime-types.mts`, `events.mts`; modify `index.mts`, `live.mts`, `transaction.mts` | Extract orchestration and inject platform services without changing Node behavior |
-| Mobile SDK adapter | `packages/client-react-native/index.ts`, `native.ts`, `transaction.ts`, `live.ts`, `package.json`, `README.md` | Generated client runtime entry point, explicit transaction scope, RN transport |
-| Tests | `integration/bindings/client-react-native/transaction.test.mjs`, `live.test.mjs`; `integration/e2e/todo.test.mjs`, `todo-run.sh`; `integration/platform/run_todo_ios_smoke.sh` | Host adapter behavior, real backend demo behavior, actual mobile runtime |
+| Tests | `integration/e2e/todo.test.mjs`, `todo-run.sh`; `integration/platform/run_todo_ios_smoke.sh` | Real backend demo behavior and actual mobile application runtime |
 | Legacy fixture | `integration/e2e/fixtures/round-trip/` | Existing Entry/Edit application and generated code used by regression tests |
 | Migration consumers | `scripts/test.sh`, `integration/e2e/run.sh`, `round-trip.test.mjs`, `dart_client.dart`, `dart_live_client.dart`, `website/scripts/check_examples.py`, `tsconfig.json` | Keep verification runnable after path changes |
 | Public docs | `website/docs/getting-started.md`, affected schema/backend/frontend pages, `website/docs/api-index.md`, `website/docs/frontend/platforms.md`, `website/mkdocs.yml` | Actual demo instructions and supported runtime/API surface |
@@ -131,112 +130,25 @@ Insert through `tx.todo.create`; translate only a proven task-primary-key confli
 - [ ] Add tests for whitespace rejection, invalid creator, initial done=true, unknown identity, missing task, same-ID distinct create, duplicate frozen-request retry, offline add-then-done, and two opposing completion operations accepted in each controlled commit order. Include a second client adding a different task while the first is offline. Verify rollback and persisted receipts through PostgreSQL.
 - [ ] Run `bash integration/e2e/todo-run.sh`. Expected: all named scenarios pass through real Rust clients, real HTTP/WebSocket, and PostgreSQL. Commit the backend and automated scenario harness.
 
-## Task 3: Add the iOS carrier and prove persistent native calls
+## Task 3: Consume the verified React Native integration
 
-**Files:** create `bindings/mobile/*`, the Expo app scaffolding/configuration, and `mobile/modules/ahead-native/*`; modify root Cargo workspace/lockfile.
+**Prerequisite:** [#100](https://github.com/zanminwang/ahead/issues/100) must deliver its supported API and iOS runtime evidence first. Its implementation is tracked in the [separate SDK plan](2026-09-15-react-native-support.md).
 
-**Consumes:** `RuntimeHost::call(serde_json::Value) -> Result<serde_json::Value>` and the client JSON contract in the binding architecture document.
+- [ ] Confirm #100's verified revision, generated runtime import path, native module installation steps, and supported API surface.
+- [ ] Scaffold the To-do Expo app using that integration's documented dependency versions and build configuration.
+- [ ] Install/reuse the native module and client package. Do not implement a second carrier, transport, or generic runtime in this demo.
 
-**Produces:** Expo module `AheadNative` with `clientCall(request: string): Promise<string>` and `databasePath(name: string): Promise<string>`. Successful `clientCall` returns the unwrapped RuntimeHost response JSON, like Node's carrier; Rust/ABI failures reject. The database path is persistent and stable across launches.
+## Task 4: Verify demo integration with the supported SDK
 
-- [ ] Scaffold a blank TypeScript Expo app and local iOS module using the official [Expo local-module guide](https://docs.expo.dev/modules/get-started/). Resolve the compatible Expo/React Native/React set once, pin it in the app lockfile, and record versions and Xcode/iOS target in the README. Do not guess current versions or upgrade the root workspace as part of scaffolding.
-- [ ] Create a `staticlib` Rust crate using existing workspace dependency conventions. Start from the small C carrier in `bindings/dart/src/lib.rs`, with symbols renamed `ahead_mobile_call` and `ahead_mobile_free`. Keep panic catching, null/UTF-8/JSON validation, and the process host mutex. This adds a carrier; it must not alter Dart's ABI. Publish this header:
-
-```c
-#ifndef AHEAD_MOBILE_H
-#define AHEAD_MOBILE_H
-char *ahead_mobile_call(const char *input);
-void ahead_mobile_free(char *output);
-#endif
-```
-
-- [ ] Bind the C carrier through an Expo Swift `AsyncFunction` executed on a dedicated serial background queue. Copy the output string before `ahead_mobile_free`; use `defer` to free it on every decode/error path. Decode `{ok,result,error}` and return serialized `result` only when `ok` is true. Do not expose the C pointer or block the main UI thread. The TS-facing contract is:
-
-```ts
-export interface AheadNativeModule {
-  clientCall(request: string): Promise<string>;
-  databasePath(name: string): Promise<string>;
-}
-```
-
-- [ ] Implement `databasePath` using Application Support; accept a basename only and create its directory. Use one stable name per configured demo user. Add iOS static-library build/link settings and Expo module autolinking; support the selected simulator architecture first. Document device slices as unverified until built and exercised.
-- [ ] In a diagnostic harness inside the native app, send `open`, local transaction/create, `commit`, `close`, `open`, and `query`; assert the row survives. Test malformed JSON, failed open, rollback, and closed-handle rejection. Terminate/relaunch once with a committed row. These assertions must invoke the actual carrier rather than a JS mock.
-- [ ] Build and run using the generated local app's `ios` command, backed by `expo run:ios`. Expected: linked Rust library, successful native promise calls, persistent row after relaunch, no leaked output buffers in inspected error paths. Commit the carrier/scaffold with actual command/toolchain evidence.
-
-## Task 4: Make the generated TypeScript client usable on React Native
-
-**Files:** shared TS host files and `packages/client-react-native/*` from the file map; tests in `integration/bindings/client-react-native/`.
-
-**Consumes:** native carrier from Task 3, existing generated runtime surface, current Node connection driver and HTTP/live contracts.
-
-**Produces:** mobile `Client` plus `Connection`, `ConnectionOptions`, `ServerOptions`, and `RecordValue` exports required by generated `client.ts`. A shared client-class factory accepts platform dependencies. Node still exports its original API; mobile explicitly documents its supported subset.
-
-- [ ] Move platform-neutral client orchestration out of `packages/client-js/index.mts` into `runtime.mts`, preserving behavior. Use this internal dependency boundary (implement it once in `runtime-types.mts`):
-
-```ts
-export type RecordValue = Record<string, unknown>;
-export type NativeCall = (request: string) => Promise<string>;
-export interface Events {
-  on(name: string, listener: () => void): void;
-  off(name: string, listener: () => void): void;
-  emit(name: string): void;
-  removeAllListeners(): void;
-}
-export interface TransactionPort {
-  read(model: string, identity: object): Promise<RecordValue | null>;
-  querySpec(model: string, query?: {
-    filter?: RecordValue;
-    orderBy?: { field: string; direction: "ascending" | "descending" }[];
-    limit?: number;
-  }): Promise<RecordValue[]>;
-  related(model: string, identity: object, relation: string): Promise<RecordValue | null>;
-  referencing(model: string, identity: object, source: string, relation: string): Promise<RecordValue[]>;
-  mutate(mutation: object): Promise<number>;
-  direct(operation: object): Promise<unknown>;
-  finish(): Promise<void>;
-}
-export interface ServerConnection {
-  push(kind: string, body: string, signal?: AbortSignal): Promise<string>;
-  stream(
-    subscription: { scopes: string[] },
-    apply: (page: object) => Promise<void>,
-    signal: AbortSignal,
-    catchUp: () => Promise<void>,
-  ): Promise<void>;
-}
-export interface ClientPlatform<Tx extends TransactionPort> {
-  nativeCall: NativeCall;
-  createEvents(): Events;
-  createTransaction(send: (request: RecordValue) => Promise<any>): Tx;
-  createServerConnection(options: {
-    url: string; token: string | (() => string | Promise<string>);
-  }): ServerConnection;
-}
-```
-
-Use `createClientClass<Tx extends TransactionPort>(platform: ClientPlatform<Tx>)` to retain each entry point's transaction type. Node injects the existing `Transaction`, N-API carrier, and `ws` transport. The mobile entry point injects the Expo carrier, mobile transaction, and RN transport. If newer main already offers this boundary, reuse it rather than introducing a parallel one.
-
-- [ ] Implement a small local event bus in `events.mts` using a map of listener sets; emit over a snapshot so unsubscribe during an event is safe. Move `strictJson` to a platform-neutral module or export it from `runtime-types.mts`; ensure generated mobile imports never load `node:async_hooks` transitively.
-- [ ] Implement mobile transactions with an explicit object scope, serialized command queue, closed flag, outstanding-operation count, and first-failure retention. Copy the existing transaction queue/finish rules, not its AsyncLocalStorage mechanism. Prefix its native operations with `transaction: true`. The shared client's exclusive queue brackets callback execution with begin/commit or rollback. Do not expose raw nested savepoints in the mobile adapter. Node's savepoint support and types must remain intact.
-- [ ] Add transaction tests: thrown callback rolls back; caught native failure still prevents commit; forgotten await prevents commit; queued operations drain before rollback; retained transaction object rejects after finish; concurrent top-level transactions serialize; external reads cannot see partial writes. Run the same generated read/mutate usage through the mobile port.
-- [ ] Implement RN HTTP via native fetch and WS via native WebSocket. Preserve bearer auth on both paths, subscribe acknowledgement before catch-up, abort on close/pause, bounded page buffering, overflow-triggered catch-up, and generation checks. RN sockets lack `ws.pause/resume/terminate`; use their actual close/event API, invalidate late callbacks, and keep recovery bounded. Do not polyfill `ws` or buffer an unlimited stream.
-- [ ] Add transport tests for ack ordering, cancellation during token resolution and catch-up, stale pages after subscription changes, duplicate/overlapping pages, buffer overflow, and reconnect. Verify HTTP is idle after initial catch-up during ordinary streamed updates. If #58 is implemented at execution time, drive the Rust live commands instead of preserving obsolete host logic.
-- [ ] Run the adapter tests, existing Node tests, and generated type checks:
-
-```sh
-npm run typecheck
-node --test integration/bindings/client-js/*.test.mjs
-node --test integration/bindings/client-react-native/*.test.mjs
-bash integration/generated-api/verify.sh
-```
-
-Add a React Native Metro bundle check as part of the app build: there must be no imports of `node:*`, the N-API binary, or the Node `ws` package. Expected: old behavior preserved and mobile generated code typechecks/bundles. Commit this separately from UI changes.
+- [ ] Generate the Todo mobile client against #100's runtime entry point and typecheck/bundle the app.
+- [ ] Run a local open/query/close through the installed SDK and verify the generated mutation imports resolve.
+- [ ] If a missing SDK behavior prevents integration, report it against #100; do not silently expand this demo into SDK development.
 
 ## Task 5: Implement the minimal screen on the real client
 
 **Files:** `mobile/src/config.ts`, `todo.ts`, `useTodos.ts`, `TodoScreen.tsx`, `App.tsx`; app config/build scripts and README.
 
-**Consumes:** generated mobile `GeneratedClient`, `Todo` / `User` types, Expo native path and UUID generator, Task 2's backend.
+**Consumes:** generated mobile `GeneratedClient`, `Todo` / `User` types, #100's documented native path API, an Expo-compatible UUID generator, and Task 2's backend.
 
 **Produces:** one screen per installed application; real local watches and writes. Define the application domain interface in `src/todo.ts`:
 
