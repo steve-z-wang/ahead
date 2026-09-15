@@ -32,4 +32,4 @@ Code: resolution in [compiler/lib.rs](../../../../crates/compiler/src/lib.rs); d
 
 ## 11. Risks and Technical Debt
 
-- **Accepted limitation:** `onTargetDelete` is a client-side rule. The server runtime has no relation handling; a handler must delete children itself, and the client's cascaded deletes never reach it. Evidence: [server/lib.rs](../../../../crates/server/src/lib.rs) never reads `relations`. **To confirm:** whether the schema reference should tell authors this explicitly.
+- **Accepted limitation:** `onTargetDelete` is a client-side rule. The server runtime has no relation handling; a handler must delete children itself, and the client's cascaded deletes never reach it. Evidence: [server/lib.rs](../../../../crates/server/src/lib.rs) never reads `relations`. Stated for authors in the [schema reference](../../../../website/docs/schema/reference.md#relations) and [What your backend owns](../../../../website/docs/backend/api.md#what-your-backend-owns).

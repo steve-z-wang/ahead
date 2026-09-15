@@ -50,7 +50,7 @@ Dart output imports `package:ahead/ahead.dart`. Commit the history used to gener
 | `T?` | Nullable type | Nullable type | Field can be null |
 | `T[]` | Array | List | List of scalar/enum values |
 
-`@@id(field,...)` defines identity, including composite keys. Identity fields must be nonnullable. Model names starting with `ahead_` or `sqlite_` (in any letter case) are reserved and refused. `@@unique(field,...)` declares a unique group. Generated patches exclude identity fields. Complete records contain all declared fields, including nullable ones; an optional patch field is a separate concept.
+`@@id(field,...)` defines identity, including composite keys. Identity fields must be nonnullable. Model names starting with `ahead_` or `sqlite_` (in any letter case) are reserved and refused. `@@unique(field,...)` declares a unique group that the client's local database enforces; the server does not check it, so your application database schema must carry its own constraints ([What your backend owns](../backend/api.md#what-your-backend-owns)). Generated patches exclude identity fields. Complete records contain all declared fields, including nullable ones; an optional patch field is a separate concept.
 
 TypeScript omission leaves a patch field unchanged; null clears a nullable field. Dart uses `Present<T>` to distinguish supplied values from omission. Generated TypeScript is intended for `exactOptionalPropertyTypes`.
 
@@ -70,7 +70,7 @@ model Comment {
 }
 ```
 
-A reference names the local fields matching the target identity. `onTargetDelete` accepts `none` (default) or `delete`. Inverse declarations generate navigation without storing another copy of the relationship. Singular inverses require a unique foreign key. Named references/inverses can disambiguate multiple relations; see the [parser tests](https://github.com/zanminwang/ahead/blob/main/crates/compiler/tests/compiler.rs) for validated examples.
+A reference names the local fields matching the target identity. `onTargetDelete` accepts `none` (default) or `delete`. The cascade runs on the client only: deleting a `Book` locally deletes its `Comment` rows locally, and those deletes are never sent. A handler that deletes a book must delete its comments itself and notify their channels ([What your backend owns](../backend/api.md#what-your-backend-owns)). Inverse declarations generate navigation without storing another copy of the relationship. Singular inverses require a unique foreign key. Named references/inverses can disambiguate multiple relations; see the [parser tests](https://github.com/zanminwang/ahead/blob/main/crates/compiler/tests/compiler.rs) for validated examples.
 
 ## Mutations
 
@@ -89,7 +89,7 @@ mutation Edit {
 | `entry Entry.delete?` | Optional operation |
 | `entries Entry.delete[]` | List of operations |
 
-Builders emit operations in declared slot order. Slot bindings can connect operations; prerequisites and `@@sequence` specify dependencies. See [advanced declarations](define.md#relations-prerequisites-and-ordering) and [compiler tests](https://github.com/zanminwang/ahead/blob/main/crates/compiler/tests/compiler.rs). The generator does not implement your backend business logic or host prerequisite callbacks.
+Builders emit operations in declared slot order. Slot bindings can connect operations; prerequisites and `@@sequence` specify dependencies. A prerequisite argument must be `self` (the annotated field's value); no other expression is accepted, and prerequisites are satisfied on the client, never seen by the backend. See [advanced declarations](define.md#relations-prerequisites-and-ordering) and [compiler tests](https://github.com/zanminwang/ahead/blob/main/crates/compiler/tests/compiler.rs). The generator does not implement your backend business logic or host prerequisite callbacks.
 
 ## History and compatibility
 

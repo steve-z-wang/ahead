@@ -37,6 +37,6 @@ Tests read, not executed.
 
 ## 11. Risks and Technical Debt
 
-**Accepted limitation.** `self` is the only argument expression. The compiler message says "currently"; no issue tracks an extension.
+**Accepted limitation.** `self` is the only argument expression. The compiler message says "currently"; no issue tracks an extension. Stated for authors in the [schema reference](../../../../website/docs/schema/reference.md#mutations).
 
 **Potential risk.** The Rust API accepts opaque prerequisite keys; a non-JSON key has no `name`, so the SDK runner throws `Missing prerequisite handler` and stops. Affects only Rust callers that also use the SDK runner.
