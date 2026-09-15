@@ -27,9 +27,9 @@ Code: [client-js/transport.mts](../../../../../packages/client-js/transport.mts)
 ## 10. Quality Requirements
 
 - **Cancellation ends a stalled token, an in-flight request and an opening handshake, and a token that resolves late cannot start a request.** Evidence: [live.test.mjs](../../../../../integration/bindings/client-js/live.test.mjs) `live transport cancellation does not wait for a stalled token`, `close cancels opening handshake…`, `client close abandons a stalled live token…`; [live_test.dart](../../../../../packages/dart/test/live_test.dart) `cancel push before token resolution prevents any later HTTP request`, `HTTP catch-up cancellation ends stalled token and in-flight response`.
-- **Overflow preserves in-flight HTTP progress and converges on the latest head.** Evidence: `bounded receive overflow preserves in-flight HTTP progress and recovers the latest head`.
+- **Overflow preserves in-flight HTTP progress and converges on the latest head.** Evidence: `bounded receive overflow preserves in-flight HTTP progress and recovers the latest head`; [live_test.dart](../../../../../packages/dart/test/live_test.dart) `bounded receive buffer (128 pages) overflows into recovery without restarting the in-flight HTTP catch-up` for the page bound and `bounded receive buffer (8 MiB) overflows on ten large pages without restarting the in-flight HTTP catch-up` for the byte bound.
 
-Tests read, not executed.
+Tests read, not executed, except the live suites cited for overflow, run 2026-09-15.
 
 ## 11. Risks and Technical Debt
 
