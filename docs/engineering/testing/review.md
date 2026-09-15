@@ -25,12 +25,10 @@ Only expectations involving undecided behavior must wait for the owning decision
 2. **Defects with reproductions waiting to become regressions.** [#33](https://github.com/zanminwang/ahead/issues/33) (direct write on a pending create; the random direct-write run stays ignored until fixed) and [#32](https://github.com/zanminwang/ahead/issues/32) (page from a previous subscription; the sim repro is ignored). Semantic compiler errors reporting end-of-file ([#48](https://github.com/zanminwang/ahead/issues/48), [Validate §11](../architecture/compiler/validate.md)) and `Model.update<>` compiling but never succeeding ([#49](https://github.com/zanminwang/ahead/issues/49)) need focused regressions with their fixes. The existing fix for [#33](https://github.com/zanminwang/ahead/issues/33) is [PR #42](https://github.com/zanminwang/ahead/pull/42); do not duplicate that implementation.
 3. **Missing tests for decided behavior, in rough order of risk.**
    - Reconciliation with a populated queue: frozen bytes unchanged after an additive change (P4 and the reconciliation contract).
-   - The no-polling consequence: push succeeds while the upgrade is refused, pending does not settle, the lane retries ([Connection](integration/connection.md)).
    - Batching bounds: the 20-mutation cap and the zero byte budget; `drop_mutation` refusing a frozen mutation.
    - HTTP status mapping: `403`, `409` (gap, overlap, unsupported version with its fields), `404`, `405`, `413`; upgrade refusals and `1011` on drain error.
    - Core value rules with no assertion: `dateTime` and `float` normalization, enum value validation, list element and nullability rules, push-batch size boundaries.
    - Compiler: determinism (compile twice), multi-file error relocation, `--initialize-mutation-history` refusals, Dart negative fixtures.
-   - Dart parity: `runPrerequisites`, buffer overflow at the Dart bound.
    - Named D4 scenario with a child record following its parent across channels.
    - Serialization-failure retry in the Prisma runner.
 4. **Test hygiene.** Rename the two P3 tests whose names promise clauses their bodies lack; consider splitting the single Dart client test that bundles seven clauses. Do not move tests between directories for tidiness: the SQLite-harness tests are component evidence where they are, and the query-file controller test is fine where it is.
