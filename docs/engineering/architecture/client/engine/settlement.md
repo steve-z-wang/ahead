@@ -30,26 +30,28 @@ The first receipt for a batch is authoritative. A receipt for an unknown batch, 
 
 Rejected mutations are removed first (see below). For the accepted ones, the receipt's checkpoints are filtered: a cursor only moves for channels the client is subscribed to, so a checkpoint on any other channel could never be met and is dropped. What happens next depends on what is left:
 
-- Some checkpoints remain: they are stored, and settlement waits for the cursors.
-- Every checkpoint was dropped, or no accepted mutation remains in the batch: the batch settles immediately. Section 11 describes what the user sees in that case.
+- Some checkpoints remain: they are stored, and the ordered settlement below decides when the batch settles.
+- No accepted mutation remains in the batch: there is nothing to settle.
+- Every checkpoint was dropped but accepted mutations remain: the batch is settled immediately by this path, without the ordered walk. This is the *immediate path*; section 11 records what it means for ordering and for the user.
 
 ### Waiting and settling in order
 
-Settlement walks batches by push number and stops at the first one that is *in flight* (sent, no receipt yet) or still waiting on a cursor. A later batch never settles before an earlier one, even if its own checkpoints are already reached (guarantee A5); this keeps replayed edits on the right base. Every cursor advance re-runs this walk.
+The ordered walk goes through batches by push number and stops at the first one that is *in flight* (sent, no receipt yet) or still waiting on a cursor. Along this path a later batch never settles before an earlier one, even if its own checkpoints are already reached; this keeps replayed edits on the right base. Every cursor advance and every stored receipt re-runs the walk. Guarantee A5 states this ordering as the required behavior; the immediate path above is the one place the current implementation does not go through the walk.
 
-The order in which the receipt and the page arrive does not matter. Two things move independently: the *authoritative base* (the before image, updated by pages) and the *visible row* (what the user sees, rewritten only at settlement). Both sequences end in the same state:
+The order in which the receipt and the page arrive does not matter. Two things are involved: the *authoritative base* (the before image) and the *visible row*. When a page delivers a record that still has pending mutations, the base is updated and the visible row is rebuilt at once as base plus the pending edits replayed on top ([Writes](local-operations/writes.md)); fields the pending edit does not touch therefore show the server's values immediately. Settlement then removes the pending edit and rebuilds again, so the visible row becomes the base itself. Both sequences end in the same state:
 
 ```
-receipt first                                    page first
-─────────────                                    ──────────
-receipt: checkpoint {a: 5} stored                page a 4→5: base = server row
-   visible row: still the local edit                 visible row: still the local edit
-page a 4→5: base = server row                    receipt: checkpoint {a: 5} stored
-   settle: cursor 5 reached → batch settles          settle: cursor already 5 → batch settles
-visible row = server row, pending 0              visible row = server row, pending 0
+receipt first                                        page first
+─────────────                                        ──────────
+receipt: checkpoint {a: 5} stored                    page a 4→5: base = server row
+   visible = base + pending edit (unchanged)            visible = server row + pending edit replayed
+page a 4→5: base = server row                        receipt: checkpoint {a: 5} stored
+   visible = server row + pending edit replayed         settle: cursor already 5 → batch settles
+   settle: cursor 5 reached → batch settles
+visible = server row, pending 0                      visible = server row, pending 0
 ```
 
-Because a page writes the server's row into the base rather than the visible row while the record is still dirty, the user never sees the server value flash in and the local edit reappear.
+Because the pending edit is replayed over the new base rather than discarded, the user never sees the server value overwrite the local edit and the edit reappear later.
 
 ### Replacing the optimistic row
 
@@ -63,11 +65,11 @@ Nothing will advance an unsubscribed channel's cursor again, so waiting would be
 ## 10. Quality Requirements
 
 - **Optimism is removed only after every stored checkpoint is met, regardless of arrival order** (guarantee A3). Evidence: [crates/sim/tests/authority.rs](../../../../../crates/sim/tests/authority.rs) `a3_ack_alone_does_not_settle`; [sqlite/tests/push.rs](../../../../../crates/sqlite/tests/push.rs) `offline_queue_and_frozen_bytes_survive_restart_and_ack_waits_for_pull`, `pull_before_ack_and_later_local_edit_replay_in_order`, `record_status_reports_phases_and_duplicate_ack_is_idempotent`.
-- **Batches settle in accepted-prefix order** (guarantee A5). Evidence: `a5_batches_settle_in_accepted_prefix_order`; `accepted_batches_only_settle_in_ready_prefix`.
+- **Batches settle in accepted-prefix order** (guarantee A5). Evidence: `a5_batches_settle_in_accepted_prefix_order`; `accepted_batches_only_settle_in_ready_prefix`. Both tests exercise batches with stored checkpoints; the immediate path is not covered by an ordering test (section 11).
 - **The server's value replaces the optimistic one, and later local edits replay on top** (guarantee A1). Evidence: `a1_server_value_overrides_optimism_and_later_edits_replay`; `accepted_wire_rows_do_not_promote_companion_over_server_authority`.
 - **A rejection rolls back the mutation and its lifecycle dependents, and the reason survives restart until dismissed** (guarantee P5). Evidence: [crates/sim/tests/push.rs](../../../../../crates/sim/tests/push.rs) `p5_rejection_rolls_back_and_rejects_dependents`; `rejection_removes_optimism_preserves_direct_truth_and_has_durable_inbox`.
 - **Unsubscribing settles the batches that were waiting on that channel.** Evidence: [sqlite/tests/downlink.rs](../../../../../crates/sqlite/tests/downlink.rs) `unsubscribing_settles_its_checkpoint_and_later_pages_are_dropped`.
-- **When none of a receipt's checkpoints can be awaited, the batch settles at once.** Evidence: [sqlite/tests/query.rs](../../../../../crates/sqlite/tests/query.rs) `transport_pulls_only_subscribed_channels_and_unawaitable_checkpoints_settle`. This test asserts the pending count only; see section 11.
+- **When none of a receipt's checkpoints can be awaited, the batch settles at once** (current behavior). Evidence: [sqlite/tests/query.rs](../../../../../crates/sqlite/tests/query.rs) `transport_pulls_only_subscribed_channels_and_unawaitable_checkpoints_settle`. This test asserts the pending count only; see section 11.
 
 All tests above were read, not executed, in this review.
 
@@ -120,5 +122,7 @@ fn settling_without_authority_reverts_the_record() {
 ```
 
 </details>
+
+**To confirm: the immediate path bypasses accepted-prefix order.** *Condition:* batch 1 is waiting on a stored checkpoint when batch 2's receipt arrives with checkpoints that are all unawaitable. *Consequence:* `acknowledge` calls `settle_push` for batch 2 directly, so batch 2 settles while batch 1 is still pending, which is what guarantee A5 says must not happen; the rebuild of records touched by both batches then runs with batch 1's operations still queued over the base. *Evidence:* read in `acknowledge` in [client/push.rs](../../../../../crates/client/src/push.rs) (`if awaited.is_empty() || !remaining { if remaining { self.settle_push(push)?; } … }`); no test constructs this sequence, and this review did not execute one. Whether A5 should hold on this path, or the path should be documented as an exception, needs deciding; the behavior is left as is here.
 
 **Accepted limitation.** Only lifecycle dependents are rejected with their parent; a sequence dependent of a rejected mutation is still sent. This matches guarantee P5 as written and is noted because the two dependency kinds are easy to confuse ([Dependencies](push/dependencies.md)).

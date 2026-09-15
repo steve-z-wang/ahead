@@ -31,7 +31,7 @@ What reconciliation does depends on the kind of difference. The three outcomes a
 | Enum value set changed | **not detected**; the column is `TEXT` |
 | Model removed from the schema | its tables are **kept** |
 
-Consequences worth knowing: a field rename looks like "remove and add", so the old column stays and the new one starts empty; a stale unique index keeps constraining rows; and rows holding an enum value the schema no longer declares remain readable as strings that normalization will reject. A refused reconciliation rolls back and leaves the file exactly as it was; the only remedy today is a new database file (guarantee N3).
+Consequences worth knowing: a field rename is handled as "remove the old field, add the new one", so the old column stays in place and the new column follows the rows above for an added field: filled with `null` if nullable, with the declared default if it has one, and refused (open fails) if it is non-nullable without a default; the old column's values are not carried over. A stale unique index keeps constraining rows; and rows holding an enum value the schema no longer declares remain readable as strings that normalization will reject. A refused reconciliation rolls back and leaves the file exactly as it was; the only remedy today is a new database file (guarantee N3).
 
 ## 10. Quality Requirements
 
