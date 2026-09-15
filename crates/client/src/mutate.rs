@@ -1,4 +1,5 @@
-//! Optimistic writes, truth holding, rebuild, cascade and authority changes.
+//! Optimistic writes, truth holding, rebuild and cascades. Authority lands
+//! through `authority.rs`.
 use crate::ddl::before_table;
 use crate::engine::Engine;
 use crate::rows::merge_identity;
@@ -81,7 +82,7 @@ impl<S: ClientStore> Engine<'_, S> {
             None => self.row_delete(&table, &model, &key.identity),
         }
     }
-    fn main_set(&mut self, key: &RecordKey, row: Option<&Value>) -> Result<()> {
+    pub(crate) fn main_set(&mut self, key: &RecordKey, row: Option<&Value>) -> Result<()> {
         let model = self.schema.model(&key.model)?.clone();
         match row {
             Some(row) => self.row_upsert(&key.model, &model, row),
@@ -226,26 +227,6 @@ impl<S: ClientStore> Engine<'_, S> {
         }
         Ok(())
     }
-    fn set_authority_one(&mut self, key: &RecordKey, value: Option<Value>) -> Result<()> {
-        if self.dirty(key)? {
-            self.before_set(key, value.as_ref())?;
-            self.rebuild(key)
-        } else {
-            self.main_set(key, value.as_ref())
-        }
-    }
-    /// Record a new server truth for `key`; `value` is the whole row, `None` deletes it.
-    pub fn set_authority(&mut self, key: &RecordKey, value: Option<Value>) -> Result<()> {
-        if value.is_none() {
-            for child in self.descendants(key)? {
-                self.claims_remove_all(&child)?;
-                self.drop_record(&child)?;
-                self.set_authority_one(&child, None)?;
-            }
-        }
-        self.set_authority_one(key, value)?;
-        self.refresh_pending()
-    }
     pub fn enqueue(&mut self, mut mutation: Mutation) -> Result<u64> {
         if mutation.name.trim().is_empty()
             || mutation.version == 0
@@ -342,19 +323,10 @@ impl<S: ClientStore> Engine<'_, S> {
         }
         Ok(())
     }
+    /// Stop following a channel. Records it delivered stay: a channel is a
+    /// delivery path, not an owner, so local content, stamps, before images
+    /// and pending operations are all retained.
     pub fn unsubscribe(&mut self, channel: &str) -> Result<()> {
-        for key in self.claimed_by(channel)? {
-            self.claim_remove(channel, &key)?;
-            if self.claims(&key)?.is_empty() {
-                self.drop_record(&key)?;
-                self.set_authority(&key, None)?;
-            }
-        }
-        self.delete_subscription(channel)?;
-        // Nothing will advance this channel's cursor again, so a push waiting on it
-        // would wait forever: drop those checkpoints and settle what they were holding.
-        let awaiting = self.pushes_awaiting(channel)?;
-        self.delete_channel_checkpoints(channel)?;
-        self.settle_satisfied(&awaiting)
+        self.delete_subscription(channel)
     }
 }
