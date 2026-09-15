@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import type { IncomingMessage, RequestListener, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, WebSocket } from "ws";
+import type { HostRequest } from "./host-contract.mts";
 export { WebSocket } from "ws";
 const require = createRequire(import.meta.url);
 export type Native = {
@@ -354,8 +355,10 @@ export function createBackend<T>(options: BackendOptions<T>) {
     const storage = options.database.persistence(tx);
     return (raw) =>
       session.track(async () => {
-        const req = JSON.parse(raw);
+        const req = JSON.parse(raw) as HostRequest;
         let result: unknown;
+        // `savepoint`, `rollback` and `release` are answered by the persistence
+        // and also bookkept here, so each one does both.
         if (req.op === "savepoint") session.savepoint(req.ordinal);
         if (req.op === "rollback") session.rollback(req.ordinal);
         if (req.op === "release") session.release(req.ordinal);
@@ -377,7 +380,7 @@ export function createBackend<T>(options: BackendOptions<T>) {
           };
           const input: Record<string, unknown> = {};
           for (const slot of entry.slots) {
-            const raw = req.arguments[slot.name];
+            const raw = req.arguments[slot.name] as any;
             input[slot.name] =
               slot.cardinality === "list"
                 ? (raw as any[]).map((item) => shape(slot, item))
@@ -439,7 +442,7 @@ export function createBackend<T>(options: BackendOptions<T>) {
           const loader = loaderTable.get(req.model);
           if (!loader) throw new Error(`Missing loader ${req.model}`);
           const call = {
-            ids: req.identities,
+            ids: req.identities as any[],
             tx,
             userId: req.owner,
             channel: req.channel,
@@ -453,7 +456,27 @@ export function createBackend<T>(options: BackendOptions<T>) {
             result.some((value) => value === undefined)
           )
             throw new Error("invalid loader: undefined or non-array result");
-        } else result = await storage.call(req);
+        } else {
+          // Everything the persistence owns, plus anything this build does not
+          // know: an operation added to the contract without an arm here is a
+          // compile error, not a silent forward.
+          switch (req.op) {
+            case "claim":
+            case "saveReceipt":
+            case "head":
+            case "scan":
+            case "savepoint":
+            case "rollback":
+            case "release":
+            case "publish":
+              break;
+            default: {
+              const unreachable: never = req;
+              void unreachable;
+            }
+          }
+          result = await storage.call(req);
+        }
         return callbackJson(result);
       });
   };
