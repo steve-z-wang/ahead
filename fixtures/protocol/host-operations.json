@@ -1,0 +1,67 @@
+{
+  "comment": "One canonical request and one response per variant for every host operation. Shared by crates/server/tests/host_contract.rs (Rust types) and integration/persistence/server/host-contract.test.mjs (TypeScript host). The examples describe a backend with one model Task {id, title} and one mutation edit v1 with an update slot named task.",
+  "operations": [
+    {
+      "op": "claim",
+      "request": {"op": "claim", "owner": "alice", "clientId": "client-1"},
+      "responses": [
+        {"variant": "claimed", "value": {"clientId": "client-1", "owner": "alice", "sequence": 2, "receipt": "{\"requiredScope\":\"shared\",\"requiredSyncId\":6,\"rejections\":[]}"}},
+        {"variant": "unused", "value": {"clientId": "client-1", "owner": "alice", "sequence": 0, "receipt": null}}
+      ]
+    },
+    {
+      "op": "saveReceipt",
+      "request": {"op": "saveReceipt", "owner": "alice", "clientId": "client-1", "sequence": 3, "receipt": "{\"requiredScope\":\"shared\",\"requiredSyncId\":6,\"rejections\":[]}"},
+      "responses": [{"variant": "acknowledged", "value": null}]
+    },
+    {
+      "op": "head",
+      "request": {"op": "head", "channel": "shared"},
+      "responses": [
+        {"variant": "cursor", "value": 6},
+        {"variant": "empty", "value": 0}
+      ]
+    },
+    {
+      "op": "scan",
+      "request": {"op": "scan", "channel": "shared", "after": 4, "limit": 50},
+      "responses": [
+        {"variant": "rows", "value": [{"channel": "shared", "cursor": 5, "model": "Task", "identity": {"id": "t-1"}, "identityKey": "{\"id\":\"t-1\"}", "stamp": 3}]},
+        {"variant": "none", "value": []}
+      ]
+    },
+    {
+      "op": "savepoint",
+      "request": {"op": "savepoint", "ordinal": 1},
+      "responses": [{"variant": "acknowledged", "value": null}]
+    },
+    {
+      "op": "rollback",
+      "request": {"op": "rollback", "ordinal": 1},
+      "responses": [{"variant": "acknowledged", "value": null}]
+    },
+    {
+      "op": "release",
+      "request": {"op": "release", "ordinal": 1},
+      "responses": [{"variant": "acknowledged", "value": null}]
+    },
+    {
+      "op": "handle",
+      "request": {"op": "handle", "name": "edit", "version": 1, "arguments": {"task": {"identity": {"id": "t-1"}, "patch": {"title": "typed"}}}, "owner": "alice", "ordinal": 1},
+      "responses": [
+        {"variant": "settled", "value": {"channel": "shared"}},
+        {"variant": "rejected", "value": {"rejection": "task.refused"}}
+      ]
+    },
+    {
+      "op": "load",
+      "request": {"op": "load", "model": "Task", "identities": [{"id": "t-1"}, {"id": "t-2"}], "owner": "alice", "channel": "shared"},
+      "responses": [{"variant": "rows", "value": [{"id": "t-1", "title": "typed"}, null]}]
+    },
+    {
+      "op": "publish",
+      "request": {"op": "publish", "channel": "shared", "model": "Task", "identity": {"id": "t-1"}, "identityKey": "{\"id\":\"t-1\"}"},
+      "responses": [{"variant": "published", "value": {"cursor": 6, "stamp": 4}}]
+    }
+  ]
+}
