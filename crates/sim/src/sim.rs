@@ -131,6 +131,19 @@ pub struct Slot {
     pub client: Option<Client<SqliteStore>>,
     pub enqueued: Vec<u64>,
     pub receipts: BTreeMap<u64, PushReceipt>,
+    /// Every batch this client froze, by sequence, with the ordinals it carried
+    /// (decoded from the frozen bytes at `Action::Freeze`). A batch that later
+    /// leaves the queue must have done so through settlement or rejection; the A3
+    /// and A5 invariants compare this record with the live queue.
+    pub pushes: BTreeMap<u64, Vec<u64>>,
+    /// The checkpoints the client could await when each receipt arrived: those on
+    /// channels it was subscribed to at that moment, with the subscription
+    /// generation so a later unsubscribe-and-resubscribe (which restarts the cursor
+    /// at 0 and settles what waited on the channel) is not read as a violation.
+    pub awaited: BTreeMap<u64, Vec<(String, u64, u64)>>,
+    /// Subscription generation per channel: bumped every time the client goes from
+    /// unsubscribed to subscribed.
+    pub generations: BTreeMap<String, u64>,
 }
 
 pub struct Sim {
@@ -205,6 +218,9 @@ impl Sim {
                     path,
                     enqueued: vec![],
                     receipts: BTreeMap::new(),
+                    pushes: BTreeMap::new(),
+                    awaited: BTreeMap::new(),
+                    generations: BTreeMap::new(),
                 }
             })
             .collect();
@@ -314,9 +330,18 @@ impl Sim {
                 self.direct_writes.insert((client, key.encoded().unwrap()));
             }
             Action::Subscribe { client, channel } => {
+                let fresh = self
+                    .client(client)
+                    .subscriptions()
+                    .map_err(|e| e.to_string())?
+                    .iter()
+                    .all(|(c, _)| c != &channel);
                 self.client(client)
-                    .transaction(|tx| tx.set_channel(channel, true))
+                    .transaction(|tx| tx.set_channel(channel.clone(), true))
                     .map_err(|e| e.to_string())?;
+                if fresh {
+                    *self.clients[client].generations.entry(channel).or_insert(0) += 1;
+                }
             }
             Action::Unsubscribe { client, channel } => {
                 self.client(client)
@@ -325,6 +350,11 @@ impl Sim {
             }
             Action::Freeze { client } => {
                 if let Some(bytes) = self.client(client).freeze().map_err(|e| e.to_string())? {
+                    let request = PushRequest::decode(&bytes).map_err(|e| e.to_string())?;
+                    let ordinals = request.mutations.iter().map(|m| m.ordinal).collect();
+                    self.clients[client]
+                        .pushes
+                        .insert(request.batch_sequence, ordinals);
                     self.net.send(Message::Push { client, bytes });
                 }
             }
@@ -483,9 +513,27 @@ impl Sim {
                     return Ok(());
                 }
                 let receipt = PushReceipt::decode(&bytes).map_err(|e| e.to_string())?;
+                // What the client can await is decided when the receipt arrives:
+                // only checkpoints on channels it is subscribed to right now (A3).
+                let subscribed = self
+                    .client(client)
+                    .subscriptions()
+                    .map_err(|e| e.to_string())?;
                 match self.client(client).acknowledge(sequence, receipt.clone()) {
                     Ok(()) => {
-                        self.clients[client].receipts.insert(sequence, receipt);
+                        let slot = &mut self.clients[client];
+                        let awaited: Vec<(String, u64, u64)> = receipt
+                            .required_checkpoints
+                            .iter()
+                            .filter(|cp| subscribed.iter().any(|(c, _)| c == &cp.channel))
+                            .map(|cp| {
+                                let generation =
+                                    slot.generations.get(&cp.channel).copied().unwrap_or(0);
+                                (cp.channel.clone(), cp.cursor, generation)
+                            })
+                            .collect();
+                        slot.awaited.entry(sequence).or_insert(awaited);
+                        slot.receipts.insert(sequence, receipt);
                     }
                     Err(e) if e.to_string().contains("unknown batch") => {}
                     Err(e) => return Err(e.to_string()),
