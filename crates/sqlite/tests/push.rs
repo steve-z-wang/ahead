@@ -569,3 +569,69 @@ fn populated_queue_survives_additive_reconciliation_with_frozen_bytes_unchanged(
         "queued operations are sent as enqueued, without the new field"
     );
 }
+
+/// A5 on the immediate path (issue #53): a receipt with nothing awaitable must not
+/// settle its batch ahead of an earlier batch that is still waiting on a cursor.
+#[test]
+fn immediately_settleable_batch_waits_for_the_earlier_waiting_batch() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut c = open(&path);
+    subscribe(&mut c, "book");
+    c.apply_page(page("book", 0, 1, Some("A"))).unwrap();
+    c.transaction(|tx| tx.enqueue(mutation("B")).map(|_| ()))
+        .unwrap();
+    c.freeze().unwrap().unwrap();
+    c.acknowledge(1, receipt("book", 5)).unwrap();
+    c.transaction(|tx| tx.enqueue(mutation("C")).map(|_| ()))
+        .unwrap();
+    c.freeze().unwrap().unwrap();
+    // Batch 2's only checkpoint is on a channel this client does not follow.
+    c.acknowledge(2, receipt("other", 3)).unwrap();
+    assert_eq!(
+        c.pending_count().unwrap(),
+        2,
+        "batch 2 is acknowledged but must wait for batch 1"
+    );
+    assert_eq!(
+        c.read(&key()).unwrap().unwrap()["text"],
+        "C",
+        "both pending edits stay replayed over the base"
+    );
+    let status = c.record_status(&key()).unwrap();
+    assert_eq!(status["pending"].as_array().unwrap().len(), 2);
+    assert!(
+        status["pending"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|m| m["phase"] == "accepted"),
+        "both batches are acknowledged, neither in flight: {status}"
+    );
+    // A duplicate receipt for batch 2 is idempotent, and one with different
+    // checkpoints is refused, exactly as for a batch with stored checkpoints.
+    c.acknowledge(2, receipt("other", 3)).unwrap();
+    assert!(c.acknowledge(2, receipt("book", 9)).is_err());
+    assert_eq!(c.pending_count().unwrap(), 2);
+
+    // The acknowledged state is durable: after reopen nothing is re-sent and
+    // batch 2 still waits behind batch 1.
+    drop(c);
+    let mut c = open(&path);
+    assert_eq!(c.pending_count().unwrap(), 2);
+    assert!(
+        c.freeze().unwrap().is_none(),
+        "neither batch is in flight after reopen"
+    );
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "C");
+
+    // Batch 1's cursor arrives: batch 1 settles, then batch 2 behind it.
+    c.apply_page(page("book", 1, 5, Some("B"))).unwrap();
+    assert_eq!(c.pending_count().unwrap(), 0);
+    assert!(
+        c.read(&key()).unwrap().is_some(),
+        "the record survives settlement"
+    );
+    // What batch 2's record shows once it settles without authority from a
+    // subscribed channel is decided under #52; not asserted here.
+}

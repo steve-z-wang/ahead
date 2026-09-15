@@ -1,9 +1,8 @@
 # Simulation
 
 `cargo test -p ahead-sim` runs the named scenarios for guarantees L, P, A, D and R and a
-quick random run (60 seeds, 120 steps, 3 clients, with direct writes off; every invariant is
-checked after every step). `random_sequences_with_direct_writes` is ignored until issue #33
-is fixed. `SIM_SEEDS=5000 SIM_STEPS=300 cargo test -p ahead-sim --test invariants` is the long
+quick random run (60 seeds, 120 steps, 3 clients, once with direct writes off and once with
+them on; every invariant is checked after every step). `SIM_SEEDS=5000 SIM_STEPS=300 cargo test -p ahead-sim --test invariants` is the long
 form. A failure prints the seed, the full trace and the minimal trace that still fails.
 
 See the [simulation testing guide](../../docs/engineering/testing/simulation/README.md) and [guarantees](../../docs/engineering/guarantees.md).
