@@ -6,7 +6,7 @@ Three runtimes exchange the same messages: Rust, TypeScript and Dart. The protoc
 
 ## 2. Architecture Constraints
 
-Wire names are inherited from the reference implementation and must not change: `scope` is a channel, `syncId` a cursor, and `requiredScope`/`requiredSyncId` are the legacy single-checkpoint pair. Every counter (cursor, stamp, batch sequence, ordinal, version) is an integer in `0..=2^53−1` so JavaScript reads it exactly.
+Wire names are inherited from the reference implementation and must not change: `scope` is a channel and `syncId` a cursor. Every counter (cursor, stamp, batch sequence, ordinal, version) is an integer in `0..=2^53−1` so JavaScript reads it exactly.
 
 ## 5. Building Block View
 
@@ -20,7 +20,7 @@ Wire names are inherited from the reference implementation and must not change: 
 
 **Errors.** Core has one error kind carrying a message. The server runtime has a structured error `{code, message, details?}` whose codes the HTTP layer maps to statuses ([SDKs / Bindings](../sdks/bindings.md), [Server / Connection / Transport](../server/connection/transport.md)).
 
-**Shared fixture.** [fixtures/protocol/counter-and-checkpoint.json](../../../../fixtures/protocol/counter-and-checkpoint.json) lists boundary cases both sides must agree on.
+**Shared fixtures.** [fixtures/protocol/counter-boundaries.json](../../../../fixtures/protocol/counter-boundaries.json) lists the pull counter boundary cases both sides must agree on; [fixtures/protocol/receipt-authority.json](../../../../fixtures/protocol/receipt-authority.json) does the same for receipts ([Push](push.md)).
 
 Code: [core/lib.rs](../../../../crates/core/src/lib.rs) (`canonical_json`), [core/protocol.rs](../../../../crates/core/src/protocol.rs) (`counter`, `read_counter`, `limits`), [core/schema.rs](../../../../crates/core/src/schema.rs) (`RecordKey`, state and patch validation).
 
@@ -34,10 +34,10 @@ Host resource limits are not protocol rules and stay with each transport: 1 MiB 
 
 ## 10. Quality Requirements
 
-- **Encoding is byte-identical to JavaScript's: key order, number spelling and unknown-field preservation**. Evidence: [core/tests/contracts.rs](../../../../crates/core/tests/contracts.rs) `canonical_numbers_match_javascript_and_utf16_key_order`, `wire_names_remain_legacy_and_counters_are_safe`, `server_pull_request_accepts_js_integer_number_spellings`, `shared_wire_fixtures_preserve_counter_and_checkpoint_boundaries`.
+- **Encoding is byte-identical to JavaScript's: key order, number spelling and unknown-field preservation**. Evidence: [core/tests/contracts.rs](../../../../crates/core/tests/contracts.rs) `canonical_numbers_match_javascript_and_utf16_key_order`, `wire_names_remain_legacy_and_counters_are_safe`, `server_pull_request_accepts_js_integer_number_spellings`, `shared_wire_fixtures_preserve_counter_boundaries`.
 - **A received state tolerates extra fields and refuses missing required ones**. Evidence: `received_state_supports_additive_schema_evolution`, `state_is_complete_but_patch_preserves_absent_and_null`.
 
-Tests read, not executed.
+Executed 2026-09-15: `cargo test -p ahead-core --locked` passed with the tests above.
 
 ## 11. Risks and Technical Debt
 

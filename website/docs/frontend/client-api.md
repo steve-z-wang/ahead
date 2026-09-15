@@ -151,7 +151,7 @@ For a `Comment.book` relationship, `client.models.comment.book(commentIdentity)`
 
 ## Mutations
 
-To display the backend result, subscribe to the channel your handler notifies before calling the mutation, and keep it subscribed while awaiting the result. Without that subscription, an accepted mutation can settle without receiving the final record, so its optimistic update can revert or its created record can disappear. See [receiving mutation results](sync.md#receive-mutation-results).
+The backend result of your own mutation arrives in its receipt: the records the handler changed are read back by your loader and replace the optimistic values, with or without a subscription. Subscribe to a channel to receive changes made elsewhere. See [receiving mutation results](sync.md#receive-mutation-results).
 
 `tx.mutate.edit(args)` returns the mutation's local ordinal (`number` / `int`). This identifies queued work; it is not a backend result or confirmation. Its declared changes apply in local storage immediately, and the backend later runs the matching handler.
 
@@ -212,7 +212,7 @@ The backend handler's implementation can differ from the declared local operatio
 
 These operations persist the desired subscription and wake a running connection. Subscribing does not wait for all records to arrive. Use `watch` to observe the initial pull and later changes.
 
-A channel name must match what your backend notifies. A subscription is a request for data; loaders must still enforce read permissions. Unsubscribing stops desired synchronization, releases waiting checkpoints and can remove records no other channel claims; it does not erase the entire local cache. See [sync and recovery](sync.md) for checkpoint and account-change behavior.
+A channel name must match what your backend publishes to. A subscription is a request for data; loaders must still enforce read permissions. Unsubscribing stops that channel's synchronization and removes nothing: records, their stamps and pending edits stay. See [sync and recovery](sync.md) for cache and account-change behavior.
 
 ## Status and lifecycle
 

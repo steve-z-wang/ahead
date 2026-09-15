@@ -19,20 +19,20 @@ The `migration` option supplies field defaults and can request a pull replay whe
 | Situation | What to do |
 | --- | --- |
 | A request times out | Let sync retry the persisted frozen request. The backend may already have committed it. |
-| Accepted work remains pending | Check connectivity, the required channel, notifications and loader failures. |
+| Frozen work remains pending | Check connectivity and authentication; a receipt Ahead cannot apply is refused and the batch resent, so check `onError` on both sides. |
 | A mutation is rejected | Display its code, inspect `recordStatus`, then dismiss the handled rejection. |
 | A prerequisite fails | Resolve its cause, reset its readiness to `pending`, then run its callback again. |
 | Another client wrote to the same file | Close the stale instance and reopen it; keep one active client per file. |
 
-Do not manually delete pending batches, channel cursors or backend receipts to clear an error. These records work together to prevent duplicate execution and settle local changes. Preserve the database for diagnosis when an error cannot be resolved through the public APIs.
+Do not manually delete pending batches, channel cursors or backend receipts to clear an error. These records work together to prevent duplicate execution and complete local changes from their receipts. Preserve the database for diagnosis when an error cannot be resolved through the public APIs.
 
 [Sync and recovery](sync.md) shows the application calls for these cases.
 
 ## Manage cached data
 
-Unsubscribing stops desired synchronization; it does not erase cached records. Permissions are enforced by your backend. When a record is no longer visible, notify the affected channels so their loaders can return null.
+Unsubscribing stops that channel's synchronization and removes nothing: cached records, their stamps, before images and pending edits stay, and another subscribed channel can still update them. Retained records are readable but not kept fresh without a channel that delivers them. Permissions are enforced by your backend. When a record is no longer visible, publish it to the affected channels so their loaders can return null. There is no automatic eviction of cached records.
 
-Pull changes carry a per-record stamp. A newer stamp replaces the record's authoritative state; a delayed lower stamp cannot overwrite it. Deletions apply across channels, with tombstones retained while channel claims still need to confirm them. See [how state moves](../concepts.md) for the relationship between records, channels and pending writes.
+Receipts and pull changes carry a per-record stamp. A newer stamp replaces the record's authoritative state; a delayed lower stamp cannot overwrite it, whichever path delivers it. Deletions apply across channels, and the deleted record's stamp is kept so older content cannot resurrect it. See [how state moves](../concepts.md) for the relationship between records, channels and pending writes.
 
 ## Storage size
 

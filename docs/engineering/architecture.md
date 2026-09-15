@@ -10,9 +10,9 @@ See the [component documentation index](architecture/README.md) for individual d
   - **[Relations](architecture/schema/relations.md)** — References, inverse relations and deletion rules.
   - **[Mutations](architecture/schema/mutations.md)** — Operation groups, argument bindings, versions and sequencing.
   - **[Prerequisites](architecture/schema/prerequisites.md)** — Prerequisite declarations and references.
-- **[Protocol](architecture/protocol/README.md)** — Language-independent push, pull, receipt, checkpoint and subscription message formats.
+- **[Protocol](architecture/protocol/README.md)** — Language-independent push, pull, receipt and subscription message formats.
   - **[Common](architecture/protocol/common.md)** — Shared fields, counters and encoding conventions.
-  - **[Push](architecture/protocol/push.md)** — Mutation batches, receipts, rejections and checkpoints.
+  - **[Push](architecture/protocol/push.md)** — Mutation batches, receipts carrying record authority, and rejections.
   - **[Pull](architecture/protocol/pull.md)** — Requests, record changes, cursors and pagination.
   - **[Subscriptions](architecture/protocol/subscriptions.md)** — WebSocket subscription requests and acknowledgments.
 - **[Compiler (Rust)](architecture/compiler/README.md)** — Compile schemas and generate typed interfaces.
@@ -26,7 +26,7 @@ See the [component documentation index](architecture/README.md) for individual d
   - **[Bindings](architecture/sdks/bindings.md)** — Bridge calls, arguments, results, errors and events between the language and Rust.
 - **[Client runtime (Rust)](architecture/client/README.md)** — Local state, storage and sync.
   - **[Frontend interface](architecture/client/frontend-interface.md)** — Expose reads, writes, subscriptions and status to SDKs.
-  - **[Engine](architecture/client/engine/README.md)** — Local reads and writes, mutations, cursors, rollback and settlement.
+  - **[Engine](architecture/client/engine/README.md)** — Local reads and writes, mutations, cursors, rollback and completion from receipts.
     - **[Local operations](architecture/client/engine/local-operations/README.md)** — Local reads, writes and transactions.
       - **[Writes](architecture/client/engine/local-operations/writes.md)** — Apply mutations and direct writes optimistically over a before image.
       - **[Queries](architecture/client/engine/local-operations/queries.md)** — Read by identity, filter, order, relation and read-only SQL.
@@ -35,7 +35,7 @@ See the [component documentation index](architecture/README.md) for individual d
       - **[Dependencies](architecture/client/engine/push/dependencies.md)** — Decide which mutations are eligible to send.
       - **[Batching](architecture/client/engine/push/batching.md)** — Freeze eligible mutations and preserve their bytes for retries.
     - **[Pull](architecture/client/engine/pull.md)** — Apply server changes and advance cursors.
-    - **[Settlement](architecture/client/engine/settlement.md)** — Process decoded receipts and cursors to confirm mutations, roll back rejections and replay pending changes.
+    - **[Settlement](architecture/client/engine/settlement.md)** — Complete a batch from its receipt: stage the returned authority by stamp, roll back rejections and replay pending changes.
   - **[Storage](architecture/client/storage/README.md)** — Execute Engine-requested SQL and transactions; no sync policy.
     - **[Store](architecture/client/storage/store.md)** — The SQL contract and its SQLite implementation.
     - **[Reconciliation](architecture/client/storage/reconciliation.md)** — Table layout and how an existing database meets a newer schema.
@@ -47,10 +47,10 @@ See the [component documentation index](architecture/README.md) for individual d
       - **[Live session](architecture/client/connection/controller/live-session.md)** — Subscribe, catch up over HTTP, stream pages, recover from gaps and subscription changes.
 - **[Server runtime (Rust)](architecture/server/README.md)** — Sync protocol and backend execution.
   - **[Backend interface](architecture/server/backend-interface.md)** — Invoke application handlers and loaders.
-  - **[Engine](architecture/server/engine/README.md)** — Process mutations, pulls, receipts and checkpoints.
+  - **[Engine](architecture/server/engine/README.md)** — Process mutations, read their results back, serve pulls and produce receipts.
     - **[Push](architecture/server/engine/push.md)** — Validate and deduplicate mutation batches, invoke handlers and produce receipts.
     - **[Pull](architecture/server/engine/pull.md)** — Find changes by channel cursor and invoke loaders to return records.
-    - **[Notify](architecture/server/engine/notify.md)** — Record changed records and channels, and update cursors and stamps.
+    - **[Notify](architecture/server/engine/notify.md)** — Publish changed records to channels at their current stamps and allocate channel cursors.
   - **[Persistence](architecture/server/persistence.md)** — Persist sync metadata within the application's transaction; no business logic.
   - **[Connection](architecture/server/connection/README.md)** — HTTP/WebSocket, subscriptions and streaming.
     - **[Transport](architecture/server/connection/transport.md)** — Send and receive HTTP/WebSocket messages.
@@ -146,8 +146,8 @@ Current code locations for the components above. Some responsibilities still sha
 | Client / Engine / Push / Queue | [client/queue.rs](../../crates/client/src/queue.rs), [client/ddl.rs](../../crates/client/src/ddl.rs) |
 | Client / Engine / Push / Dependencies | [client/policies.rs](../../crates/client/src/policies.rs), [client/queue.rs](../../crates/client/src/queue.rs); eligibility checks in [client/push.rs](../../crates/client/src/push.rs) |
 | Client / Engine / Push / Batching | [client/push.rs](../../crates/client/src/push.rs); push assignment in [client/queue.rs](../../crates/client/src/queue.rs) |
-| Client / Engine / Pull | [client/downlink.rs](../../crates/client/src/downlink.rs), [client/ledger.rs](../../crates/client/src/ledger.rs); incoming-page dispositions in [client/transport.rs](../../crates/client/src/transport.rs) (`receive_downlink`) |
-| Client / Engine / Settlement | [client/push.rs](../../crates/client/src/push.rs) (`settle_push`, `remove_rejected`); replay in [client/mutate.rs](../../crates/client/src/mutate.rs) (`rebuild`) |
+| Client / Engine / Pull | [client/downlink.rs](../../crates/client/src/downlink.rs), [client/ledger.rs](../../crates/client/src/ledger.rs); the authority applier in [client/authority.rs](../../crates/client/src/authority.rs); incoming-page dispositions in [client/transport.rs](../../crates/client/src/transport.rs) (`receive_downlink`) |
+| Client / Engine / Settlement | [client/push.rs](../../crates/client/src/push.rs) (`acknowledge`, `mark_rejected`); the authority applier in [client/authority.rs](../../crates/client/src/authority.rs) (`stage_authority`, `rebuild_held`); replay in [client/mutate.rs](../../crates/client/src/mutate.rs) (`rebuild`) |
 | Client / Storage / Store | [client/store.rs](../../crates/client/src/store.rs), [sqlite/lib.rs](../../crates/sqlite/src/lib.rs) |
 | Client / Storage / Reconciliation | [client/ddl.rs](../../crates/client/src/ddl.rs) |
 | Client / Connection / Transport | [client-js/transport.mts](../../packages/client-js/transport.mts), [client-js/live.mts](../../packages/client-js/live.mts), [dart/live.dart](../../packages/dart/lib/src/live.dart) |
@@ -155,9 +155,9 @@ Current code locations for the components above. Some responsibilities still sha
 | Client / Connection / Controller / Push lane | [client/transport.rs](../../crates/client/src/transport.rs) (`SyncCycle`); loops in [client-js/index.mts](../../packages/client-js/index.mts) and [dart/client.dart](../../packages/dart/lib/src/client.dart) |
 | Client / Connection / Controller / Live session | [client/live.rs](../../crates/client/src/live.rs) (`LiveSession`); dispositions in [client/transport.rs](../../crates/client/src/transport.rs); executors `startLiveLane` in [client-js/connection.mts](../../packages/client-js/connection.mts) and `LiveLane` in [dart/connection.dart](../../packages/dart/lib/src/connection.dart) |
 | Server / Backend interface | Operation contract in [server/host.rs](../../crates/server/src/host.rs) and [server/host-contract.mts](../../packages/server/host-contract.mts); `Host` in [server/lib.rs](../../crates/server/src/lib.rs); handler/loader dispatch in [server/index.mts](../../packages/server/index.mts) |
-| Server / Engine / Push | [server/lib.rs](../../crates/server/src/lib.rs) (`process_push`) |
+| Server / Engine / Push | [server/lib.rs](../../crates/server/src/lib.rs) (`process_push`, `decode`); readback in [server/readback.rs](../../crates/server/src/readback.rs) (`read_back`) |
 | Server / Engine / Pull | [server/lib.rs](../../crates/server/src/lib.rs) (`process_pull`) |
-| Server / Engine / Notify | [server/lib.rs](../../crates/server/src/lib.rs) (`publish`) |
+| Server / Engine / Notify | publication resolution in [server/readback.rs](../../crates/server/src/readback.rs) (`publish_one`); the external path in [server/lib.rs](../../crates/server/src/lib.rs) (`publish`); `changes`, `publish` and `WakeHub` in [server/index.mts](../../packages/server/index.mts) |
 | Server / Persistence | Interface in [server/index.mts](../../packages/server/index.mts); adapter in [persistence-prisma](../../packages/persistence-prisma); tables in [migration.sql](../../packages/persistence-prisma/migration.sql) |
 | Server / Connection / Transport | [server/index.mts](../../packages/server/index.mts) |
 | Server / Connection / Controller | [server/live.rs](../../crates/server/src/live.rs) (`Subscriptions`); executor `serveLive` in [server/index.mts](../../packages/server/index.mts) |

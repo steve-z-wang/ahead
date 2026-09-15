@@ -52,19 +52,21 @@ The generic `Persistence.call` boundary uses the following operations. Use the [
 | `claim` | `clientId`, `owner` | Atomically create or lock the client row; return `{ clientId, owner, sequence, receipt }` |
 | `saveReceipt` | `clientId`, `owner`, `sequence`, `receipt` | Persist the committed sequence and receipt for that owner; return null |
 | `head` | `channel` | Current channel cursor, or zero for an empty channel |
-| `scan` | `channel`, `after`, `limit` | Invalidations strictly after the cursor, ordered by cursor and limited to `limit` |
-| `publish` | `channel`, `model`, `identityKey`, `identity` | Allocate a new per-record stamp and channel cursor, store the invalidation, return `{ cursor, stamp }` |
+| `scan` | `channel`, `after`, `limit` | Invalidations strictly after the cursor, ordered by cursor and limited to `limit`, each with the record's current stamp; a row whose record has no stamp is a storage failure |
+| `advanceStamp` | `model`, `identityKey` | Allocate the record's next stamp (1 when it has none); return the new stamp |
+| `ensureStamp` | `model`, `identityKey` | Return the record's current stamp, initializing it at 1 only when it has none; never increment an existing one |
+| `publish` | `channel`, `model`, `identityKey`, `identity`, `stamp` | Allocate the channel's next cursor and store the invalidation at `stamp`, which must be the record's current stamp; return `{ cursor, stamp }` |
 | `savepoint` | `ordinal` | Create the mutation savepoint; return null |
 | `rollback` | `ordinal` | Roll back to the mutation savepoint; return null |
 | `release` | `ordinal` | Release the mutation savepoint; return null |
 
 Return exactly the fields listed: a result carrying anything beyond them is refused at the boundary, not ignored.
 
-`scan` rows contain `{ channel, cursor, model, identityKey, identity, stamp }`. `identityKey` is provided by the runtime; preserve its canonical representation. `identity` is the decoded identity object. `receipt` is the stored serialized receipt, initially null with sequence zero. Unknown operations and storage failures must reject, not return a plausible empty result.
+`scan` rows contain `{ channel, cursor, model, identityKey, identity, stamp }`, where `stamp` is read from the record's stamp row, not from the invalidation, because a change advances the stamp whether or not it is published. `identityKey` is provided by the runtime; preserve its canonical representation. `identity` is the decoded identity object. `receipt` is the stored serialized receipt, initially null with sequence zero. Unknown operations and storage failures must reject, not return a plausible empty result.
 
-Persist a receipt atomically with business writes and notifications. A retried `(clientId, sequence)` must observe the previously committed receipt rather than executing the handler again. Ownership must be enforced when saving it.
+Persist a receipt atomically with business writes, stamps and publications. A retried `(clientId, sequence)` must observe the previously committed receipt rather than executing the handler again. Ownership must be enforced when saving it.
 
-Channel cursors are monotonic within one channel. Stamps are monotonic for one `(model, identityKey)` **across channels**, not separate counters per channel. Concurrent notifications of one record must not allocate the same stamp. The Prisma implementation locks the record counter before the channel counter and compacts invalidations by channel/model/identity.
+Channel cursors are monotonic within one channel. Stamps are monotonic for one `(model, identityKey)` **across channels**, not separate counters per channel, and advance only through `advanceStamp` (once per change) or a first `ensureStamp`; `publish` must refuse a stamp that is not the record's current one. Concurrent `advanceStamp` calls for one record must not allocate the same stamp, and concurrent `ensureStamp` calls must agree on 1. The Prisma implementation allocates stamps and cursors with atomic upserts and compacts invalidations by channel/model/identity.
 
 All wire counters must fit the nonnegative JavaScript safe-integer range. Database 64-bit values must be range-checked before converting to JSON numbers. Schema and adapter migrations are your deployment responsibility; changing the application schema does not automatically migrate your backend tables.
 

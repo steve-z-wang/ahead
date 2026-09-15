@@ -10,17 +10,17 @@ Rust commands: `startSync {pushOnly: true}`, then `next` → `{kind: "push", bod
 
 ## 5. Building Block View
 
-The Rust `SyncCycle` remembers one active action so a request that failed is retried with the same bytes. In push-only mode `next` asks the engine to freeze; a batch already in flight comes back unchanged ([Batching](../../engine/push/batching.md)). `complete` decodes the receipt and acknowledges it ([Settlement](../../engine/settlement.md)). The cycle's full mode, which also issues HTTP pulls per subscribed channel, is retained for tests and the internal protocol fixture and is not reachable from `connect`.
+The Rust `SyncCycle` remembers one active action so a request that failed is retried with the same bytes. In push-only mode `next` asks the engine to freeze; a batch already in flight comes back unchanged ([Batching](../../engine/push/batching.md)). `complete` decodes the receipt and acknowledges it, which completes the batch with the server's content ([Settlement](../../engine/settlement.md)). The cycle's full mode, which also issues HTTP pulls per subscribed channel, is retained for tests and the internal protocol fixture and is not reachable from `connect`.
 
 Code: [client/transport.rs](../../../../../../crates/client/src/transport.rs) (`SyncCycle`); the loop in `#runSync` in [client-js/index.mts](../../../../../../packages/client-js/index.mts) and `_runSync` in [dart/client.dart](../../../../../../packages/dart/lib/src/client.dart).
 
 ## 6. Runtime View
 
-One cycle: restart the push-only cycle, loop `next` → send → `complete` until `next` returns `null`, then report success. A transport error ends the cycle with a failure; the frozen batch stays in flight and the next cycle resends it. A receipt for a batch whose checkpoints are met settles immediately; otherwise the batch waits for pages from the live lane, and the settlement that follows wakes this lane again.
+One cycle: restart the push-only cycle, loop `next` → send → `complete` until `next` returns `null`, then report success. A transport error ends the cycle with a failure; the frozen batch stays in flight and the next cycle resends it. A receipt completes its batch at once; nothing waits for the live lane. A receipt the engine refuses (another client or batch, or missing authority) is a cycle failure: the batch stays frozen and is resent.
 
 ## 10. Quality Requirements
 
-- **A retried push reuses the frozen request; a receipt whose checkpoint is unmet leaves the mutation pending until the page arrives; the lane never issues a pull.** Evidence: [bindings/common/tests/session.rs](../../../../../../bindings/common/tests/session.rs) `rust_selects_transport_actions_and_reuses_frozen_request_on_retry`, `live_push_cycle_keeps_receipts_but_leaves_reads_to_the_stream`.
+- **A retried push reuses the frozen request; a receipt completes the push without a pull and the visible row is the server's; a page carrying the same authority later is a no-op that advances the cursor; the lane never issues a pull.** Evidence: [bindings/common/tests/session.rs](../../../../../../bindings/common/tests/session.rs) `rust_selects_transport_actions_and_reuses_frozen_request_on_retry`, `live_push_cycle_keeps_receipts_but_leaves_reads_to_the_stream`.
 - **A client with no subscribed channels still pushes.** Evidence: [live.test.mjs](../../../../../../integration/bindings/client-js/live.test.mjs) `a reusable server config isolates cancellation and no-channel clients only push`.
 
-Tests read, not executed.
+Executed 2026-09-15: `cargo test -p ahead-binding --locked` passed with the session tests above; `live.test.mjs` read, not executed.

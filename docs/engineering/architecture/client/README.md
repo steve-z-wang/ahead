@@ -3,7 +3,7 @@
 The client runtime keeps local state in SQLite and synchronizes it with a server.
 
 - [Frontend interface](frontend-interface.md) — Expose reads, writes, subscriptions and status to SDKs.
-- [Engine](engine/README.md) — Local reads and writes, mutations, cursors, rollback and settlement.
+- [Engine](engine/README.md) — Local reads and writes, mutations, cursors, rollback and completion from receipts.
 - [Storage](storage/README.md) — Execute Engine-requested SQL and transactions; no sync policy.
 - [Connection](connection/README.md) — HTTP/WebSocket, catch-up and reconnect.
 

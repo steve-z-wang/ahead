@@ -44,7 +44,7 @@ The compiler writes TypeScript and Dart clients, typed backend interfaces, descr
 | `tx.mutate.edit` | Apply the local update and queue `Edit` |
 | `Handlers<Tx>.edit` | Implement authoritative business logic for `Edit` |
 | `Loaders<Tx>.entry` | Return current records from your backend |
-| Backend `Entry(identity)` | Identify a changed record in `notify` |
+| Backend `Entry(identity)` | Identify a changed record in `publish` or `changes.add` |
 
 On the client, an update slot takes `{ identity, values }` in TypeScript. In the handler, its decoded input is `{ identity, patch }`. Dart exposes a typed `EditEntryUpdate` whose fields use `Present`. These are generated views of the same mutation contract, not independently matched API names.
 
