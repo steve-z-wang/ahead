@@ -1,8 +1,8 @@
 //! The host operation contract: the shared fixture round-trips through the
 //! Rust types, and a malformed request or response is refused per operation.
 use ahead_server::host::{
-    Acknowledged, Claimed, Handled, Head, HostRequest, Invalidation, Loaded, OPERATIONS, Published,
-    Scanned,
+    Acknowledged, Claimed, Handled, Head, HostRequest, Invalidation, Loaded, OPERATIONS,
+    PublicationIntent, Published, RecordRef, Scanned, Stamped,
 };
 use serde_json::{Value, json};
 
@@ -29,6 +29,7 @@ fn round_trip_response(op: &str, value: &Value) -> Result<Value, String> {
         "scan" => round!(Scanned),
         "handle" => round!(Handled),
         "load" => round!(Loaded),
+        "advanceStamp" | "ensureStamp" => round!(Stamped),
         "publish" => round!(Published),
         other => panic!("no response type is wired for {other}"),
     }
@@ -173,7 +174,7 @@ fn a_response_carrying_an_unknown_field_is_refused() {
 #[test]
 fn a_response_of_the_wrong_type_is_refused_per_operation() {
     // One clearly wrong answer per operation, in the shape a host might drift into.
-    let wrong: [(&str, Value); 10] = [
+    let wrong: [(&str, Value); 12] = [
         ("claim", json!({"clientId":"c","owner":"o","sequence":-1})),
         ("saveReceipt", json!({"saved": true})),
         ("head", json!("7")),
@@ -181,8 +182,10 @@ fn a_response_of_the_wrong_type_is_refused_per_operation() {
         ("savepoint", json!({})),
         ("rollback", json!({})),
         ("release", json!({})),
-        ("handle", json!({"channel": 1})),
+        ("handle", json!({"channel": "shared"})),
         ("load", json!({"0": null})),
+        ("advanceStamp", json!("4")),
+        ("ensureStamp", json!(0)),
         ("publish", json!({"cursor": 0, "stamp": 1})),
     ];
     for (op, value) in wrong {
@@ -194,12 +197,38 @@ fn a_response_of_the_wrong_type_is_refused_per_operation() {
 }
 
 #[test]
-fn a_handle_response_carries_a_channel_or_a_rejection_and_never_both() {
+fn a_handle_response_carries_changes_and_publications_or_a_rejection_and_never_both() {
+    let task = |id: &str| RecordRef {
+        model: "Task".into(),
+        identity: json!({"id": id}),
+    };
     assert_eq!(
-        serde_json::from_value::<Handled>(json!({"channel": "shared"})).unwrap(),
+        serde_json::from_value::<Handled>(json!({
+            "changes": [{"model":"Task","identity":{"id":"t-2"}}],
+            "publications": [{"channel":"shared"}, {"channel":"other","records":[]}]
+        }))
+        .unwrap(),
         Handled::Settled {
-            channel: "shared".into()
+            changes: vec![task("t-2")],
+            publications: vec![
+                PublicationIntent {
+                    channel: "shared".into(),
+                    records: None
+                },
+                PublicationIntent {
+                    channel: "other".into(),
+                    records: Some(vec![])
+                }
+            ]
         }
+    );
+    assert_eq!(
+        serde_json::from_value::<Handled>(json!({"changes": [], "publications": []})).unwrap(),
+        Handled::Settled {
+            changes: vec![],
+            publications: vec![]
+        },
+        "a handler that changed nothing beyond its operations and published nothing"
     );
     assert_eq!(
         serde_json::from_value::<Handled>(json!({"rejection": "task.refused"})).unwrap(),
@@ -208,30 +237,58 @@ fn a_handle_response_carries_a_channel_or_a_rejection_and_never_both() {
         }
     );
     let both = serde_json::from_value::<Handled>(
-        json!({"channel": "shared", "rejection": "task.refused"}),
+        json!({"changes": [], "publications": [], "rejection": "task.refused"}),
     )
     .unwrap_err()
     .to_string();
     assert!(both.contains("not both"), "{both}");
-    // `Handled` cannot express "no settlement", so the simulation host still
-    // answers `{}` when a handler names no channel and relies on the decoder to
-    // refuse it (`a4_handler_without_a_channel_aborts_the_batch`). Pin the
-    // wording here, where the refusal is produced, rather than only where a
-    // test hands `invalid_response` that string by hand.
     let none = serde_json::from_value::<Handled>(json!({}))
         .unwrap_err()
         .to_string();
     assert!(none.contains("invalid handler settlement"), "{none}");
     for refused in [
         json!({}),
-        json!({"channel": null}),
-        json!({"channel": 1}),
+        json!({"changes": []}),
+        json!({"publications": []}),
+        json!({"channel": "shared"}),
+        json!({"changes": null, "publications": []}),
+        json!({"changes": [{"model":"","identity":{}}], "publications": []}),
+        json!({"changes": [{"model":"Task","identity":"t"}], "publications": []}),
+        json!({"changes": [], "publications": [{"channel":""}]}),
+        json!({"changes": [], "publications": [{"channel":"shared","records":[{"model":"Task"}]}]}),
+        json!({"changes": [], "publications": [{"scope":"shared"}]}),
         json!({"rejection": null}),
         json!({"rejection": "Not A Code"}),
         json!({"settled": "shared"}),
     ] {
         assert!(
             serde_json::from_value::<Handled>(refused.clone()).is_err(),
+            "accepted {refused}"
+        );
+    }
+}
+
+#[test]
+fn a_load_response_is_rows_or_a_refusal_code() {
+    assert_eq!(
+        serde_json::from_value::<Loaded>(json!([{"id":"t-1"}, null])).unwrap(),
+        Loaded::Rows(vec![Some(json!({"id":"t-1"})), None])
+    );
+    assert_eq!(
+        serde_json::from_value::<Loaded>(json!({"rejection":"task.forbidden"})).unwrap(),
+        Loaded::Refused {
+            rejection: "task.forbidden".into()
+        }
+    );
+    for refused in [
+        json!({}),
+        json!({"rejection": ""}),
+        json!({"rejection": "Not A Code"}),
+        json!({"rows": []}),
+        json!(null),
+    ] {
+        assert!(
+            serde_json::from_value::<Loaded>(refused.clone()).is_err(),
             "accepted {refused}"
         );
     }
@@ -294,7 +351,6 @@ fn an_unusable_response_names_its_operation_and_ordinal() {
         version: 1,
         identities: vec![],
         owner: "alice".into(),
-        channel: "shared".into(),
     };
     assert_eq!(
         load.invalid_response("x").code,
@@ -312,6 +368,15 @@ fn an_unusable_response_names_its_operation_and_ordinal() {
     assert_eq!(
         HostRequest::Head {
             channel: "shared".into()
+        }
+        .invalid_response("x")
+        .code,
+        ahead_server::code::HOST_INVALID
+    );
+    assert_eq!(
+        HostRequest::AdvanceStamp {
+            model: "Task".into(),
+            identity_key: "{\"id\":\"t-1\"}".into()
         }
         .invalid_response("x")
         .code,

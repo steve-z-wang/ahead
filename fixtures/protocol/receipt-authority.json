@@ -1,0 +1,32 @@
+{
+  "comment": "Push receipts both sides must decode alike. A receipt answers one batch of one client and carries the final authority of every record a successful mutation changed; it names no channel and no cursor. Structural rules live in the decoder; whether the batch matches and the rejections belong to it is checked at acknowledgement.",
+  "canonical": {
+    "wire": "{\"batchSequence\":4,\"clientId\":\"device-1\",\"records\":[{\"identity\":{\"id\":\"e\"},\"model\":\"Entry\",\"stamp\":12,\"state\":{\"note\":null,\"text\":\"Hello\"}}],\"rejections\":[]}",
+    "clientId": "device-1",
+    "batchSequence": 4,
+    "stamp": 12
+  },
+  "receipt": [
+    {"name": "success without channels", "wire": "{\"clientId\":\"device-1\",\"batchSequence\":4,\"rejections\":[],\"records\":[{\"model\":\"Entry\",\"identity\":{\"id\":\"e\"},\"stamp\":12,\"state\":{\"text\":\"Hello\",\"note\":null}}]}", "valid": true},
+    {"name": "all rejected", "wire": "{\"clientId\":\"device-1\",\"batchSequence\":5,\"rejections\":[{\"ordinal\":7,\"code\":\"denied\"},{\"ordinal\":8,\"code\":\"dependency.rejected\"}],\"records\":[]}", "valid": true},
+    {"name": "deletion", "wire": "{\"clientId\":\"device-1\",\"batchSequence\":6,\"rejections\":[],\"records\":[{\"model\":\"Entry\",\"identity\":{\"id\":\"e\"},\"stamp\":13,\"state\":null}]}", "valid": true},
+    {"name": "repeated record keeps one final result", "wire": "{\"clientId\":\"device-1\",\"batchSequence\":7,\"rejections\":[{\"ordinal\":10,\"code\":\"denied\"}],\"records\":[{\"model\":\"Entry\",\"identity\":{\"id\":\"e\"},\"stamp\":15,\"state\":{\"text\":\"third\",\"note\":null}},{\"model\":\"Entry\",\"identity\":{\"id\":\"f\"},\"stamp\":2,\"state\":{\"text\":\"new\",\"note\":null}}]}", "valid": true},
+    {"name": "safe maximum counters", "wire": "{\"clientId\":\"device-1\",\"batchSequence\":9007199254740991,\"rejections\":[{\"ordinal\":9007199254740991,\"code\":\"denied\"}],\"records\":[{\"model\":\"Entry\",\"identity\":{\"id\":\"e\"},\"stamp\":9007199254740991,\"state\":null}]}", "valid": true},
+    {"name": "duplicate record key", "wire": "{\"clientId\":\"device-1\",\"batchSequence\":4,\"rejections\":[],\"records\":[{\"model\":\"Entry\",\"identity\":{\"id\":\"e\"},\"stamp\":12,\"state\":null},{\"model\":\"Entry\",\"identity\":{\"id\":\"e\"},\"stamp\":13,\"state\":null}]}", "valid": false},
+    {"name": "duplicate rejection ordinal", "wire": "{\"clientId\":\"device-1\",\"batchSequence\":4,\"rejections\":[{\"ordinal\":1,\"code\":\"a\"},{\"ordinal\":1,\"code\":\"b\"}],\"records\":[]}", "valid": false},
+    {"name": "rejection ordinal zero", "wire": "{\"clientId\":\"device-1\",\"batchSequence\":4,\"rejections\":[{\"ordinal\":0,\"code\":\"a\"}],\"records\":[]}", "valid": false},
+    {"name": "blank rejection code", "wire": "{\"clientId\":\"device-1\",\"batchSequence\":4,\"rejections\":[{\"ordinal\":1,\"code\":\" \"}],\"records\":[]}", "valid": false},
+    {"name": "client missing", "wire": "{\"batchSequence\":4,\"rejections\":[],\"records\":[]}", "valid": false},
+    {"name": "batch sequence missing", "wire": "{\"clientId\":\"device-1\",\"rejections\":[],\"records\":[]}", "valid": false},
+    {"name": "records missing", "wire": "{\"clientId\":\"device-1\",\"batchSequence\":4,\"rejections\":[]}", "valid": false},
+    {"name": "rejections missing", "wire": "{\"clientId\":\"device-1\",\"batchSequence\":4,\"records\":[]}", "valid": false},
+    {"name": "legacy checkpoint receipt", "wire": "{\"requiredScope\":\"book\",\"requiredSyncId\":0,\"requiredCheckpoints\":[],\"rejections\":[]}", "valid": false},
+    {"name": "batch sequence zero", "wire": "{\"clientId\":\"device-1\",\"batchSequence\":0,\"rejections\":[],\"records\":[]}", "valid": false},
+    {"name": "batch sequence overflow", "wire": "{\"clientId\":\"device-1\",\"batchSequence\":9007199254740992,\"rejections\":[],\"records\":[]}", "valid": false},
+    {"name": "stamp zero", "wire": "{\"clientId\":\"device-1\",\"batchSequence\":4,\"rejections\":[],\"records\":[{\"model\":\"Entry\",\"identity\":{\"id\":\"e\"},\"stamp\":0,\"state\":null}]}", "valid": false},
+    {"name": "stamp overflow", "wire": "{\"clientId\":\"device-1\",\"batchSequence\":4,\"rejections\":[],\"records\":[{\"model\":\"Entry\",\"identity\":{\"id\":\"e\"},\"stamp\":9007199254740992,\"state\":null}]}", "valid": false},
+    {"name": "record identity not an object", "wire": "{\"clientId\":\"device-1\",\"batchSequence\":4,\"rejections\":[],\"records\":[{\"model\":\"Entry\",\"identity\":\"e\",\"stamp\":1,\"state\":null}]}", "valid": false},
+    {"name": "record state not an object", "wire": "{\"clientId\":\"device-1\",\"batchSequence\":4,\"rejections\":[],\"records\":[{\"model\":\"Entry\",\"identity\":{\"id\":\"e\"},\"stamp\":1,\"state\":\"x\"}]}", "valid": false},
+    {"name": "record state missing", "wire": "{\"clientId\":\"device-1\",\"batchSequence\":4,\"rejections\":[],\"records\":[{\"model\":\"Entry\",\"identity\":{\"id\":\"e\"},\"stamp\":1}]}", "valid": false}
+  ]
+}

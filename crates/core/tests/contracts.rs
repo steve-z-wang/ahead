@@ -91,20 +91,28 @@ fn wire_names_remain_legacy_and_counters_are_safe() {
 
 #[test]
 fn batch_envelope_keeps_unknown_data_in_canonical_bytes() {
-    let a=PushRequest::decode(br#"{"clientId":"c","batchSequence":1,"mutations":[{"ordinal":4,"name":"Edit","args":{}}],"future":1}"#).unwrap();
-    let b=PushRequest::decode(br#"{"future":1,"mutations":[{"args":{},"name":"Edit","ordinal":4}],"batchSequence":1,"clientId":"c"}"#).unwrap();
+    let a=PushRequest::decode(br#"{"clientId":"c","batchSequence":1,"models":{"Entry":1},"mutations":[{"ordinal":4,"name":"Edit","args":{}}],"future":1}"#).unwrap();
+    let b=PushRequest::decode(br#"{"future":1,"mutations":[{"args":{},"name":"Edit","ordinal":4}],"batchSequence":1,"models":{"Entry":1},"clientId":"c"}"#).unwrap();
     assert_eq!(a.encode().unwrap(), b.encode().unwrap());
     assert_eq!(
         a.encode().unwrap(),
-        br#"{"batchSequence":1,"clientId":"c","future":1,"mutations":[{"args":{},"name":"Edit","ordinal":4}]}"#
+        br#"{"batchSequence":1,"clientId":"c","future":1,"models":{"Entry":1},"mutations":[{"args":{},"name":"Edit","ordinal":4}]}"#
     );
-    let c=PushRequest::decode(br#"{"clientId":"c","batchSequence":1,"mutations":[{"ordinal":4,"name":"Edit","args":{}}]}"#).unwrap();
+    assert_eq!(a.models.get("Entry"), Some(&1));
+    let c=PushRequest::decode(br#"{"clientId":"c","batchSequence":1,"models":{"Entry":1},"mutations":[{"ordinal":4,"name":"Edit","args":{}}]}"#).unwrap();
     assert_ne!(a.encode().unwrap(), c.encode().unwrap());
     assert!(
         PushRequest::decode(
-            br#"{"clientId":"c","batchSequence":1,"mutations":[{"ordinal":1},{"ordinal":1}]}"#
+            br#"{"clientId":"c","batchSequence":1,"models":{"Entry":1},"mutations":[{"ordinal":1},{"ordinal":1}]}"#
         )
         .is_err()
+    );
+    assert!(
+        PushRequest::decode(
+            br#"{"clientId":"c","batchSequence":1,"mutations":[{"ordinal":1,"name":"Edit"}]}"#
+        )
+        .is_err(),
+        "the read contracts the receipt is served at are required"
     );
 }
 
@@ -121,29 +129,75 @@ fn canonical_numbers_match_javascript_and_utf16_key_order() {
 }
 
 #[test]
-fn checkpoint_wire_roundtrip_retains_legacy_fallback() {
-    let receipt = PushReceipt {
-        required_checkpoints: vec![ChannelCheckpoint {
-            channel: "b".into(),
-            cursor: 3,
-        }],
-        required_channel: "b".into(),
-        required_cursor: 3,
-        rejections: vec![Rejection {
-            ordinal: 2,
-            code: "denied".into(),
-        }],
-    };
-    let value: Value = serde_json::from_slice(&receipt.encode().unwrap()).unwrap();
+fn receipt_wire_round_trips_and_carries_authority_without_a_cursor() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/protocol/receipt-authority.json"
+    ))
+    .unwrap();
+    let canonical = &fixture["canonical"];
+    let receipt = PushReceipt::decode(canonical["wire"].as_str().unwrap().as_bytes()).unwrap();
+    assert_eq!(receipt.client_id, canonical["clientId"]);
     assert_eq!(
-        value["requiredCheckpoints"][0],
-        json!({"scope":"b","syncId":3})
+        receipt.batch_sequence,
+        canonical["batchSequence"].as_u64().unwrap()
     );
-    assert_eq!(value["requiredScope"], "b");
+    assert_eq!(
+        receipt.records[0].stamp,
+        canonical["stamp"].as_u64().unwrap()
+    );
+    assert!(receipt.rejections.is_empty());
     assert_eq!(
         PushReceipt::decode(&receipt.encode().unwrap()).unwrap(),
         receipt
     );
+    assert_eq!(
+        String::from_utf8(receipt.encode().unwrap()).unwrap(),
+        canonical["wire"].as_str().unwrap(),
+        "the canonical bytes are stable"
+    );
+    assert!(receipt.answers("device-1", 4));
+    assert!(!receipt.answers("device-1", 5));
+    assert!(!receipt.answers("device-2", 4));
+    // A channel change is the same authority plus a delivery cursor; converting
+    // it discards only the cursor, and no cursor is ever invented the other way.
+    let change = RecordChange {
+        cursor: 9,
+        model: "Entry".into(),
+        identity: json!({"id":"e"}),
+        stamp: 12,
+        state: json!({"text":"Hello","note":null}),
+    };
+    let authority: AuthorityRecord = change.into();
+    assert_eq!(authority, receipt.records[0]);
+    let wire: Value = serde_json::from_slice(&receipt.encode().unwrap()).unwrap();
+    assert!(wire["records"][0].get("syncId").is_none());
+    assert!(wire.get("requiredCheckpoints").is_none());
+}
+
+#[test]
+fn receipt_fixture_cases_decode_as_declared() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/protocol/receipt-authority.json"
+    ))
+    .unwrap();
+    for case in fixture["receipt"].as_array().unwrap() {
+        let wire = case["wire"].as_str().unwrap().as_bytes();
+        let decoded = PushReceipt::decode(wire);
+        assert_eq!(
+            decoded.is_ok(),
+            case["valid"].as_bool().unwrap(),
+            "{}: {decoded:?}",
+            case["name"]
+        );
+        if let Ok(receipt) = decoded {
+            assert_eq!(
+                PushReceipt::decode(&receipt.encode().unwrap()).unwrap(),
+                receipt,
+                "{}",
+                case["name"]
+            );
+        }
+    }
 }
 
 #[test]
@@ -169,35 +223,15 @@ fn server_pull_request_accepts_js_integer_number_spellings() {
     }
 }
 #[test]
-fn receipt_distinguishes_missing_checkpoints_from_explicit_empty() {
-    assert!(
-        PushReceipt::decode(br#"{"requiredScope":"s","requiredSyncId":0,"rejections":[]}"#).is_ok()
-    );
-    assert!(
-        PushReceipt::decode(
-            br#"{"requiredScope":"s","requiredSyncId":0,"rejections":[],"requiredCheckpoints":[]}"#
-        )
-        .is_err()
-    );
-    assert!(PushReceipt::decode(br#"{"requiredScope":"s","requiredSyncId":0,"rejections":[],"requiredCheckpoints":[{"scope":"s","syncId":0},{"scope":"s","syncId":1}]}"#).is_err());
-}
-
-#[test]
-fn shared_wire_fixtures_preserve_counter_and_checkpoint_boundaries() {
+fn shared_wire_fixtures_preserve_counter_boundaries() {
     let fixture: Value = serde_json::from_str(include_str!(
-        "../../../fixtures/protocol/counter-and-checkpoint.json"
+        "../../../fixtures/protocol/counter-boundaries.json"
     ))
     .unwrap();
-    for kind in ["pull", "receipt"] {
-        for case in fixture[kind].as_array().unwrap() {
-            let wire = case["wire"].as_str().unwrap().as_bytes();
-            let valid = if kind == "pull" {
-                PullPage::decode(wire).is_ok()
-            } else {
-                PushReceipt::decode(wire).is_ok()
-            };
-            assert_eq!(valid, case["valid"].as_bool().unwrap(), "{}", case["name"]);
-        }
+    for case in fixture["pull"].as_array().unwrap() {
+        let wire = case["wire"].as_str().unwrap().as_bytes();
+        let valid = PullPage::decode(wire).is_ok();
+        assert_eq!(valid, case["valid"].as_bool().unwrap(), "{}", case["name"]);
     }
 }
 
@@ -350,7 +384,8 @@ fn push_batches_hold_one_to_twenty_mutations_with_distinct_ordinals() {
         let mutations: Vec<Value> = (1..=count)
             .map(|i| json!({"ordinal":i,"name":"edit","operations":[]}))
             .collect();
-        json!({"clientId":"c","batchSequence":1,"mutations":mutations}).to_string()
+        json!({"clientId":"c","batchSequence":1,"models":{"Entry":1},"mutations":mutations})
+            .to_string()
     };
     assert!(PushRequest::decode(batch(0).as_bytes()).is_err());
     assert_eq!(
@@ -369,7 +404,7 @@ fn push_batches_hold_one_to_twenty_mutations_with_distinct_ordinals() {
     );
     let err = PushRequest::decode(batch(21).as_bytes()).unwrap_err();
     assert!(err.to_string().contains("1..20"), "{err}");
-    let duplicate = json!({"clientId":"c","batchSequence":1,"mutations":[
+    let duplicate = json!({"clientId":"c","batchSequence":1,"models":{"Entry":1},"mutations":[
         {"ordinal":1,"name":"edit","operations":[]},{"ordinal":1,"name":"edit","operations":[]}
     ]})
     .to_string();
@@ -382,7 +417,9 @@ fn push_batches_hold_one_to_twenty_mutations_with_distinct_ordinals() {
 fn push_and_pull_requests_refuse_a_blank_client_id() {
     let mutations = json!([{"ordinal":1,"name":"edit","operations":[]}]);
     for blank in ["", "   "] {
-        let push = json!({"clientId":blank,"batchSequence":1,"mutations":mutations}).to_string();
+        let push =
+            json!({"clientId":blank,"batchSequence":1,"models":{"Entry":1},"mutations":mutations})
+                .to_string();
         assert!(
             PushRequest::decode(push.as_bytes()).is_err(),
             "push {blank:?}"
@@ -394,7 +431,8 @@ fn push_and_pull_requests_refuse_a_blank_client_id() {
             "pull {blank:?}"
         );
     }
-    let push = json!({"clientId":"c","batchSequence":1,"mutations":mutations}).to_string();
+    let push = json!({"clientId":"c","batchSequence":1,"models":{"Entry":1},"mutations":mutations})
+        .to_string();
     assert_eq!(PushRequest::decode(push.as_bytes()).unwrap().client_id, "c");
     let missing = json!({"batchSequence":1,"mutations":mutations}).to_string();
     assert!(
