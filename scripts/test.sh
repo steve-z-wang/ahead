@@ -11,8 +11,11 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 (cd examples/rust-round-trip && npm ci && npx prisma generate)
 cargo run -p ahead-compiler -- compile examples/rust-round-trip/models examples/rust-round-trip/generated --backend-runtime ../../../packages/server/index.mts --client-runtime ../../../packages/client-js/index.mts
 npm run typecheck
-"$root/node_modules/.bin/prettier" --check packages/client-js/*.mts packages/server/*.mts packages/persistence-prisma/*.mts
+"$root/node_modules/.bin/prettier" --check packages/client-js/*.mts packages/server/*.mts packages/persistence-prisma/*.mts packages/client-react-native/*.mts packages/client-react-native/index.ts
+"$root/node_modules/.bin/tsc" -p packages/client-react-native
+node --test integration/platform/react-native/plugins/expo-path-spaces.test.js
 node --test integration/bindings/client-js/*.test.mjs
+node --test integration/bindings/client-react-native/*.test.mjs
 bash integration/persistence/transaction-probe/run.sh
 bash integration/persistence/server/run.sh
 case "$(uname -s)" in

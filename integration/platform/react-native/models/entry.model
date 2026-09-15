@@ -1,0 +1,8 @@
+model Entry {
+ id String
+ text String
+ note String?
+ @@id(id)
+}
+mutation AddEntry { entry Entry.create }
+mutation Edit { entry Entry.update<text,note> }

@@ -1,0 +1,22 @@
+{
+  "expo": {
+    "name": "ahead-rn-harness",
+    "slug": "ahead-rn-harness",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "dev.ahead.ReactNativeSmoke",
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
+    },
+    "plugins": [
+      "./plugins/expo-path-spaces"
+    ]
+  }
+}

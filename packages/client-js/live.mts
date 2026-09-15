@@ -5,7 +5,7 @@ import type { Transport } from "./connection.mts";
 export type LiveSubscription = {
   scopes: string[];
 };
-type ServerConnection = {
+export type ServerConnection = {
   readonly push: Transport;
   stream(
     subscription: LiveSubscription,

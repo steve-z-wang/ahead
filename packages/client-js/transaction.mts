@@ -1,17 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-export type RecordValue = Record<string, unknown>;
-export type QuerySpec = {
-  filter?: RecordValue;
-  orderBy?: { field: string; direction: "ascending" | "descending" }[];
-  limit?: number;
-};
-export function strictJson(value: unknown): string {
-  return JSON.stringify(value, (_key, item) => {
-    if (typeof item === "number" && !Number.isFinite(item))
-      throw Error("JSON numbers must be finite");
-    return item;
-  });
-}
+import { type RecordValue, type QuerySpec } from "./values.mts";
+export { strictJson, type RecordValue, type QuerySpec } from "./values.mts";
 /** Calls execute in submission order and cannot outlive the caller-owned transaction. */
 export class Transaction {
   #send: (request: RecordValue) => Promise<any>;

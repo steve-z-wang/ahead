@@ -1,0 +1,17 @@
+{
+  "name": "@ahead/native",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Native mobile carrier for Ahead",
+  "files": [
+    "expo-module.config.json",
+    "ios",
+    "scripts"
+  ],
+  "scripts": {
+    "prepare": "bash scripts/build-ios.sh simulator"
+  },
+  "peerDependencies": {
+    "expo": "*"
+  }
+}

@@ -25,7 +25,7 @@ The import specifiers for the runtime packages are configurable (`--backend-runt
 ## 5. Building Block View
 
 - **Source versus descriptor.** The `.model` text is the source of truth; the JSON descriptors are what the runtimes validate at load time; generated language code embeds the descriptor verbatim.
-- **TypeScript.** Per model: `Name`, `NameIdentity`, `NamePatch`, decode and encode functions; `NameModel` with `get`, `query` (equality `where`, scalar `orderBy`, `limit`) and relation accessors; `NameLiveModel.watch`; `NameTxModel` with direct `create`, `update`, `delete`. Per mutation: a typed args interface and a builder that emits wire operations. Handler keys are `lowerFirst(name)` for the latest version and `lowerFirst(name)V<n>` for older ones.
+- **TypeScript.** Per model: `Name`, `NameIdentity`, `NamePatch`, decode and encode functions; `NameModel` with `get`, `query` (equality `where`, scalar `orderBy`, `limit`) and relation accessors; `NameLiveModel.watch`; `NameTxModel` with direct `create`, `update`, `delete`. `NameModel` is generic in its port type and the subclasses instantiate it with the live or write port, so the emitted code needs no `declare` class fields, which the React Native Babel presets reject. Per mutation: a typed args interface and a builder that emits wire operations. Handler keys are `lowerFirst(name)` for the latest version and `lowerFirst(name)V<n>` for older ones.
 - **Dart.** The same surface with `Present<T>` wrappers for patch and filter presence, named parameters for mutations, and a `libraryPath` requirement outside iOS.
 - **Dates.** Encoded with `toISOString()` / `toUtc().toIso8601String()`, decoded with `new Date` / `DateTime.parse` ([Types](../schema/types.md)).
 

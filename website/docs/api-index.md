@@ -29,6 +29,7 @@ Use this index to find the interface you call or implement. The examples use the
 
 | Interface | Use it to | Reference |
 | --- | --- | --- |
+| React Native `databasePath` | Resolve a persistent local database path | [React Native setup](frontend/platforms.md#react-native) |
 | `Client`, `Transaction`, `QuerySpec`, `RecordValue` | Access the generic runtime beneath generated APIs | [Client runtime](frontend/runtime.md) |
 | `ServerOptions`, `SyncServer`, `ConnectionOptions` | Configure the backend connection and refresh credentials | [Server connection](frontend/runtime.md#server-connection) |
 | `RuntimeConnection`, `AuthenticationExpired` | Control Dart sync and identify authentication failures | [Connections](frontend/runtime.md#connection-controls) |

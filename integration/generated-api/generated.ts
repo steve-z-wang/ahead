@@ -184,52 +184,52 @@ export function AddComment(args:AddCommentArgs) { const operations:object[] = []
  for (const value of [args.comment]) {
  operations.push({ model:'Comment', op:'create', identity:encodeCommentIdentity(value), values:encodeCommentPatch(value) }); }
  return {name:'AddComment',version:1,operations}; }
-export class EntryModel { readonly port:ReadPort; constructor(port:ReadPort) { this.port=port; }
+export class EntryModel<P extends ReadPort=ReadPort> { readonly port:P; constructor(port:P) { this.port=port; }
  async get(identity:EntryIdentity):Promise<Entry|null> { const row=await this.port.read('Entry',encodeEntryIdentity(identity)); return row===null ? null : decodeEntry(row); }
  async query(options:{where?:Partial<Omit<Entry, 'tags'>>;orderBy?:{field:'id' | 'title' | 'note' | 'at';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<Entry[]> { return (await this.port.querySpec('Entry',{filter:encodeEntryWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeEntry); }
 }
-export class EntryLiveModel extends EntryModel { declare readonly port:LivePort; constructor(port:LivePort) { super(port); }
+export class EntryLiveModel extends EntryModel<LivePort> {
  watch(options:{where?:Partial<Omit<Entry, 'tags'>>}, listener:(rows:Entry[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watch('Entry',encodeEntryWhere(options.where??{}),(rows)=>listener(rows.map(decodeEntry)),onError); }
 }
-export class EntryTxModel extends EntryModel { declare readonly port:WritePort; constructor(port:WritePort) { super(port); }
+export class EntryTxModel extends EntryModel<WritePort> {
  create(value:Entry):Promise<void> { return this.port.direct({model:'Entry',op:'create',identity:encodeEntryIdentity(value),values:encodeEntryPatch(value)}); }
  update(identity:EntryIdentity, patch:EntryPatch):Promise<void> { return this.port.direct({model:'Entry',op:'update',identity:encodeEntryIdentity(identity),values:encodeEntryPatch(patch)}); }
  delete(identity:EntryIdentity):Promise<void> { return this.port.direct({model:'Entry',op:'delete',identity:encodeEntryIdentity(identity)}); }
 }
-export class BookModel { readonly port:ReadPort; constructor(port:ReadPort) { this.port=port; }
+export class BookModel<P extends ReadPort=ReadPort> { readonly port:P; constructor(port:P) { this.port=port; }
  async get(identity:BookIdentity):Promise<Book|null> { const row=await this.port.read('Book',encodeBookIdentity(identity)); return row===null ? null : decodeBook(row); }
  async query(options:{where?:Partial<Book>;orderBy?:{field:'id' | 'title';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<Book[]> { return (await this.port.querySpec('Book',{filter:encodeBookWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeBook); }
  async comments(identity:BookIdentity):Promise<Comment[]> { return (await this.port.referencing('Book',encodeBookIdentity(identity),'Comment','book')).map(decodeComment); }
 }
-export class BookLiveModel extends BookModel { declare readonly port:LivePort; constructor(port:LivePort) { super(port); }
+export class BookLiveModel extends BookModel<LivePort> {
  watch(options:{where?:Partial<Book>}, listener:(rows:Book[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watch('Book',encodeBookWhere(options.where??{}),(rows)=>listener(rows.map(decodeBook)),onError); }
 }
-export class BookTxModel extends BookModel { declare readonly port:WritePort; constructor(port:WritePort) { super(port); }
+export class BookTxModel extends BookModel<WritePort> {
  create(value:Book):Promise<void> { return this.port.direct({model:'Book',op:'create',identity:encodeBookIdentity(value),values:encodeBookPatch(value)}); }
  update(identity:BookIdentity, patch:BookPatch):Promise<void> { return this.port.direct({model:'Book',op:'update',identity:encodeBookIdentity(identity),values:encodeBookPatch(patch)}); }
  delete(identity:BookIdentity):Promise<void> { return this.port.direct({model:'Book',op:'delete',identity:encodeBookIdentity(identity)}); }
 }
-export class CommentModel { readonly port:ReadPort; constructor(port:ReadPort) { this.port=port; }
+export class CommentModel<P extends ReadPort=ReadPort> { readonly port:P; constructor(port:P) { this.port=port; }
  async get(identity:CommentIdentity):Promise<Comment|null> { const row=await this.port.read('Comment',encodeCommentIdentity(identity)); return row===null ? null : decodeComment(row); }
  async query(options:{where?:Partial<Comment>;orderBy?:{field:'id' | 'bookId' | 'text';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<Comment[]> { return (await this.port.querySpec('Comment',{filter:encodeCommentWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeComment); }
  async book(identity:CommentIdentity):Promise<Book|null> { const row=await this.port.related('Comment',encodeCommentIdentity(identity),'book'); return row===null?null:decodeBook(row); }
 }
-export class CommentLiveModel extends CommentModel { declare readonly port:LivePort; constructor(port:LivePort) { super(port); }
+export class CommentLiveModel extends CommentModel<LivePort> {
  watch(options:{where?:Partial<Comment>}, listener:(rows:Comment[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watch('Comment',encodeCommentWhere(options.where??{}),(rows)=>listener(rows.map(decodeComment)),onError); }
 }
-export class CommentTxModel extends CommentModel { declare readonly port:WritePort; constructor(port:WritePort) { super(port); }
+export class CommentTxModel extends CommentModel<WritePort> {
  create(value:Comment):Promise<void> { return this.port.direct({model:'Comment',op:'create',identity:encodeCommentIdentity(value),values:encodeCommentPatch(value)}); }
  update(identity:CommentIdentity, patch:CommentPatch):Promise<void> { return this.port.direct({model:'Comment',op:'update',identity:encodeCommentIdentity(identity),values:encodeCommentPatch(patch)}); }
  delete(identity:CommentIdentity):Promise<void> { return this.port.direct({model:'Comment',op:'delete',identity:encodeCommentIdentity(identity)}); }
 }
-export class CounterModel { readonly port:ReadPort; constructor(port:ReadPort) { this.port=port; }
+export class CounterModel<P extends ReadPort=ReadPort> { readonly port:P; constructor(port:P) { this.port=port; }
  async get(identity:CounterIdentity):Promise<Counter|null> { const row=await this.port.read('Counter',encodeCounterIdentity(identity)); return row===null ? null : decodeCounter(row); }
  async query(options:{where?:Partial<Counter>;orderBy?:{field:'id' | 'index';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<Counter[]> { return (await this.port.querySpec('Counter',{filter:encodeCounterWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeCounter); }
 }
-export class CounterLiveModel extends CounterModel { declare readonly port:LivePort; constructor(port:LivePort) { super(port); }
+export class CounterLiveModel extends CounterModel<LivePort> {
  watch(options:{where?:Partial<Counter>}, listener:(rows:Counter[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watch('Counter',encodeCounterWhere(options.where??{}),(rows)=>listener(rows.map(decodeCounter)),onError); }
 }
-export class CounterTxModel extends CounterModel { declare readonly port:WritePort; constructor(port:WritePort) { super(port); }
+export class CounterTxModel extends CounterModel<WritePort> {
  create(value:Counter):Promise<void> { return this.port.direct({model:'Counter',op:'create',identity:encodeCounterIdentity(value),values:encodeCounterPatch(value)}); }
  update(identity:CounterIdentity, patch:CounterPatch):Promise<void> { return this.port.direct({model:'Counter',op:'update',identity:encodeCounterIdentity(identity),values:encodeCounterPatch(patch)}); }
  delete(identity:CounterIdentity):Promise<void> { return this.port.direct({model:'Counter',op:'delete',identity:encodeCounterIdentity(identity)}); }

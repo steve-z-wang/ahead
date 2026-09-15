@@ -1,0 +1,84 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { Transaction } from '../../../packages/client-react-native/transaction.mts';
+import * as runtime from '../../../packages/client-js/runtime.mts';
+test('shared runtime accepts the mobile transaction and native carrier', () => {
+  assert.equal(typeof runtime?.createClient, 'function');
+});
+{
+  const native = createRequire(import.meta.url)('../../../bindings/node/ahead-node.node');
+  const Client = runtime.createClient(native, Transaction, () => { throw Error('network not configured'); });
+  const schema={models:[{name:'Entry',identity:['id'],fields:[{name:'id',type:{kind:'scalar',name:'string'},nullable:false},{name:'text',type:{kind:'scalar',name:'string'},nullable:false}],relations:[],unique:[]}],enums:[],clientPolicies:[]};
+  test('mobile scope preserves rollback, isolation and persistent identity on real SQLite', async () => {
+    const directory=await mkdtemp(join(tmpdir(),'ahead-rn-'));
+    const path=join(directory,'client.sqlite');
+    let client=await Client.open({path,schema});
+    try {
+      const id=client.clientId;
+      await assert.rejects(client.transaction(async tx => {
+        await tx.direct({model:'Entry',op:'create',identity:{id:'rolled-back'},values:{text:'no'}});
+        throw Error('abort');
+      }), /abort/);
+      assert.equal(await client.read('Entry',{id:'rolled-back'}),null);
+      let retained;
+      await client.transaction(async tx => {
+        retained=tx;
+        await tx.direct({model:'Entry',op:'create',identity:{id:'kept'},values:{text:'yes'}});
+      });
+      await assert.rejects(retained.read('Entry',{id:'kept'}),/closed/);
+      await client.close();
+      client=await Client.open({path,schema});
+      assert.equal(client.clientId,id);
+      assert.equal((await client.read('Entry',{id:'kept'})).text,'yes');
+      let release, entered;
+      const gate=new Promise(r=>release=r);
+      const ready=new Promise(r=>entered=r);
+      const transaction=client.transaction(async tx=>{
+        await tx.direct({model:'Entry',op:'update',identity:{id:'kept'},values:{text:'after'}});
+        entered(); await gate;
+      });
+      await ready;
+      let readResolved=false;
+      const read=client.read('Entry',{id:'kept'}).then(row=>{readResolved=true; return row;});
+      await new Promise(r=>setImmediate(r));
+      assert.equal(readResolved,false);
+      release(); await transaction;
+      assert.equal((await read).text,'after');
+    } finally {await client.close(); await rm(directory,{recursive:true,force:true});}
+  });
+}
+{
+  const native = createRequire(import.meta.url)('../../../bindings/node/ahead-node.node');
+  const Client = runtime.createClient(native, Transaction, () => { throw Error('network not configured'); });
+  const schema={models:[{name:'Entry',identity:['id'],fields:[{name:'id',type:{kind:'scalar',name:'string'},nullable:false},{name:'text',type:{kind:'scalar',name:'string'},nullable:false}],relations:[],unique:[]}],enums:[],clientPolicies:[]};
+  test('concurrent top-level mobile transactions serialize instead of interleaving', async () => {
+    const directory=await mkdtemp(join(tmpdir(),'ahead-rn-serial-'));
+    const client=await Client.open({path:join(directory,'client.sqlite'),schema});
+    try {
+      const order=[];
+      let release; const gate=new Promise(r=>release=r);
+      const first=client.transaction(async tx=>{
+        order.push('first:begin');
+        await tx.direct({model:'Entry',op:'create',identity:{id:'a'},values:{text:'first'}});
+        await gate;
+        order.push('first:end');
+      });
+      const second=client.transaction(async tx=>{
+        order.push('second:begin');
+        assert.equal((await tx.read('Entry',{id:'a'}))?.text,'first','second transaction must observe the committed first');
+        await tx.direct({model:'Entry',op:'create',identity:{id:'b'},values:{text:'second'}});
+        order.push('second:end');
+      });
+      await new Promise(r=>setTimeout(r,20));
+      assert.deepEqual(order,['first:begin']);
+      release();
+      await Promise.all([first,second]);
+      assert.deepEqual(order,['first:begin','first:end','second:begin','second:end']);
+      assert.equal((await client.query('Entry')).length,2);
+    } finally {await client.close(); await rm(directory,{recursive:true,force:true});}
+  });
+}

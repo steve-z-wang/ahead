@@ -1,0 +1,131 @@
+{
+  "formatVersion": 1,
+  "mutations": {
+    "AddEntry": {
+      "1": {
+        "input": {
+          "enums": [],
+          "models": [
+            {
+              "fields": [
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "text",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "note",
+                  "nullable": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "identity": [
+                "id"
+              ],
+              "name": "Entry"
+            }
+          ]
+        },
+        "knownFields": {
+          "Entry": [
+            "id",
+            "text",
+            "note"
+          ]
+        },
+        "name": "AddEntry",
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "slots": [
+          {
+            "cardinality": "single",
+            "model": "Entry",
+            "name": "entry",
+            "operation": "create"
+          }
+        ],
+        "version": 1
+      }
+    },
+    "Edit": {
+      "1": {
+        "input": {
+          "enums": [],
+          "models": [
+            {
+              "fields": [
+                {
+                  "name": "id",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "text",
+                  "nullable": false,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "note",
+                  "nullable": true,
+                  "type": {
+                    "kind": "scalar",
+                    "name": "string"
+                  }
+                }
+              ],
+              "identity": [
+                "id"
+              ],
+              "name": "Entry"
+            }
+          ]
+        },
+        "knownFields": {
+          "Entry": [
+            "id",
+            "text",
+            "note"
+          ]
+        },
+        "name": "Edit",
+        "prerequisites": [],
+        "requirements": [],
+        "sequence": null,
+        "slots": [
+          {
+            "allowedPatchFields": [
+              "text",
+              "note"
+            ],
+            "cardinality": "single",
+            "model": "Entry",
+            "name": "entry",
+            "operation": "update"
+          }
+        ],
+        "version": 1
+      }
+    }
+  }
+}

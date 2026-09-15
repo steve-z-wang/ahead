@@ -8,12 +8,17 @@ After the prerequisites and native build in [Running tests](../running.md):
 
 ```sh
 node --test integration/bindings/client-js/*.test.mjs
+node --test integration/bindings/client-react-native/*.test.mjs
 bash integration/generated-api/verify.sh
 ```
 
 The generated API runner checks TypeScript positive and negative cases, analyzes Dart, and executes generated clients. Dart native tests also need the library-path environment described in the running guide.
 
 Next review: negative type coverage per language, callback failures, native lifetimes and shared cross-language scenarios. A shared Rust engine alone does not establish SDK equivalence.
+
+## React Native checks
+
+[Mobile adapter tests](../../../../integration/bindings/client-react-native) exercise scope lifetime, rollback/isolation on real SQLite through the host carrier, and native-style HTTP/WebSocket authentication, subscription ordering, cancellation and bounded recovery. [C carrier tests](../../../../bindings/mobile/src/lib.rs) exercise malformed input and handle lifetime. These host checks do not establish iOS execution. The separate [simulator harness](../../../../integration/platform/react-native/README.md) owns actual Expo/Swift/Rust, offline process-restart and two-client evidence.
 
 ## Coverage review
 
