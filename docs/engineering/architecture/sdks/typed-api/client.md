@@ -21,12 +21,13 @@ Every call becomes one command through the [bindings](../bindings.md). Generated
 ## 5. Building Block View
 
 - **Ports.** Three small interfaces separate what can be done where: a read port (reads), a write port (reads plus `direct` and `mutate`), and in TypeScript a live port (reads plus `watch`). The client implements the live port; a transaction implements the write port. Generated model classes are written against the ports, which is why a `watch` inside a transaction is a compile error.
+- **TypeScript hosts.** Node and React Native share [client orchestration](../../../../../packages/client-js/runtime.mts). Each entry point supplies its native string carrier, transaction scope, and server transport. Node retains AsyncLocalStorage savepoints; React Native uses an explicit transaction scope without a raw nested-savepoint API.
 - **Client.** One promise chain per client serializes every command, so calls from the application, the connection and watchers never interleave inside Rust. `transaction` sends `begin`, runs the body against a transaction object, then `finish` and `commit`, or `rollback` on any error.
 - **Transaction.** Commands are queued in submission order and marked as belonging to the transaction. `finish` fails if any command was never awaited, if any command failed even though the application caught the error, or if savepoints overlapped. `savepoint(body)` nests via async context (TypeScript) or zone values (Dart) so a failure inside it is confined to that scope.
 - **Watch.** Re-runs the query after every commit notification and emits only when the JSON result differs; Dart exposes a broadcast stream.
 - **Generated code.** Types, codecs (dates to `Date`/`DateTime`), mutation builders, model classes and the two facades `GeneratedClient` and `GeneratedTransaction` ([Compiler / Generate](../../compiler/generate.md)). Presence is expressed as an omitted key versus `null` in TypeScript and as `Present<T>?` in Dart; both encode to the same wire patch.
 
-Code: [client-js/index.mts](../../../../../packages/client-js/index.mts), [client-js/transaction.mts](../../../../../packages/client-js/transaction.mts), [dart/client.dart](../../../../../packages/dart/lib/src/client.dart), [dart/port.dart](../../../../../packages/dart/lib/src/port.dart).
+Code: [React Native adapter](../../../../../packages/client-react-native/index.ts), [shared runtime](../../../../../packages/client-js/runtime.mts), [client-js/index.mts](../../../../../packages/client-js/index.mts), [client-js/transaction.mts](../../../../../packages/client-js/transaction.mts), [dart/client.dart](../../../../../packages/dart/lib/src/client.dart), [dart/port.dart](../../../../../packages/dart/lib/src/port.dart).
 
 ## 9. Architecture Decisions
 

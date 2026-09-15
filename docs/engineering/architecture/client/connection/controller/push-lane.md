@@ -12,7 +12,7 @@ Rust commands: `startSync {pushOnly: true}`, then `next` → `{kind: "push", bod
 
 The Rust `SyncCycle` remembers one active action so a request that failed is retried with the same bytes. In push-only mode `next` asks the engine to freeze; a batch already in flight comes back unchanged ([Batching](../../engine/push/batching.md)). `complete` decodes the receipt and acknowledges it ([Settlement](../../engine/settlement.md)). The cycle's full mode, which also issues HTTP pulls per subscribed channel, is retained for tests and the internal protocol fixture and is not reachable from `connect`.
 
-Code: [client/transport.rs](../../../../../../crates/client/src/transport.rs) (`SyncCycle`); the loop in `#runSync` in [client-js/index.mts](../../../../../../packages/client-js/index.mts) and `_runSync` in [dart/client.dart](../../../../../../packages/dart/lib/src/client.dart).
+Code: [client/transport.rs](../../../../../../crates/client/src/transport.rs) (`SyncCycle`); the loop in `#runSync` in [client-js/runtime.mts](../../../../../../packages/client-js/runtime.mts) and `_runSync` in [dart/client.dart](../../../../../../packages/dart/lib/src/client.dart).
 
 ## 6. Runtime View
 

@@ -1003,7 +1003,7 @@ fn ts_models(v: &Value, o: &mut String) {
         };
         writeln!(
             o,
-            "export class {n}Model {{ readonly port:ReadPort; constructor(port:ReadPort) {{ this.port=port; }}"
+            "export class {n}Model<P extends ReadPort=ReadPort> {{ readonly port:P; constructor(port:P) {{ this.port=port; }}"
         )
         .unwrap();
         writeln!(o, " async get(identity:{n}Identity):Promise<{n}|null> {{ const row=await this.port.read('{n}',encode{n}Identity(identity)); return row===null ? null : decode{n}(row); }}").unwrap();
@@ -1024,8 +1024,8 @@ fn ts_models(v: &Value, o: &mut String) {
             }
         }
         o.push_str("}\n");
-        writeln!(o, "export class {n}LiveModel extends {n}Model {{ declare readonly port:LivePort; constructor(port:LivePort) {{ super(port); }}\n watch(options:{{where?:{filter}}}, listener:(rows:{n}[])=>void, onError?:(error:unknown)=>void):()=>void {{ return this.port.watch('{n}',encode{n}Where(options.where??{{}}),(rows)=>listener(rows.map(decode{n})),onError); }}\n}}").unwrap();
-        writeln!(o, "export class {n}TxModel extends {n}Model {{ declare readonly port:WritePort; constructor(port:WritePort) {{ super(port); }}\n create(value:{n}):Promise<void> {{ return this.port.direct({{model:'{n}',op:'create',identity:encode{n}Identity(value),values:encode{n}Patch(value)}}); }}\n update(identity:{n}Identity, patch:{n}Patch):Promise<void> {{ return this.port.direct({{model:'{n}',op:'update',identity:encode{n}Identity(identity),values:encode{n}Patch(patch)}}); }}\n delete(identity:{n}Identity):Promise<void> {{ return this.port.direct({{model:'{n}',op:'delete',identity:encode{n}Identity(identity)}}); }}\n}}").unwrap();
+        writeln!(o, "export class {n}LiveModel extends {n}Model<LivePort> {{\n watch(options:{{where?:{filter}}}, listener:(rows:{n}[])=>void, onError?:(error:unknown)=>void):()=>void {{ return this.port.watch('{n}',encode{n}Where(options.where??{{}}),(rows)=>listener(rows.map(decode{n})),onError); }}\n}}").unwrap();
+        writeln!(o, "export class {n}TxModel extends {n}Model<WritePort> {{\n create(value:{n}):Promise<void> {{ return this.port.direct({{model:'{n}',op:'create',identity:encode{n}Identity(value),values:encode{n}Patch(value)}}); }}\n update(identity:{n}Identity, patch:{n}Patch):Promise<void> {{ return this.port.direct({{model:'{n}',op:'update',identity:encode{n}Identity(identity),values:encode{n}Patch(patch)}}); }}\n delete(identity:{n}Identity):Promise<void> {{ return this.port.direct({{model:'{n}',op:'delete',identity:encode{n}Identity(identity)}}); }}\n}}").unwrap();
     }
 }
 fn dart_query_types(v: &Value, o: &mut String) {

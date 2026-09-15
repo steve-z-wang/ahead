@@ -44,14 +44,14 @@ export function Edit(args:EditArgs) { const operations:object[] = [];
  for (const value of [args.entry]) {
  operations.push({ model:'Entry', op:'update', identity:encodeEntryIdentity(value.identity), values:encodeEntryPatch(value.values) }); }
  return {name:'Edit',version:1,operations}; }
-export class EntryModel { readonly port:ReadPort; constructor(port:ReadPort) { this.port=port; }
+export class EntryModel<P extends ReadPort=ReadPort> { readonly port:P; constructor(port:P) { this.port=port; }
  async get(identity:EntryIdentity):Promise<Entry|null> { const row=await this.port.read('Entry',encodeEntryIdentity(identity)); return row===null ? null : decodeEntry(row); }
  async query(options:{where?:Partial<Entry>;orderBy?:{field:'id' | 'text' | 'note';direction:'ascending'|'descending'}[];limit?:number}={}):Promise<Entry[]> { return (await this.port.querySpec('Entry',{filter:encodeEntryWhere(options.where??{}),orderBy:options.orderBy??[],...(options.limit===undefined?{}:{limit:options.limit})})).map(decodeEntry); }
 }
-export class EntryLiveModel extends EntryModel { declare readonly port:LivePort; constructor(port:LivePort) { super(port); }
+export class EntryLiveModel extends EntryModel<LivePort> {
  watch(options:{where?:Partial<Entry>}, listener:(rows:Entry[])=>void, onError?:(error:unknown)=>void):()=>void { return this.port.watch('Entry',encodeEntryWhere(options.where??{}),(rows)=>listener(rows.map(decodeEntry)),onError); }
 }
-export class EntryTxModel extends EntryModel { declare readonly port:WritePort; constructor(port:WritePort) { super(port); }
+export class EntryTxModel extends EntryModel<WritePort> {
  create(value:Entry):Promise<void> { return this.port.direct({model:'Entry',op:'create',identity:encodeEntryIdentity(value),values:encodeEntryPatch(value)}); }
  update(identity:EntryIdentity, patch:EntryPatch):Promise<void> { return this.port.direct({model:'Entry',op:'update',identity:encodeEntryIdentity(identity),values:encodeEntryPatch(patch)}); }
  delete(identity:EntryIdentity):Promise<void> { return this.port.direct({model:'Entry',op:'delete',identity:encodeEntryIdentity(identity)}); }

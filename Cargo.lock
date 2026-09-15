@@ -52,6 +52,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ahead-mobile"
+version = "0.1.0"
+dependencies = [
+ "ahead-binding",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "ahead-server"
 version = "0.1.0"
 dependencies = [
