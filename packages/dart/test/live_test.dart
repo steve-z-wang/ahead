@@ -1358,4 +1358,145 @@ void moreTests() {
       }
     },
   );
+  test(
+    'bounded receive buffer (8 MiB) overflows on ten large pages without restarting the in-flight HTTP catch-up',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('ahead-dart-bytes-');
+      final schema =
+          jsonDecode(
+                await File('../../fixtures/schemas/entry.json').readAsString(),
+              )
+              as Map<String, dynamic>;
+      final client = await Client.open(
+        path: '${dir.path}/db',
+        schema: schema,
+        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+      );
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final sockets = <WebSocket>[];
+      final errors = <Object>[];
+      final entered = Completer<void>(), gate = Completer<void>();
+      var head = 1, pulls = 0;
+      final pullCursors = <int>[];
+      Map<String, dynamic> page(String text, int cursor, int to) => {
+        'scope': 'scope',
+        'fromCursor': cursor,
+        'toCursor': to,
+        'changes': [
+          {
+            'syncId': to,
+            'model': 'Entry',
+            'identity': {'id': 'live'},
+            'stamp': to,
+            'state': {'text': text, 'note': null},
+          },
+        ],
+      };
+      // Each page carries one change holding a 1 MiB value, so eight buffered
+      // pages already exceed the 8 MiB byte bound: the page count never comes
+      // close to 128 and cannot be what trips the buffer.
+      const largePages = 10;
+      final filler = 'x' * (1024 * 1024);
+      expect(largePages, lessThan(128));
+      expect(
+        jsonEncode(page('live 1 $filler', 1, 2)).length * 8,
+        greaterThan(8 * 1024 * 1024),
+      );
+      Future<void> until(FutureOr<bool> Function() check) async {
+        final deadline = DateTime.now().add(const Duration(seconds: 10));
+        while (DateTime.now().isBefore(deadline)) {
+          if (await check()) return;
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        throw StateError('condition timed out: $errors');
+      }
+
+      server.listen((r) async {
+        if (WebSocketTransformer.isUpgradeRequest(r)) {
+          final socket = await WebSocketTransformer.upgrade(r);
+          sockets.add(socket);
+          socket.listen((message) {
+            final sub = jsonDecode(message as String) as Map;
+            socket.add(
+              jsonEncode({
+                'type': 'subscribed',
+                'scopes': sub['scopes'],
+                'rejections': [],
+              }),
+            );
+          });
+          return;
+        }
+        final body = jsonDecode(await utf8.decoder.bind(r).join()) as Map;
+        pulls++;
+        final from = body['fromCursor'] as int;
+        pullCursors.add(from);
+        final response = page('head $head', from, head);
+        if (pulls == 1) {
+          entered.complete();
+          await gate.future;
+        }
+        r.response.headers.contentType = ContentType.json;
+        r.response.write(jsonEncode(response));
+        await r.response.close();
+      });
+      try {
+        await client.subscribe('scope');
+        final connection = await client.connect(
+          SyncServer(
+            url: 'http://127.0.0.1:${server.port}',
+            token: () => 'secret',
+          ),
+          onError: errors.add,
+        );
+        await entered.future.timeout(const Duration(seconds: 5));
+        // Flush fewer pages than the 128-page bound but more bytes than the
+        // 8 MiB bound while the initial HTTP response remains held.
+        await sockets.first.addStream(
+          Stream.fromIterable([
+            for (var cursor = 1; cursor <= largePages; cursor++)
+              jsonEncode(page('live $cursor $filler', cursor, cursor + 1)),
+          ]),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        // Only HTTP can reveal this state: replaying every buffered live page
+        // reaches 11, so a buffer bounded by pages alone cannot satisfy this.
+        head = 12;
+        gate.complete();
+        await until(
+          () async => (await client.status())['cursors']['scope'] >= 11,
+        );
+        expect((await client.status())['cursors']['scope'], 12);
+        expect(
+          (await client.read('Entry', {'id': 'live'}))?['text'],
+          'head 12',
+        );
+        expect(
+          pullCursors,
+          contains(1),
+          reason: 'recovery preserves the held HTTP page before pulling again',
+        );
+        expect(
+          sockets.length,
+          1,
+          reason: 'overflow must not restart the socket and starve catch-up',
+        );
+        expect(
+          pulls,
+          inInclusiveRange(2, 4),
+          reason: 'overflow requires HTTP recovery and coalesces its work',
+        );
+        expect(errors, isEmpty);
+        await connection.close();
+      } finally {
+        if (!gate.isCompleted) gate.complete();
+        await client.close();
+        for (final socket in sockets) {
+          await socket.close();
+        }
+        await server.close(force: true);
+        await dir.delete(recursive: true);
+      }
+    },
+  );
 }
