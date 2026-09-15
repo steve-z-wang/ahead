@@ -92,9 +92,9 @@ export function TodoScreen({ state }: { state: TodoState }) {
           placeholder="Add task…"
           placeholderTextColor="#9A9A9A"
           returnKeyType="done"
-          blurOnSubmit={false}
+          submitBehavior="submit"
           onSubmitEditing={() => void submit()}
-          editable={state.phase === "ready" && !submitting}
+          editable={state.phase === "ready"}
           accessibilityLabel="Add task"
         />
         <Pressable

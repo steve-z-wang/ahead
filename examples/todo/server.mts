@@ -76,7 +76,9 @@ export async function createExample() {
     async setTodoDone({ input, tx, notify }) {
       calls++;
       const { identity, patch } = input.todo;
-      if (typeof patch.done !== "boolean") throw new MutationRejected("todo.done_invalid");
+      // The generated patch type keeps `done` optional, but the runtime refuses a patch without it
+      // as `mutation.invalid` before any handler runs, so this branch only narrows the type.
+      if (typeof patch.done !== "boolean") throw Error("unreachable: patch without done");
       try {
         await tx.todo.update({ where: identity, data: { done: patch.done } });
       } catch (error) {

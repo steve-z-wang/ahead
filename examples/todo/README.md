@@ -81,14 +81,14 @@ bash integration/e2e/todo-run.sh
 bash integration/platform/run_todo_ios_smoke.sh
 ```
 
-The e2e runner covers the happy path, every rejection code, an unknown identity, a lost push response, offline add-then-done across a reopen, and opposing completions in both commit orders. The simulator runner needs the Release app above; it creates two disposable simulators and deletes only those.
+The e2e runner covers the happy path, every rejection code, an unknown identity, a lost push response, a backend restart on the same database, offline add-then-done across a reopen, and opposing completions in both commit orders. The simulator runner needs the Release app above; it creates two disposable simulators (newest installed iOS runtime and first iPhone device type by default, or `AHEAD_TODO_SIM_RUNTIME`/`AHEAD_TODO_SIM_DEVICE`) and deletes only those.
 
 ## Evidence
 
-Verified 2026-09-15 on branch `codex/todo-mobile` (on top of the React Native support commit `2155a7a`) with Xcode 26.5 (17F42), the iOS 26.5 simulator runtime (23F77), two disposable iPhone 17 simulators, Node 26.4.0, cargo 1.98.1, CocoaPods 1.16.2, Expo 57.0.22, React Native 0.86.3 and React 19.2.3.
+Verified 2026-09-15 on branch `codex/todo-mobile` at the working tree committed as `4ce53b8` (on top of the React Native support commit `2155a7a`) with Xcode 26.5 (17F42), the iOS 26.5 simulator runtime (23F77), two disposable iPhone 17 simulators, Node 26.4.0, cargo 1.98.1, CocoaPods 1.16.2, Expo 57.0.22, React Native 0.86.3 and React 19.2.3.
 
 ```sh
-bash integration/e2e/todo-run.sh                      # 13 scenarios, all passed
+bash integration/e2e/todo-run.sh                      # 15 scenarios, all passed
 bash integration/platform/run_todo_ios_smoke.sh       # PASS: two To-do phones, lost-response retry, offline add-then-done, process restart and convergence
 ```
 

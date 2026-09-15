@@ -17,6 +17,7 @@ export interface TodoState {
 /** Owns one session for the component lifetime; React state mirrors local watch results only. */
 export function useTodos(config: LaunchConfig): TodoState {
   const opened = useRef<OpenedSession | null>(null);
+  const recheck = useRef<() => Promise<void>>(async () => {});
   const [phase, setPhase] = useState<Phase>("loading");
   const [user, setUser] = useState<User | null>(null);
   const [todos, setTodos] = useState<Todo[]>([]);
@@ -39,6 +40,7 @@ export function useTodos(config: LaunchConfig): TodoState {
           onConnectionError: (failure) => {
             console.log("connection:", String(failure));
             connectionFailed();
+            void recheck.current();
           },
         });
       } catch (failure) {
@@ -67,6 +69,7 @@ export function useTodos(config: LaunchConfig): TodoState {
         console.log("rejected:", JSON.stringify(rejections));
         for (const rejection of rejections) await session.dismiss(rejection.ordinal);
       };
+      recheck.current = checkRejections;
       unwatch = session.session.watch(
         (rows) => {
           if (disposed) return;
@@ -80,6 +83,7 @@ export function useTodos(config: LaunchConfig): TodoState {
     })();
     return () => {
       disposed = true;
+      recheck.current = async () => {};
       unwatch();
       const session = opened.current;
       opened.current = null;
@@ -92,12 +96,14 @@ export function useTodos(config: LaunchConfig): TodoState {
     if (!session) throw Error("The list is still loading");
     await session.session.add(title);
     setError(null);
+    await recheck.current();
   }, []);
   const setDone = useCallback(async (id: string, done: boolean) => {
     const session = opened.current;
     if (!session) throw Error("The list is still loading");
     await session.session.setDone(id, done);
     setError(null);
+    await recheck.current();
   }, []);
 
   return { phase, user, todos, error, add, setDone };

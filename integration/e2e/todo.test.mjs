@@ -32,14 +32,14 @@ async function never(predicate, label, millis = 300) {
 }
 
 async function scenario(body) {
- const app = await createExample();
+ let app = await createExample();
  const directory = await mkdtemp(join(tmpdir(), 'ahead-todo-e2e-'));
  const clients = new Set();
  const errors = [];
  const fetchOriginal = globalThis.fetch;
  let server;
  const ctx = {
-  app,
+  get app() { return app; },
   directory,
   errors,
   get url() { return server.url; },
@@ -60,6 +60,15 @@ async function scenario(body) {
   settled: client => wait(async () => (await client.status()).pending === 0, `${client.client.clientId} settled`),
   rejection: (client, code) => wait(async () => (await client.status()).rejections.some(r => r.code === code), `rejection ${code}`),
   row: id => app.db.todo.findUnique({ where: { id } }),
+  /** Stops the backend process state (HTTP server and Prisma client) and starts a fresh one on the same port and database. */
+  async restart() {
+   const port = Number(new URL(server.url).port);
+   await server.close();
+   await app.close();
+   app = await createExample();
+   await app.initialize();
+   server = await app.listen(port);
+  },
   /** Delays HTTP pushes made with `token` until the returned release function runs. */
   gate(token) {
    const opened = Promise.withResolvers();
@@ -326,5 +335,36 @@ test('setting done true twice remains true', async () => {
   assert.equal((await ctx.row('twice-1')).done, true);
   assert.equal((await alice.models.todo.get({ id: 'twice-1' })).done, true);
   assert.deepEqual((await alice.status()).rejections, []);
+ });
+});
+
+test('a backend restart on the same database keeps state and delivers work queued while it was down', async () => {
+ await scenario(async ctx => {
+  const alice = await ctx.open('alice', 'alice');
+  await wait(async () => (await alice.models.todo.query()).length >= 3, 'Alice catches up');
+  await addTodo(alice, { id: 'restart-1', title: 'Before restart', done: false, createdById: 'alice' });
+  await ctx.settled(alice);
+  await setDone(alice, 'seed-2', true);
+  await ctx.settled(alice);
+  await ctx.restart();
+  assert.equal((await ctx.row('seed-2')).done, true, 'seeding after restart does not reset edits');
+  assert.deepEqual(await ctx.row('restart-1'), { id: 'restart-1', title: 'Before restart', done: false, createdById: 'alice' });
+  await addTodo(alice, { id: 'restart-2', title: 'After restart', done: false, createdById: 'alice' });
+  await ctx.settled(alice);
+  assert.equal(ctx.app.handlerCalls, 1, 'only the post-restart mutation ran on the new backend');
+  const bob = await ctx.open('bob', 'bob');
+  await wait(async () => (await bob.models.todo.get({ id: 'restart-2' }))?.title === 'After restart', 'Bob loads through the restarted backend');
+  assert.equal((await bob.models.todo.get({ id: 'seed-2' })).done, true);
+ });
+});
+
+test('a completion request without a boolean done is refused by the runtime as mutation.invalid before the handler runs', async () => {
+ await scenario(async ctx => {
+  const alice = await ctx.open('alice', 'alice');
+  await wait(async () => (await alice.models.todo.get({ id: 'seed-1' })) !== null, 'Alice catches up');
+  await alice.client.mutate({ name: 'SetTodoDone', version: 1, operations: [{ model: 'Todo', op: 'update', identity: { id: 'seed-1' }, values: {} }] });
+  await ctx.rejection(alice, 'mutation.invalid');
+  assert.equal(ctx.app.handlerCalls, 0, 'the handler never sees a patch without done');
+  assert.equal((await ctx.row('seed-1')).done, false);
  });
 });

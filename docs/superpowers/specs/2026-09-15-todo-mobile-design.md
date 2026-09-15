@@ -74,7 +74,7 @@ The backend has these two business tables plus Ahead's existing persistence tabl
 | AddTodo | id, title, done=false, createdById | Insert a task and durably queue its creation | Trim title; reject empty trimmed text; require creator to equal authenticated user; require done=false; insert once and notify `todo:demo` |
 | SetTodoDone | id, done | Set the checkbox and durably queue the requested value | Require the task to exist; either demo participant can set done; update and notify `todo:demo` |
 
-Use `MutationRejected` codes `todo.title_empty`, `todo.creator_invalid`, `todo.initial_state_invalid`, `todo.missing`, and `todo.id_conflict` for these expected business refusals. Unexpected database failures remain retryable server failures. Never convert an arbitrary Prisma failure into a successful operation.
+Use `MutationRejected` codes `todo.title_empty`, `todo.creator_invalid`, `todo.initial_state_invalid`, `todo.missing`, and `todo.id_conflict` for these expected business refusals. A completion request without a boolean `done` never reaches the handler: the runtime refuses it as `mutation.invalid`. Unexpected database failures remain retryable server failures. Never convert an arbitrary Prisma failure into a successful operation.
 
 The UI trims text and prevents empty submission; the server repeats validation. Repeating a frozen request uses Ahead's durable receipt contract. A genuinely different create with an existing ID is rejected; it must not overwrite that task. `createdById` is immutable after creation.
 
