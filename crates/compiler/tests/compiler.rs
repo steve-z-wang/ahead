@@ -49,6 +49,12 @@ fn relationships_bindings_and_dependency_metadata() {
         "parent"
     );
     assert_eq!(v["prerequisites"][0]["name"], "Uploaded");
+    // `Parent.update<>` is valid: an empty patch is a no-op update ([#49](https://github.com/zanminwang/ahead/issues/49)).
+    assert_eq!(v["mutations"][1]["name"], "Rename");
+    assert_eq!(
+        v["mutations"][1]["slots"][0]["allowedPatchFields"],
+        serde_json::json!([])
+    );
 }
 #[test]
 fn rejects_dependency_typos() {
