@@ -7,7 +7,10 @@ import {createServerConnection} from '../../../packages/client-js/live.mts';
 
 const timeout = (p) => Promise.race([p, new Promise((_, reject) => { const t = setTimeout(() => reject(Error('timeout')), 3000); t.unref(); })]);
 
-test('internal stream establishes listeners and serializes pages, cancellation ends the socket', async () => {
+const subscribe = JSON.stringify({type:'subscribe',scopes:['scope']});
+const handlers = (over = {}) => ({ message: async () => {}, overflow: async () => {}, closed: () => {}, ...over });
+
+test('internal socket sends the subscribe frame, delivers frames in order, and cancellation ends the socket', async () => {
   assert.equal(typeof createServerConnection, 'function');
   const server = new WebSocketServer({port:0});
   await once(server,'listening');
@@ -15,7 +18,7 @@ test('internal stream establishes listeners and serializes pages, cancellation e
   const frames = [];
   const connected = once(server,'connection');
   const live = createServerConnection({url:`http://127.0.0.1:${server.address().port}`,token:'secret'});
-  const running = live.stream({scopes:['scope']}, async page => { frames.push(page); }, abort.signal, async()=>{});
+  live.open(subscribe, abort.signal, handlers({ message: async text => { frames.push(JSON.parse(text)); } }));
   try {
     const [socket, request] = await timeout(connected);
     assert.equal(request.headers.authorization,'Bearer secret');
@@ -24,26 +27,28 @@ test('internal stream establishes listeners and serializes pages, cancellation e
     const closed = once(socket,'close');
     socket.send(JSON.stringify({type:'subscribed',scopes:['scope'],rejections:[]}));
     socket.send(JSON.stringify({scope:'scope',fromCursor:12,toCursor:13,changes:[]}));
-    await timeout(new Promise(resolve => { const check = () => frames.length ? resolve() : setImmediate(check); check(); }));
-    assert.equal(frames[0].toCursor,13);
+    await timeout(new Promise(resolve => { const check = () => frames.length === 2 ? resolve() : setImmediate(check); check(); }));
+    assert.equal(frames[0].type,'subscribed', 'the transport does not interpret frames');
+    assert.equal(frames[1].toCursor,13);
     abort.abort();
-    await timeout(running);
     await timeout(closed);
   } finally { abort.abort(); for (const s of server.clients) s.terminate(); await new Promise(r => server.close(r)); }
 });
 
 test('live transport cancellation does not wait for a stalled token', async () => {
-  assert.equal(typeof createServerConnection, 'function');
   const abort = new AbortController();
+  let closed = 0;
   const live = createServerConnection({url:'http://127.0.0.1:1',token:()=>new Promise(()=>{})});
-  const running = live.stream({scopes:['scope']},async()=>{},abort.signal, async()=>{});
+  live.open(subscribe, abort.signal, handlers({ closed: () => { closed++; } }));
   abort.abort();
-  await timeout(running);
+  await new Promise(r => setTimeout(r, 20));
+  assert.equal(closed, 0, 'an aborted socket is not reported as closed');
 });
 
 test('invalid WebSocket credentials reject the session rather than leaking a rejected task', async () => {
  const live = createServerConnection({url:'http://127.0.0.1:1',token:'invalid\nheader'});
- await assert.rejects(timeout(live.stream({scopes:['scope']},async()=>{},new AbortController().signal,async()=>{})), /header|character/i);
+ const failure = new Promise(resolve => live.open(subscribe, new AbortController().signal, handlers({ closed: resolve })));
+ assert.match(String((await timeout(failure)).message), /header|character/i);
 });
 
 import { createServer } from 'node:http';
