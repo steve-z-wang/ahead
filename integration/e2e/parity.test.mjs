@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {createExample} from '../../examples/rust-round-trip/server.mts';
+import {createExample} from './fixtures/round-trip/server.mts';
 import {Client} from '../../packages/client-js/index.mts';
 
 // One script, two runtimes, one server: the Node client and the Dart client each

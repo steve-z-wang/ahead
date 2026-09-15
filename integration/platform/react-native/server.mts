@@ -1,7 +1,7 @@
 import {
   PrismaClient,
   type Prisma,
-} from "../../../examples/rust-round-trip/node_modules/@prisma/client/default.js";
+} from "../../e2e/fixtures/round-trip/node_modules/@prisma/client/default.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { createServer, request as httpRequest } from "node:http";
 import { connect as netConnect, type Socket } from "node:net";
@@ -17,12 +17,12 @@ import {
 const db = new PrismaClient();
 const calls = { add: 0, edit: 0 };
 const handlers: Handlers<Prisma.TransactionClient> = {
-  async addEntry({ input, tx, notify }) {
+  async addEntry({ input, tx, publish }) {
     calls.add++;
     await tx.entry.create({ data: input.entry });
-    notify({ channel: "book:demo", records: [input.entry] });
+    publish({ channel: "book:demo" });
   },
-  async edit({ input, tx, notify }) {
+  async edit({ input, tx, publish }) {
     calls.edit++;
     if (input.entry.patch.text === "reject")
       throw new MutationRejected("entry.denied");
@@ -30,7 +30,7 @@ const handlers: Handlers<Prisma.TransactionClient> = {
       where: input.entry.identity,
       data: input.entry.patch,
     });
-    notify({ channel: "book:demo", records: [input.entry] });
+    publish({ channel: "book:demo" });
   },
 };
 const loaders: Loaders<Prisma.TransactionClient> = {
@@ -123,6 +123,9 @@ async function proxy(dropFirstPush: boolean) {
     socket.on("close", () => sockets.delete(socket));
   });
   server.on("upgrade", (req, socket, head) => {
+    // The HTTP server drops its own error listener on upgrade; a reset from the phone
+    // (for example when the runner terminates it) must not crash the proxy.
+    socket.on("error", () => {});
     if (!online) {
       socket.end(
         "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n",

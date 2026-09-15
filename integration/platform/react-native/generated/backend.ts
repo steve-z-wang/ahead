@@ -13,8 +13,8 @@ export interface EditInput {
  entry: { identity: EntryIdentity; patch: Pick<EntryPatch, "text" | "note"> };
 }
 export interface Handlers<Tx> {
- addEntry: { v1(call: HandlerCall<Tx, AddEntryInput>): Promise<void | { channel: string }> } | ((call: HandlerCall<Tx, AddEntryInput>) => Promise<void | { channel: string }>);
- edit: { v1(call: HandlerCall<Tx, EditInput>): Promise<void | { channel: string }> } | ((call: HandlerCall<Tx, EditInput>) => Promise<void | { channel: string }>);
+ addEntry: { v1(call: HandlerCall<Tx, AddEntryInput>): Promise<void> } | ((call: HandlerCall<Tx, AddEntryInput>) => Promise<void>);
+ edit: { v1(call: HandlerCall<Tx, EditInput>): Promise<void> } | ((call: HandlerCall<Tx, EditInput>) => Promise<void>);
 }
 export interface Loaders<Tx> {
  entry: { v1(call: LoaderCall<Tx, EntryIdentity>): Promise<readonly (Entry | null)[]> } | ((call: LoaderCall<Tx, EntryIdentity>) => Promise<readonly (Entry | null)[]>);

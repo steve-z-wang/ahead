@@ -25,7 +25,7 @@ Code: `lex`, `Parser`, `parse` and the `Declarations` types in [compiler/parse.r
 - Parsing records every declaration with its position and applies no semantic rule; an unknown type parses and is refused only by Validate. Evidence: [compiler/tests/parse.rs](../../../../crates/compiler/tests/parse.rs) `parse_keeps_every_declaration_with_its_position`, `parse_reports_syntax_errors_with_the_found_token_and_nothing_semantic`.
 - A model `@@version` follows the mutation rules: positive, within the safe range, at most one per declaration, 1 when omitted. Evidence: `model_version_follows_the_mutation_rules`.
 - `@deprecated` parses on fields, enum values and slots with an optional string reason; another argument, a non-string reason or a repeat is refused. Evidence: `deprecated_is_a_field_level_directive_with_an_optional_reason`.
-- The split changes no output: the checked-in fixtures and the example compile to byte-identical files before and after it. Evidence: `compile_is_parse_then_validate_then_generate_and_declarations_are_plain_data`; verified 2026-09-14 by compiling `fixtures/compiler/*.model` and `examples/rust-round-trip/models` with both binaries and diffing the output files of each (seven then; six since mutation history moved out of the output directory).
+- The split changes no output: the checked-in fixtures and the example compile to byte-identical files before and after it. Evidence: `compile_is_parse_then_validate_then_generate_and_declarations_are_plain_data`; verified 2026-09-14 by compiling `fixtures/compiler/*.model` and `integration/e2e/fixtures/round-trip/models` with both binaries and diffing the output files of each (seven then; six since mutation history moved out of the output directory).
 
 ## 11. Risks and Technical Debt
 
