@@ -1,7 +1,6 @@
 use crate::{MAX_SAFE_INTEGER, Result, canonical_json, invalid};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
 pub fn counter(value: u64) -> Result<u64> {
@@ -72,9 +71,6 @@ impl PushRequest {
     }
     pub fn encode(&self) -> Result<Vec<u8>> {
         Ok(canonical_json(&self.raw)?.into_bytes())
-    }
-    pub fn semantic_hash(&self) -> Result<String> {
-        Ok(format!("{:x}", Sha256::digest(self.encode()?)))
     }
 }
 fn nonblank(value: &Value) -> Result<String> {

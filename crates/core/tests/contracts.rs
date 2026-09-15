@@ -90,12 +90,16 @@ fn wire_names_remain_legacy_and_counters_are_safe() {
 }
 
 #[test]
-fn batch_envelope_keeps_unknown_data_in_receipt_hash() {
+fn batch_envelope_keeps_unknown_data_in_canonical_bytes() {
     let a=PushRequest::decode(br#"{"clientId":"c","batchSequence":1,"mutations":[{"ordinal":4,"name":"Edit","args":{}}],"future":1}"#).unwrap();
     let b=PushRequest::decode(br#"{"future":1,"mutations":[{"args":{},"name":"Edit","ordinal":4}],"batchSequence":1,"clientId":"c"}"#).unwrap();
-    assert_eq!(a.semantic_hash().unwrap(), b.semantic_hash().unwrap());
+    assert_eq!(a.encode().unwrap(), b.encode().unwrap());
+    assert_eq!(
+        a.encode().unwrap(),
+        br#"{"batchSequence":1,"clientId":"c","future":1,"mutations":[{"args":{},"name":"Edit","ordinal":4}]}"#
+    );
     let c=PushRequest::decode(br#"{"clientId":"c","batchSequence":1,"mutations":[{"ordinal":4,"name":"Edit","args":{}}]}"#).unwrap();
-    assert_ne!(a.semantic_hash().unwrap(), c.semantic_hash().unwrap());
+    assert_ne!(a.encode().unwrap(), c.encode().unwrap());
     assert!(
         PushRequest::decode(
             br#"{"clientId":"c","batchSequence":1,"mutations":[{"ordinal":1},{"ordinal":1}]}"#
