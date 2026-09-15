@@ -135,8 +135,8 @@ Current code locations for the components above. Some responsibilities still sha
 | Schema | Source syntax in [compiler/parse.rs](../../crates/compiler/src/parse.rs) |
 | Protocol | [core/protocol.rs](../../crates/core/src/protocol.rs), including the shared `limits` and the subscription messages |
 | Compiler / Parse | [compiler/parse.rs](../../crates/compiler/src/parse.rs); file concatenation and error relocation in [compiler/main.rs](../../crates/compiler/src/main.rs) |
-| Compiler / Validate | [compiler/validate.rs](../../crates/compiler/src/validate.rs); version history and fence in [compiler/history.rs](../../crates/compiler/src/history.rs) |
-| Compiler / Generate | Descriptors emitted by [compiler/validate.rs](../../crates/compiler/src/validate.rs), represented by [core/schema.rs](../../crates/core/src/schema.rs); typed interfaces in [compiler/emit.rs](../../crates/compiler/src/emit.rs); output files in [compiler/main.rs](../../crates/compiler/src/main.rs) |
+| Compiler / Validate | `validate` and the `Validated` types in [compiler/validate.rs](../../crates/compiler/src/validate.rs); version history and fence in [compiler/history.rs](../../crates/compiler/src/history.rs) |
+| Compiler / Generate | Descriptors in [compiler/generate.rs](../../crates/compiler/src/generate.rs), represented by [core/schema.rs](../../crates/core/src/schema.rs); typed interfaces in [compiler/emit.rs](../../crates/compiler/src/emit.rs); output files in [compiler/main.rs](../../crates/compiler/src/main.rs) |
 | SDKs / Typed API / Client | [client-js](../../packages/client-js), [dart](../../packages/dart/lib); model-specific classes are compiler output |
 | SDKs / Typed API / Server | [server/index.mts](../../packages/server/index.mts); typed signatures are compiler output |
 | SDKs / Bindings | [bindings/common](../../bindings/common), [bindings/node](../../bindings/node), [bindings/dart](../../bindings/dart) |

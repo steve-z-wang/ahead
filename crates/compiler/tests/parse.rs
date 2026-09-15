@@ -1,4 +1,5 @@
-use ahead_compiler::{Pos, compile, parse, validate};
+use ahead_compiler::validate::{Cardinality, FieldType, OnDelete, Operation, Scalar};
+use ahead_compiler::{Pos, compile, generate, parse, validate};
 
 const SOURCE: &str = "prerequisite Uploaded(key String)\nenum Status { active archived }\nmodel Parent {\n id UUID\n children Child[]\n @@id(id)\n @@unique(id)\n}\nmodel Child {\n id UUID\n parentId UUID\n label String @requires(Uploaded(key: self))\n parent Parent @reference(via: [parentId], onTargetDelete: delete)\n @@id(id)\n}\nmutation Add {\n parent Parent.create\n children Child.create(parent: parent)[]\n @@version(2)\n @@sequence(after: [Rename(parent: parent)])\n}\nmutation Rename { parent Parent.update<> }\n";
 
@@ -71,10 +72,124 @@ fn parse_reports_syntax_errors_with_the_found_token_and_nothing_semantic() {
 }
 
 #[test]
-fn compile_is_parse_then_validate_and_declarations_are_plain_data() {
+fn compile_is_parse_then_validate_then_generate_and_declarations_are_plain_data() {
     let d = parse(SOURCE).unwrap();
-    assert_eq!(validate(&d).unwrap(), compile(SOURCE).unwrap());
+    assert_eq!(
+        generate::descriptors(&validate(&d).unwrap()),
+        compile(SOURCE).unwrap()
+    );
     assert_eq!(parse(SOURCE).unwrap(), d, "parsing is deterministic");
     let copy = d.clone();
     assert_eq!(validate(&copy).unwrap(), validate(&d).unwrap());
+}
+
+#[test]
+fn validate_resolves_declarations_into_typed_data_without_descriptors() {
+    let v = validate(&parse(SOURCE).unwrap()).unwrap();
+    assert_eq!(v.enums[0].values, vec!["active", "archived"]);
+    let child = &v.models[1];
+    assert_eq!(child.name, "Child");
+    // Relation fields leave the stored fields and resolve to their target.
+    assert_eq!(
+        child
+            .fields
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect::<Vec<_>>(),
+        ["id", "parentId", "label"]
+    );
+    assert_eq!(child.fields[0].ty, FieldType::Scalar(Scalar::Uuid));
+    assert_eq!(child.relations[0].name, "parent");
+    assert_eq!(child.relations[0].fields, vec!["parentId"]);
+    assert_eq!(child.relations[0].target_fields, vec!["id"]);
+    assert_eq!(child.relations[0].on_delete, OnDelete::Delete);
+    assert_eq!(v.models[0].unique, vec![vec!["id".to_string()]]);
+    assert_eq!(v.unique_constraints[0].model, "Parent");
+    let inverse = &v.inverses[0];
+    assert_eq!(
+        (inverse.model.as_str(), inverse.name.as_str()),
+        ("Parent", "children")
+    );
+    assert_eq!(
+        (inverse.reference.as_str(), inverse.fields.as_slice()),
+        ("parent", &["parentId".to_string()][..])
+    );
+    assert_eq!(inverse.relation_name, None);
+    assert_eq!(v.requirements[0].prerequisite, "Uploaded");
+    assert_eq!(v.requirements[0].arguments, vec!["key"]);
+    assert_eq!(v.prerequisites[0].fields[0].type_name, "String");
+    let add = &v.mutations[0];
+    assert_eq!((add.name.as_str(), add.version), ("Add", 2));
+    assert_eq!(add.slots[1].operation, Operation::Create);
+    assert_eq!(add.slots[1].cardinality, Cardinality::List);
+    assert_eq!(add.slots[1].bindings[0].slot, "parent");
+    assert_eq!(add.slots[1].bindings[0].fields, vec!["parentId"]);
+    let sequence = add.sequence.as_ref().unwrap();
+    assert_eq!(sequence.after[0].mutation, "Rename");
+    assert_eq!(sequence.after[0].bindings[0].path, vec!["parent"]);
+    // An update slot without a restriction is resolved to every non-identity stored field.
+    let rename = &v.mutations[1];
+    assert_eq!(rename.slots[0].allowed_patch_fields, Some(vec![]));
+    let d =
+        parse("model A { id UUID title String @@id(id) } mutation Edit { a A.update }").unwrap();
+    let v = validate(&d).unwrap();
+    assert_eq!(
+        v.mutations[0].slots[0].allowed_patch_fields,
+        Some(vec!["title".to_string()])
+    );
+}
+
+#[test]
+fn generate_is_a_pure_function_of_the_validated_schema() {
+    let v = validate(&parse(SOURCE).unwrap()).unwrap();
+    let once = serde_json::to_string_pretty(&generate::descriptors(&v)).unwrap();
+    let again = serde_json::to_string_pretty(&generate::descriptors(&v.clone())).unwrap();
+    assert_eq!(once, again);
+    assert_eq!(generate::descriptors(&v)["schema"], generate::schema(&v));
+    assert_eq!(
+        generate::typescript(&generate::descriptors(&v)),
+        ahead_compiler::typescript(&compile(SOURCE).unwrap())
+    );
+    // The client descriptor is what core loads.
+    ahead_core::Schema::from_value(generate::schema(&v)).unwrap();
+}
+
+#[test]
+fn semantic_errors_come_from_validate_alone() {
+    // Validate refuses before any descriptor exists; the error names the declaration.
+    let d = parse(
+        "model A {
+ id UUID
+ @@id(id)
+}
+mutation Edit {
+ a A.update<nope>
+}
+
+
+",
+    )
+    .unwrap();
+    let e = validate(&d).unwrap_err();
+    assert!(e.starts_with("6:"), "{e}");
+    assert!(e.contains("invalid allowed patch field"), "{e}");
+    let e = validate(
+        &parse(
+            "model A { id UUID @@id(id) }
+model Parent {
+ id UUID
+ children A[]
+ @@id(id)
+}
+
+",
+        )
+        .unwrap(),
+    )
+    .unwrap_err();
+    assert!(e.starts_with("4:"), "{e}");
+    assert!(
+        e.contains("inverse must resolve to exactly one reference"),
+        "{e}"
+    );
 }

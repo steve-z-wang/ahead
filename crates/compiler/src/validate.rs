@@ -1,158 +1,328 @@
-//! Validate: declarations to runtime descriptors and typed-interface input.
-//! Every rule reachable from source reports the offending declaration; the
-//! core descriptor check at the end is a backstop at the end of the input.
-use crate::parse::{Declarations, Pos, at};
-use serde_json::{Value, json};
+//! Validate: declarations to a typed, validated schema. Every rule reachable
+//! from source reports the offending declaration; the core descriptor check
+//! near the end is a backstop at the end of the input. No descriptor is
+//! assembled here: [`crate::generate`] renders [`Validated`].
+use crate::parse::{Declarations, FieldDecl, ModelDecl, Pos, at};
+use serde_json::Value;
+use std::collections::BTreeSet;
 
-/// Check the declarations and produce the compiler output consumed by
-/// [`crate::emit`] and the CLI: `{schema, mutations, loaders, uniqueConstraints,
-/// inverses, requirements, prerequisites}`.
-pub fn validate(d: &Declarations) -> Result<Value, String> {
-    // Working JSON for the semantic passes, with positions running parallel to
-    // each vector so a failing rule can name its declaration.
-    let enums: Vec<Value> = d
+/// The validated schema: every declaration resolved and every rule applied,
+/// in source order. Plain data with no JSON; [`crate::generate`] turns it into
+/// the runtime descriptors and the generated code.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Validated {
+    pub enums: Vec<Enum>,
+    pub models: Vec<Model>,
+    /// Every `@@unique`, in declaration order across models.
+    pub unique_constraints: Vec<UniqueConstraint>,
+    /// Model-typed fields without `@reference`, resolved to the reference they mirror.
+    pub inverses: Vec<Inverse>,
+    /// Every `@requires`, in field order across models.
+    pub requirements: Vec<Requirement>,
+    pub prerequisites: Vec<Prerequisite>,
+    pub mutations: Vec<Mutation>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Enum {
+    pub name: String,
+    pub values: Vec<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Model {
+    pub name: String,
+    pub identity: Vec<String>,
+    /// Stored fields only; relation fields live in `relations`.
+    pub fields: Vec<Field>,
+    pub relations: Vec<Relation>,
+    /// The field sets of this model's `@@unique` constraints.
+    pub unique: Vec<Vec<String>>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Field {
+    pub name: String,
+    pub ty: FieldType,
+    pub nullable: bool,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FieldType {
+    Scalar(Scalar),
+    Enum(String),
+    List(Box<FieldType>),
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scalar {
+    String,
+    Boolean,
+    Int,
+    Float,
+    Uuid,
+    DateTime,
+}
+impl Scalar {
+    /// The source spellings of a scalar type (`Bool` and `Boolean` are aliases).
+    fn from_source(name: &str) -> Option<Self> {
+        Some(match name {
+            "String" => Self::String,
+            "Bool" | "Boolean" => Self::Boolean,
+            "Int" => Self::Int,
+            "Float" => Self::Float,
+            "UUID" => Self::Uuid,
+            "DateTime" => Self::DateTime,
+            _ => return None,
+        })
+    }
+    /// The name the runtime descriptors use.
+    pub fn descriptor_name(self) -> &'static str {
+        match self {
+            Self::String => "string",
+            Self::Boolean => "boolean",
+            Self::Int => "int",
+            Self::Float => "float",
+            Self::Uuid => "uuid",
+            Self::DateTime => "dateTime",
+        }
+    }
+}
+/// A `@reference` field: `name` on the declaring model points at `target`
+/// through `fields`, which mirror the target's identity `target_fields`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Relation {
+    pub name: String,
+    pub target: String,
+    pub fields: Vec<String>,
+    pub target_fields: Vec<String>,
+    pub on_delete: OnDelete,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OnDelete {
+    None,
+    Delete,
+}
+impl OnDelete {
+    pub fn descriptor_name(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Delete => "delete",
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UniqueConstraint {
+    pub model: String,
+    pub fields: Vec<String>,
+}
+/// A field of `model` typed as `target` without `@reference`: the other side
+/// of the relation `reference` declared on `target`, whose foreign key is `fields`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Inverse {
+    pub model: String,
+    pub name: String,
+    pub target: String,
+    pub list: bool,
+    pub nullable: bool,
+    /// The `@inverse(name)` argument that selected the reference, if given.
+    pub relation_name: Option<String>,
+    pub reference: String,
+    pub fields: Vec<String>,
+}
+/// A `@requires(Prerequisite(field: self, …))` on `model.field`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Requirement {
+    pub model: String,
+    pub field: String,
+    pub prerequisite: String,
+    /// The prerequisite's field names in invocation order; each binds `self`,
+    /// the only argument expression currently accepted.
+    pub arguments: Vec<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Prerequisite {
+    pub name: String,
+    pub fields: Vec<PrerequisiteField>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrerequisiteField {
+    pub name: String,
+    /// The declared scalar name as written (`Bool` and `Boolean` stay distinct);
+    /// the descriptors and the `@requires` type check use it verbatim.
+    pub type_name: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Mutation {
+    pub name: String,
+    pub version: u64,
+    pub slots: Vec<Slot>,
+    pub sequence: Option<Sequence>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Slot {
+    pub name: String,
+    pub model: String,
+    pub operation: Operation,
+    pub cardinality: Cardinality,
+    /// Always set for `update` slots: the declared `<fields>` or, without a
+    /// restriction, every stored field outside the identity.
+    pub allowed_patch_fields: Option<Vec<String>>,
+    pub bindings: Vec<Binding>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Operation {
+    Create,
+    Update,
+    Delete,
+}
+impl Operation {
+    pub fn descriptor_name(self) -> &'static str {
+        match self {
+            Self::Create => "create",
+            Self::Update => "update",
+            Self::Delete => "delete",
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cardinality {
+    Single,
+    Optional,
+    List,
+}
+impl Cardinality {
+    pub fn descriptor_name(self) -> &'static str {
+        match self {
+            Self::Single => "single",
+            Self::Optional => "optional",
+            Self::List => "list",
+        }
+    }
+}
+/// `(relation: slot)` on a slot: the slot's `relation` foreign key `fields`
+/// take the identity of the record created in the parent `slot`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Binding {
+    pub relation: String,
+    pub slot: String,
+    pub fields: Vec<String>,
+}
+/// `@@sequence(after: [Mutation(slot: path), …])`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Sequence {
+    pub after: Vec<SequenceCall>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SequenceCall {
+    pub mutation: String,
+    pub bindings: Vec<SequenceBinding>,
+}
+/// The target mutation's `slot` receives the record at `path`: a slot of the
+/// declaring mutation followed by relation names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SequenceBinding {
+    pub slot: String,
+    pub path: Vec<String>,
+}
+
+fn is_model<'a>(d: &'a Declarations, name: &str) -> Option<&'a ModelDecl> {
+    d.models.iter().find(|m| m.name == name)
+}
+fn field<'a>(m: &'a ModelDecl, name: &str) -> Option<&'a FieldDecl> {
+    m.fields.iter().find(|f| f.name == name)
+}
+fn strings(values: &[Value]) -> Vec<String> {
+    values
+        .iter()
+        .map(|v| v.as_str().unwrap_or_default().to_string())
+        .collect()
+}
+
+/// Check the declarations and resolve them into the typed schema.
+pub fn validate(d: &Declarations) -> Result<Validated, String> {
+    let eof = d.end;
+    let enums: Vec<Enum> = d
         .enums
         .iter()
-        .map(|e| json!({"name":e.name,"values":e.values}))
+        .map(|e| Enum {
+            name: e.name.clone(),
+            values: e.values.clone(),
+        })
         .collect();
-    let mut models: Vec<Value> = vec![];
-    let mut model_pos: Vec<Pos> = vec![];
-    let mut field_pos: Vec<Vec<Pos>> = vec![];
-    let mut constraints: Vec<Value> = vec![];
+    let mut unique_constraints = vec![];
     let mut constraint_pos: Vec<Pos> = vec![];
     for m in &d.models {
-        let fields: Vec<Value> = m
-            .fields
-            .iter()
-            .map(|f| json!({"name":f.name,"typeName":f.type_name,"list":f.list,"nullable":f.nullable,"attributes":f.attributes}))
-            .collect();
-        models.push(json!({"name":m.name,"identity":m.identity,"fields":fields}));
-        model_pos.push(m.pos);
-        field_pos.push(m.fields.iter().map(|f| f.pos).collect());
         for u in &m.unique {
-            constraints.push(json!({"model":m.name,"fields":u.fields}));
+            unique_constraints.push(UniqueConstraint {
+                model: m.name.clone(),
+                fields: u.fields.clone(),
+            });
             constraint_pos.push(u.pos);
         }
     }
-    let mut mutations: Vec<Value> = vec![];
-    let mut mutation_pos: Vec<Pos> = vec![];
-    let mut slot_pos: Vec<Vec<Pos>> = vec![];
-    let mut sequence_pos: Vec<Option<Pos>> = vec![];
-    for m in &d.mutations {
-        let slots: Vec<Value> = m
-            .slots
-            .iter()
-            .map(|s| {
-                let mut value = json!({"name":s.name,"model":s.model,"operation":s.operation,"cardinality":s.cardinality});
-                if let Some(a) = &s.allowed_patch_fields {
-                    value["allowedPatchFields"] = json!(a)
-                }
-                value["relationBindings"] = s.relation_bindings.clone();
-                value
-            })
-            .collect();
-        let sequence = m
-            .sequence
-            .as_ref()
-            .map(|s| s.arguments.clone())
-            .unwrap_or(Value::Null);
-        mutations
-            .push(json!({"name":m.name,"version":m.version,"slots":slots,"sequence":sequence}));
-        mutation_pos.push(m.pos);
-        slot_pos.push(m.slots.iter().map(|s| s.pos).collect());
-        sequence_pos.push(m.sequence.as_ref().map(|s| s.pos));
-    }
-    let prerequisites: Vec<Value> = d
-        .prerequisites
-        .iter()
-        .map(|p| json!({"name":p.name,"fields":p.fields.iter().map(|f| json!({"name":f.name,"type":f.type_name})).collect::<Vec<_>>()}))
-        .collect();
-    let prerequisite_pos: Vec<Pos> = d.prerequisites.iter().map(|p| p.pos).collect();
-    let prerequisite_field_pos: Vec<Vec<Pos>> = d
-        .prerequisites
-        .iter()
-        .map(|p| p.fields.iter().map(|f| f.pos).collect())
-        .collect();
     // Enum and model names in declaration order, for duplicate detection.
-    let mut declared_names: Vec<(String, Pos)> = d
+    let mut declared_names: Vec<(&str, Pos)> = d
         .enums
         .iter()
-        .map(|e| (e.name.clone(), e.pos))
-        .chain(d.models.iter().map(|m| (m.name.clone(), m.pos)))
+        .map(|e| (e.name.as_str(), e.pos))
+        .chain(d.models.iter().map(|m| (m.name.as_str(), m.pos)))
         .collect();
     declared_names.sort_by_key(|(_, pos)| (pos.line, pos.col));
-    let eof = d.end;
     // Descriptor rules that core also enforces, checked here first so the
     // diagnostic names the declaration. Core remains the authority at load time.
-    let mut seen_names = std::collections::BTreeSet::new();
+    let mut seen_names = BTreeSet::new();
     for (name, pos) in &declared_names {
-        if !seen_names.insert(name.as_str()) {
+        if !seen_names.insert(*name) {
             return Err(at(*pos, format!("duplicate declaration {name}")));
         }
     }
-    for (mi, m) in models.iter().enumerate() {
-        let name = m["name"].as_str().unwrap();
-        if ahead_core::reserved_model_name(name) {
+    for m in &d.models {
+        if ahead_core::reserved_model_name(&m.name) {
             return Err(at(
-                model_pos[mi],
-                format!("model name {name} uses a reserved prefix (ahead_, sqlite_)"),
+                m.pos,
+                format!(
+                    "model name {} uses a reserved prefix (ahead_, sqlite_)",
+                    m.name
+                ),
             ));
         }
-        let fields = m["fields"].as_array().unwrap();
-        let mut seen_fields = std::collections::BTreeSet::new();
-        for (fi, f) in fields.iter().enumerate() {
-            if !seen_fields.insert(f["name"].as_str().unwrap()) {
-                return Err(at(field_pos[mi][fi], "duplicate field"));
+        let mut seen_fields = BTreeSet::new();
+        for f in &m.fields {
+            if !seen_fields.insert(f.name.as_str()) {
+                return Err(at(f.pos, "duplicate field"));
             }
-            if f["list"] == true && f["nullable"] == true {
-                return Err(at(field_pos[mi][fi], "lists cannot be nullable"));
+            if f.list && f.nullable {
+                return Err(at(f.pos, "lists cannot be nullable"));
             }
         }
-        let identity = m["identity"].as_array().unwrap();
-        if identity.is_empty() {
-            return Err(at(model_pos[mi], "model requires an @@id identity"));
+        if m.identity.is_empty() {
+            return Err(at(m.pos, "model requires an @@id identity"));
         }
-        let mut seen_identity = std::collections::BTreeSet::new();
-        for id in identity {
-            let (fi, field) = fields
-                .iter()
-                .enumerate()
-                .find(|(_, f)| f["name"] == *id)
-                .ok_or_else(|| at(model_pos[mi], format!("identity field {id} missing")))?;
-            if !seen_identity.insert(id.as_str().unwrap()) {
-                return Err(at(model_pos[mi], format!("duplicate identity field {id}")));
+        let mut seen_identity = BTreeSet::new();
+        for id in &m.identity {
+            let f =
+                field(m, id).ok_or_else(|| at(m.pos, format!("identity field {id} missing")))?;
+            if !seen_identity.insert(id.as_str()) {
+                return Err(at(m.pos, format!("duplicate identity field {id}")));
             }
-            if field["nullable"] == true || field["list"] == true {
-                return Err(at(
-                    field_pos[mi][fi],
-                    "identity fields must be non-nullable scalars",
-                ));
+            if f.nullable || f.list {
+                return Err(at(f.pos, "identity fields must be non-nullable scalars"));
             }
         }
     }
-    let raw_models = models.clone();
-    let mut inverses = vec![];
-    let mut inverse_pos: Vec<Pos> = vec![];
-    let mut requirements = vec![];
-    let mut requirement_pos: Vec<Pos> = vec![];
-    for (mi, m) in models.iter_mut().enumerate() {
-        let model_name = m["name"].clone();
+    // Structure: relations, inverses, requirements and field types per model.
+    let mut models: Vec<Model> = vec![];
+    // Inverse candidates: (declaring model, field, position).
+    let mut inverse_fields: Vec<(&ModelDecl, &FieldDecl)> = vec![];
+    // Requirement candidates: (declaring model, field, `@requires` arguments).
+    let mut requirement_fields: Vec<(&ModelDecl, &FieldDecl, &Value)> = vec![];
+    for m in &d.models {
         let mut relations = vec![];
-        let mut stored = vec![];
-        let mut stored_pos = vec![];
-        for (fi, f) in m["fields"].as_array().unwrap().iter().enumerate() {
-            let fpos = field_pos[mi][fi];
-            if let Some(req) = f["attributes"].get("requires") {
-                requirements.push(json!({"model":model_name,"field":f["name"],"invocation":req}));
-                requirement_pos.push(fpos);
+        let mut stored: Vec<&FieldDecl> = vec![];
+        for f in &m.fields {
+            if let Some(req) = f.attributes.get("requires") {
+                requirement_fields.push((m, f, req));
             }
-            if let Some(target) = raw_models
-                .iter()
-                .find(|target| target["name"] == f["typeName"])
-            {
-                if let Some(reference) = f["attributes"].get("reference") {
-                    if f["list"] == true {
-                        return Err(at(fpos, "reference must be singular"));
+            if let Some(target) = is_model(d, &f.type_name) {
+                if let Some(reference) = f.attributes.get("reference") {
+                    if f.list {
+                        return Err(at(f.pos, "reference must be singular"));
                     }
                     if reference
                         .as_object()
@@ -160,381 +330,398 @@ pub fn validate(d: &Declarations) -> Result<Value, String> {
                         .keys()
                         .any(|k| !["0", "via", "onTargetDelete"].contains(&k.as_str()))
                     {
-                        return Err(at(fpos, "unknown reference argument"));
+                        return Err(at(f.pos, "unknown reference argument"));
                     }
-                    let fields = reference["via"]
+                    let via = reference["via"]
                         .as_array()
-                        .ok_or_else(|| at(fpos, "reference requires via fields"))?;
-                    if fields.len() != target["identity"].as_array().unwrap().len() {
-                        return Err(at(fpos, "reference identity arity mismatch"));
+                        .ok_or_else(|| at(f.pos, "reference requires via fields"))?;
+                    if via.len() != target.identity.len() {
+                        return Err(at(f.pos, "reference identity arity mismatch"));
                     }
-                    for (local, remote) in fields.iter().zip(target["identity"].as_array().unwrap())
-                    {
-                        let lf = m["fields"]
-                            .as_array()
-                            .unwrap()
+                    for (local, remote) in via.iter().zip(&target.identity) {
+                        let lf = m
+                            .fields
                             .iter()
-                            .find(|x| x["name"] == *local)
-                            .ok_or_else(|| at(fpos, "unknown reference field"))?;
-                        let rf = target["fields"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .find(|x| x["name"] == *remote)
-                            .ok_or_else(|| at(fpos, "unknown target identity"))?;
-                        if lf["typeName"] != rf["typeName"] || lf["list"] == true {
-                            return Err(at(fpos, "reference field type mismatch"));
+                            .find(|x| x.name == *local)
+                            .ok_or_else(|| at(f.pos, "unknown reference field"))?;
+                        let rf = field(target, remote)
+                            .ok_or_else(|| at(f.pos, "unknown target identity"))?;
+                        if lf.type_name != rf.type_name || lf.list {
+                            return Err(at(f.pos, "reference field type mismatch"));
                         }
                     }
-                    let on_delete = reference
-                        .get("onTargetDelete")
-                        .cloned()
-                        .unwrap_or(json!("none"));
-                    if on_delete != "none" && on_delete != "delete" {
-                        return Err(at(fpos, "unsupported onTargetDelete"));
-                    }
-                    relations.push(json!({"name":f["name"],"target":target["name"],"fields":fields,"targetFields":target["identity"],"onDelete":on_delete}));
+                    let on_delete = match reference.get("onTargetDelete") {
+                        None => OnDelete::None,
+                        Some(v) if v == "none" => OnDelete::None,
+                        Some(v) if v == "delete" => OnDelete::Delete,
+                        Some(_) => return Err(at(f.pos, "unsupported onTargetDelete")),
+                    };
+                    relations.push(Relation {
+                        name: f.name.clone(),
+                        target: target.name.clone(),
+                        fields: strings(via),
+                        target_fields: target.identity.clone(),
+                        on_delete,
+                    });
                 } else {
-                    inverses.push(json!({"model":model_name,"name":f["name"],"target":target["name"],"list":f["list"],"nullable":f["nullable"],"relationName":f["attributes"]["inverse"]["0"]}));
-                    inverse_pos.push(fpos);
+                    inverse_fields.push((m, f));
                 }
                 continue;
             }
-            if f["attributes"].get("reference").is_some()
-                || f["attributes"].get("inverse").is_some()
-            {
-                return Err(at(fpos, "relation directive requires model type"));
+            if f.attributes.contains_key("reference") || f.attributes.contains_key("inverse") {
+                return Err(at(f.pos, "relation directive requires model type"));
             }
-            stored.push(f.clone());
-            stored_pos.push(fpos);
+            stored.push(f);
         }
-        m["fields"] = json!(stored);
-        m["relations"] = json!(relations);
-        m["unique"] = json!(
-            constraints
-                .iter()
-                .filter(|c| c["model"] == model_name)
-                .map(|c| c["fields"].clone())
-                .collect::<Vec<_>>()
-        );
-        for (fi, f) in m["fields"].as_array_mut().unwrap().iter_mut().enumerate() {
-            let ty = f["typeName"].as_str().unwrap();
-            let scalar = match ty {
-                "String" => Some("string"),
-                "Bool" | "Boolean" => Some("boolean"),
-                "Int" => Some("int"),
-                "Float" => Some("float"),
-                "UUID" => Some("uuid"),
-                "DateTime" => Some("dateTime"),
-                _ => None,
-            };
-            let mut t = if let Some(s) = scalar {
-                json!({"kind":"scalar","name":s})
-            } else if enums.iter().any(|e| e["name"] == ty) {
-                json!({"kind":"enum","name":ty})
+        let mut fields = vec![];
+        for f in &stored {
+            let mut ty = if let Some(s) = Scalar::from_source(&f.type_name) {
+                FieldType::Scalar(s)
+            } else if enums.iter().any(|e| e.name == f.type_name) {
+                FieldType::Enum(f.type_name.clone())
             } else {
                 return Err(at(
-                    stored_pos[fi],
-                    format!("unknown or unsupported field type {ty}"),
+                    f.pos,
+                    format!("unknown or unsupported field type {}", f.type_name),
                 ));
             };
-            if f["list"] == true {
-                t = json!({"kind":"list","element":t})
+            if f.list {
+                ty = FieldType::List(Box::new(ty));
             }
-            let obj = f.as_object_mut().unwrap();
-            obj.remove("attributes");
-            obj.remove("typeName");
-            obj.remove("list");
-            obj.insert("type".into(), t);
+            fields.push(Field {
+                name: f.name.clone(),
+                ty,
+                nullable: f.nullable,
+            });
         }
-        let identity = m["identity"].as_array().unwrap();
-        for f in m["fields"].as_array().unwrap() {
-            if identity.contains(&f["name"]) && f["type"]["kind"] != "scalar" {
-                let fi = m["fields"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .position(|x| x["name"] == f["name"])
-                    .unwrap();
-                return Err(at(
-                    stored_pos[fi],
-                    "identity fields must be non-nullable scalars",
-                ));
+        for (f, decl) in fields.iter().zip(&stored) {
+            if m.identity.contains(&f.name) && !matches!(f.ty, FieldType::Scalar(_)) {
+                return Err(at(decl.pos, "identity fields must be non-nullable scalars"));
             }
         }
+        models.push(Model {
+            name: m.name.clone(),
+            identity: m.identity.clone(),
+            fields,
+            relations,
+            unique: m.unique.iter().map(|u| u.fields.clone()).collect(),
+        });
     }
-    for (mi, mutation) in mutations.iter_mut().enumerate() {
-        let original_slots = mutation["slots"].as_array().unwrap().clone();
-        for (si, slot) in mutation["slots"]
-            .as_array_mut()
-            .unwrap()
-            .iter_mut()
-            .enumerate()
-        {
-            let spos = slot_pos[mi][si];
+    let model = |name: &str| models.iter().find(|m| m.name == name);
+    // Mutations: slot bindings first, then default patch fields.
+    let mut mutations: Vec<Mutation> = vec![];
+    for m in &d.mutations {
+        let mut slots = vec![];
+        for s in &m.slots {
             let mut bindings = vec![];
-            for (relation, parent) in slot["relationBindings"].as_object().unwrap() {
-                let model = models
+            for (relation, parent) in s.relation_bindings.as_object().unwrap() {
+                let model = model(&s.model).ok_or_else(|| at(s.pos, "unknown bound model"))?;
+                let rel = model
+                    .relations
                     .iter()
-                    .find(|m| m["name"] == slot["model"])
-                    .ok_or_else(|| at(spos, "unknown bound model"))?;
-                let rel = model["relations"]
-                    .as_array()
-                    .unwrap()
+                    .find(|r| r.name == *relation)
+                    .ok_or_else(|| at(s.pos, "unknown binding relation"))?;
+                let parent_slot = m
+                    .slots
                     .iter()
-                    .find(|r| r["name"] == *relation)
-                    .ok_or_else(|| at(spos, "unknown binding relation"))?;
-                let parent_slot = original_slots
-                    .iter()
-                    .find(|s| s["name"] == *parent)
-                    .ok_or_else(|| at(spos, "unknown parent slot"))?;
-                if parent_slot["model"] != rel["target"] || parent_slot["cardinality"] != "single" {
-                    return Err(at(spos, "binding parent must be single matching model"));
+                    .find(|x| parent.as_str() == Some(x.name.as_str()))
+                    .ok_or_else(|| at(s.pos, "unknown parent slot"))?;
+                if parent_slot.model != rel.target || parent_slot.cardinality != "single" {
+                    return Err(at(s.pos, "binding parent must be single matching model"));
                 }
-                bindings.push(json!({"slot":parent,"fields":rel["fields"]}));
+                bindings.push(Binding {
+                    relation: relation.clone(),
+                    slot: parent_slot.name.clone(),
+                    fields: rel.fields.clone(),
+                });
             }
-            slot.as_object_mut().unwrap().remove("relationBindings");
-            if !bindings.is_empty() {
-                slot["bindings"] = json!(bindings)
-            }
+            let operation = match s.operation.as_str() {
+                "create" => Operation::Create,
+                "update" => Operation::Update,
+                _ => Operation::Delete,
+            };
+            let cardinality = match s.cardinality.as_str() {
+                "list" => Cardinality::List,
+                "optional" => Cardinality::Optional,
+                _ => Cardinality::Single,
+            };
+            slots.push(Slot {
+                name: s.name.clone(),
+                model: s.model.clone(),
+                operation,
+                cardinality,
+                allowed_patch_fields: s.allowed_patch_fields.clone(),
+                bindings,
+            });
         }
+        mutations.push(Mutation {
+            name: m.name.clone(),
+            version: m.version,
+            slots,
+            sequence: None,
+        });
     }
-    for (mi, mutation) in mutations.iter_mut().enumerate() {
-        for (si, slot) in mutation["slots"]
-            .as_array_mut()
-            .unwrap()
-            .iter_mut()
-            .enumerate()
-        {
-            if slot["operation"] == "update" && slot.get("allowedPatchFields").is_none() {
-                let model = models
-                    .iter()
-                    .find(|m| m["name"] == slot["model"])
-                    .ok_or_else(|| at(slot_pos[mi][si], "unknown mutation model"))?;
-                slot["allowedPatchFields"] = json!(
-                    model["fields"]
-                        .as_array()
-                        .unwrap()
+    for (m, decl) in mutations.iter_mut().zip(&d.mutations) {
+        for (slot, sdecl) in m.slots.iter_mut().zip(&decl.slots) {
+            if slot.operation == Operation::Update && slot.allowed_patch_fields.is_none() {
+                let model =
+                    model(&slot.model).ok_or_else(|| at(sdecl.pos, "unknown mutation model"))?;
+                slot.allowed_patch_fields = Some(
+                    model
+                        .fields
                         .iter()
-                        .filter(|f| !model["identity"].as_array().unwrap().contains(&f["name"]))
-                        .map(|f| f["name"].clone())
-                        .collect::<Vec<_>>()
+                        .filter(|f| !model.identity.contains(&f.name))
+                        .map(|f| f.name.clone())
+                        .collect(),
                 );
             }
         }
     }
-    for (k, inverse) in inverses.iter_mut().enumerate() {
-        let ipos = inverse_pos[k];
-        let target = raw_models
+    let mut inverses = vec![];
+    for (m, f) in inverse_fields {
+        let target = is_model(d, &f.type_name).unwrap();
+        let relation_name = f
+            .attributes
+            .get("inverse")
+            .map(|v| v["0"].clone())
+            .unwrap_or(Value::Null);
+        let candidates: Vec<_> = target
+            .fields
             .iter()
-            .find(|m| m["name"] == inverse["target"])
-            .unwrap();
-        let candidates: Vec<_> = target["fields"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|f| {
-                f["typeName"] == inverse["model"]
-                    && f["attributes"].get("reference").is_some()
-                    && (inverse["relationName"].is_null()
-                        || f["attributes"]["reference"]["0"] == inverse["relationName"])
+            .filter(|x| {
+                x.type_name == m.name
+                    && x.attributes.contains_key("reference")
+                    && (relation_name.is_null() || x.attributes["reference"]["0"] == relation_name)
             })
             .collect();
         if candidates.len() != 1 {
             return Err(at(
-                ipos,
+                f.pos,
                 "inverse must resolve to exactly one reference; use a shared relation name",
             ));
         }
         let reference = candidates[0];
-        if inverse["list"] != true {
-            let fields = reference["attributes"]["reference"]["via"]
-                .as_array()
-                .unwrap();
-            let same = |candidate: &Value| {
-                candidate.as_array().is_some_and(|values| {
-                    values.len() == fields.len() && fields.iter().all(|f| values.contains(f))
-                })
+        let fields = strings(reference.attributes["reference"]["via"].as_array().unwrap());
+        if !f.list {
+            let same = |values: &Vec<String>| {
+                values.len() == fields.len() && fields.iter().all(|f| values.contains(f))
             };
-            let normalized = models.iter().find(|m| m["name"] == target["name"]).unwrap();
-            if !same(&normalized["identity"])
-                && !normalized["unique"].as_array().unwrap().iter().any(same)
-            {
+            let normalized = model(&target.name).unwrap();
+            if !same(&normalized.identity) && !normalized.unique.iter().any(same) {
                 return Err(at(
-                    ipos,
+                    f.pos,
                     "singular inverse requires unique reference fields",
                 ));
             }
         }
-        inverse["reference"] = reference["name"].clone();
-        inverse["fields"] = reference["attributes"]["reference"]["via"].clone();
+        let relation_name = match relation_name {
+            Value::Null => None,
+            Value::String(name) => Some(name),
+            _ => return Err(at(f.pos, "inverse relation name must be an identifier")),
+        };
+        inverses.push(Inverse {
+            model: m.name.clone(),
+            name: f.name.clone(),
+            target: target.name.clone(),
+            list: f.list,
+            nullable: f.nullable,
+            relation_name,
+            reference: reference.name.clone(),
+            fields,
+        });
     }
-    let mut prerequisite_names = std::collections::BTreeSet::new();
-    for (k, declaration) in prerequisites.iter().enumerate() {
-        if !prerequisite_names.insert(declaration["name"].as_str().unwrap()) {
-            return Err(at(prerequisite_pos[k], "duplicate prerequisite"));
+    let prerequisites: Vec<Prerequisite> = d
+        .prerequisites
+        .iter()
+        .map(|p| Prerequisite {
+            name: p.name.clone(),
+            fields: p
+                .fields
+                .iter()
+                .map(|f| PrerequisiteField {
+                    name: f.name.clone(),
+                    type_name: f.type_name.clone(),
+                })
+                .collect(),
+        })
+        .collect();
+    let mut prerequisite_names = BTreeSet::new();
+    for p in &d.prerequisites {
+        if !prerequisite_names.insert(p.name.as_str()) {
+            return Err(at(p.pos, "duplicate prerequisite"));
         }
-        let mut fields = std::collections::BTreeSet::new();
-        for (j, field) in declaration["fields"].as_array().unwrap().iter().enumerate() {
-            if !fields.insert(field["name"].as_str().unwrap())
+        let mut fields = BTreeSet::new();
+        for f in &p.fields {
+            if !fields.insert(f.name.as_str())
                 || ![
                     "String", "UUID", "DateTime", "Int", "Float", "Bool", "Boolean",
                 ]
-                .contains(&field["type"].as_str().unwrap())
+                .contains(&f.type_name.as_str())
             {
-                return Err(at(
-                    prerequisite_field_pos[k][j],
-                    "invalid prerequisite field",
-                ));
+                return Err(at(f.pos, "invalid prerequisite field"));
             }
         }
     }
-    for (k, requirement) in requirements.iter().enumerate() {
-        let rpos = requirement_pos[k];
-        let args = requirement["invocation"].as_object().unwrap();
+    let mut requirements = vec![];
+    for (m, f, args) in requirement_fields {
+        let rpos = f.pos;
+        let args = args.as_object().unwrap();
         if args.len() != 1 || !args.contains_key("0") {
             return Err(at(rpos, "requires expects one invocation"));
         }
         let invocation = &args["0"];
         let declaration = prerequisites
             .iter()
-            .find(|d| d["name"] == invocation["name"])
+            .find(|p| invocation["name"].as_str() == Some(p.name.as_str()))
             .ok_or_else(|| at(rpos, "unknown prerequisite"))?;
         let arguments = invocation["arguments"]
             .as_object()
             .ok_or_else(|| at(rpos, "requires expects invocation arguments"))?;
-        if arguments.len() != declaration["fields"].as_array().unwrap().len() {
+        if arguments.len() != declaration.fields.len() {
             return Err(at(rpos, "prerequisite argument mismatch"));
         }
-        for field in declaration["fields"].as_array().unwrap() {
+        for field in &declaration.fields {
             let expression = arguments
-                .get(field["name"].as_str().unwrap())
+                .get(&field.name)
                 .ok_or_else(|| at(rpos, "missing prerequisite argument"))?;
             if expression != "self" {
                 return Err(at(rpos, "prerequisite argument currently requires self"));
             }
-            let model = raw_models
-                .iter()
-                .find(|m| m["name"] == requirement["model"])
-                .unwrap();
-            let source = model["fields"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|f| f["name"] == requirement["field"])
-                .unwrap();
-            if source["typeName"] != field["type"] {
+            if f.type_name != field.type_name {
                 return Err(at(rpos, "prerequisite argument type mismatch"));
             }
         }
+        requirements.push(Requirement {
+            model: m.name.clone(),
+            field: f.name.clone(),
+            prerequisite: declaration.name.clone(),
+            arguments: arguments.keys().cloned().collect(),
+        });
     }
-    for (mi, mutation) in mutations.iter().enumerate() {
-        if !mutation["sequence"].is_null() {
-            let qpos = sequence_pos[mi].unwrap_or(mutation_pos[mi]);
-            let sequence = mutation["sequence"].as_object().unwrap();
-            if sequence.len() != 1 || !sequence.contains_key("after") {
-                return Err(at(qpos, "sequence requires after"));
-            }
-            let after = sequence["after"]
-                .as_array()
-                .ok_or_else(|| at(qpos, "sequence after must be list"))?;
-            for call in after {
-                let target = mutations
+    let mut sequences: Vec<Option<Sequence>> = vec![];
+    for (m, decl) in mutations.iter().zip(&d.mutations) {
+        let Some(s) = &decl.sequence else {
+            sequences.push(None);
+            continue;
+        };
+        let qpos = s.pos;
+        let sequence = s.arguments.as_object().unwrap();
+        if sequence.len() != 1 || !sequence.contains_key("after") {
+            return Err(at(qpos, "sequence requires after"));
+        }
+        let after = sequence["after"]
+            .as_array()
+            .ok_or_else(|| at(qpos, "sequence after must be list"))?;
+        let mut calls = vec![];
+        for call in after {
+            let target = mutations
+                .iter()
+                .find(|x| call["name"].as_str() == Some(x.name.as_str()))
+                .ok_or_else(|| at(qpos, "unknown sequence mutation"))?;
+            let args = call["arguments"]
+                .as_object()
+                .ok_or_else(|| at(qpos, "sequence requires invocation"))?;
+            let mut bindings = vec![];
+            for (slot, expression) in args {
+                let target_slot = target
+                    .slots
                     .iter()
-                    .find(|m| m["name"] == call["name"])
-                    .ok_or_else(|| at(qpos, "unknown sequence mutation"))?;
-                let args = call["arguments"]
-                    .as_object()
-                    .ok_or_else(|| at(qpos, "sequence requires invocation"))?;
-                for (slot, expression) in args {
-                    let target_slot = target["slots"]
-                        .as_array()
-                        .unwrap()
+                    .find(|x| x.name == *slot)
+                    .ok_or_else(|| at(qpos, "unknown sequence target slot"))?;
+                let path: Vec<String> = expression
+                    .as_str()
+                    .ok_or_else(|| at(qpos, "sequence requires slot path"))?
+                    .split('.')
+                    .map(str::to_string)
+                    .collect();
+                let source_slot = m
+                    .slots
+                    .iter()
+                    .find(|x| x.name == path[0])
+                    .ok_or_else(|| at(qpos, "unknown sequence source slot"))?;
+                let source_pos = decl.slots[m
+                    .slots
+                    .iter()
+                    .position(|x| x.name == source_slot.name)
+                    .unwrap()]
+                .pos;
+                let mut current = model(&source_slot.model)
+                    .ok_or_else(|| at(source_pos, "unknown mutation model"))?;
+                for part in &path[1..] {
+                    let relation = current
+                        .relations
                         .iter()
-                        .find(|s| s["name"] == *slot)
-                        .ok_or_else(|| at(qpos, "unknown sequence target slot"))?;
-                    let mut parts = expression
-                        .as_str()
-                        .ok_or_else(|| at(qpos, "sequence requires slot path"))?
-                        .split('.');
-                    let source_slot = mutation["slots"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .find(|s| Some(s["name"].as_str().unwrap()) == parts.clone().next())
-                        .ok_or_else(|| at(qpos, "unknown sequence source slot"))?;
-                    parts.next();
-                    let mut model = models
-                        .iter()
-                        .find(|m| m["name"] == source_slot["model"])
-                        .unwrap();
-                    for part in parts {
-                        let relation = model["relations"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .find(|r| r["name"] == part)
-                            .ok_or_else(|| at(qpos, "unknown sequence relation path"))?;
-                        model = models
-                            .iter()
-                            .find(|m| m["name"] == relation["target"])
-                            .unwrap();
-                    }
-                    if model["name"] != target_slot["model"] {
-                        return Err(at(qpos, "sequence target model mismatch"));
-                    }
+                        .find(|r| r.name == *part)
+                        .ok_or_else(|| at(qpos, "unknown sequence relation path"))?;
+                    current = model(&relation.target).unwrap();
                 }
+                if current.name != target_slot.model {
+                    return Err(at(qpos, "sequence target model mismatch"));
+                }
+                bindings.push(SequenceBinding {
+                    slot: slot.clone(),
+                    path,
+                });
             }
+            calls.push(SequenceCall {
+                mutation: target.name.clone(),
+                bindings,
+            });
         }
+        sequences.push(Some(Sequence { after: calls }));
     }
-    requirements=requirements.into_iter().map(|r|json!({"model":r["model"],"field":r["field"],"name":r["invocation"]["0"]["name"],"arguments":r["invocation"]["0"]["arguments"]})).collect();
-    let schema = json!({"models":models,"enums":enums,"requirements":requirements,"prerequisites":prerequisites,"clientPolicies":mutations});
-    for (ci, c) in constraints.iter().enumerate() {
-        let m = models.iter().find(|m| m["name"] == c["model"]).unwrap();
-        if c["fields"].as_array().unwrap().is_empty()
-            || c["fields"].as_array().unwrap().iter().any(|f| {
-                !m["fields"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|x| x["name"] == *f)
-            })
+    for (m, sequence) in mutations.iter_mut().zip(sequences) {
+        m.sequence = sequence;
+    }
+    for (c, pos) in unique_constraints.iter().zip(&constraint_pos) {
+        let m = model(&c.model).unwrap();
+        if c.fields.is_empty()
+            || c.fields
+                .iter()
+                .any(|f| !m.fields.iter().any(|x| x.name == *f))
         {
-            return Err(at(constraint_pos[ci], "invalid unique fields"));
+            return Err(at(*pos, "invalid unique fields"));
         }
     }
-    // Backstop: core validates the assembled descriptors. Rules reachable
-    // from source are checked above with a location; anything left reports
-    // the end of the input.
-    ahead_core::Schema::from_value(schema.clone()).map_err(|e| at(eof, e.to_string()))?;
-    let mut seen = std::collections::BTreeSet::new();
-    for (mi, mutation) in mutations.iter().enumerate() {
-        if !seen.insert(mutation["name"].as_str().unwrap()) {
-            return Err(at(mutation_pos[mi], "duplicate mutation"));
+    let validated = Validated {
+        enums,
+        models,
+        unique_constraints,
+        inverses,
+        requirements,
+        prerequisites,
+        mutations,
+    };
+    // Backstop: core validates the client descriptor Generate renders. Rules
+    // reachable from source are checked above with a location; anything left
+    // reports the end of the input.
+    ahead_core::Schema::from_value(crate::generate::schema(&validated))
+        .map_err(|e| at(eof, e.to_string()))?;
+    let mut seen = BTreeSet::new();
+    for (m, decl) in validated.mutations.iter().zip(&d.mutations) {
+        if !seen.insert(m.name.as_str()) {
+            return Err(at(decl.pos, "duplicate mutation"));
         }
-        let mut slots = std::collections::BTreeSet::new();
-        if mutation["slots"].as_array().unwrap().is_empty() {
-            return Err(at(mutation_pos[mi], "mutation requires slots"));
+        let mut slots = BTreeSet::new();
+        if m.slots.is_empty() {
+            return Err(at(decl.pos, "mutation requires slots"));
         }
-        for (si, slot) in mutation["slots"].as_array().unwrap().iter().enumerate() {
-            let spos = slot_pos[mi][si];
-            if !slots.insert(slot["name"].as_str().unwrap()) {
+        for (slot, sdecl) in m.slots.iter().zip(&decl.slots) {
+            let spos = sdecl.pos;
+            if !slots.insert(slot.name.as_str()) {
                 return Err(at(spos, "duplicate slot"));
             }
-            let m = models
+            let model = validated
+                .models
                 .iter()
-                .find(|m| m["name"] == slot["model"])
+                .find(|x| x.name == slot.model)
                 .ok_or_else(|| at(spos, "unknown mutation model"))?;
-            if let Some(fields) = slot["allowedPatchFields"].as_array() {
-                let mut seen = std::collections::BTreeSet::new();
+            if let Some(fields) = &slot.allowed_patch_fields {
+                let mut seen = BTreeSet::new();
                 for f in fields {
-                    if !seen.insert(f.as_str().unwrap())
-                        || m["identity"].as_array().unwrap().contains(f)
-                        || !m["fields"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .any(|x| x["name"] == *f)
+                    if !seen.insert(f.as_str())
+                        || model.identity.contains(f)
+                        || !model.fields.iter().any(|x| x.name == *f)
                     {
                         return Err(at(spos, "invalid allowed patch field"));
                     }
@@ -542,7 +729,5 @@ pub fn validate(d: &Declarations) -> Result<Value, String> {
             }
         }
     }
-    Ok(
-        json!({"schema":schema,"mutations":mutations,"loaders":models.iter().map(|m|m["name"].clone()).collect::<Vec<_>>(),"uniqueConstraints":constraints,"inverses":inverses,"requirements":requirements,"prerequisites":prerequisites}),
-    )
+    Ok(validated)
 }
