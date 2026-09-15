@@ -35,7 +35,7 @@ Channel cursors order delivery within a subscription. Record stamps order author
 | A2 | Within a subscription, the cursor never decreases. Covered pages do nothing; overlapping pages apply only their unseen suffix. A page starting beyond the local cursor cannot skip the gap. |
 | A3 | Accepted optimism waits for all required checkpoints on subscribed channels, whether pages or the receipt arrive first. Checkpoints outside the subscriptions are not awaited. |
 | A4 | Required checkpoints come from channels notified by the handler. Missing or ambiguous selection for an accepted mutation aborts the batch. |
-| A5 | Accepted batches settle in sequence order; a later ready batch must not pass an earlier waiting batch. |
+| A5 | Accepted batches settle in sequence order; a later ready batch must not pass an earlier waiting batch, including a batch whose receipt named nothing the client can await. |
 
 A3's current non-subscribed-channel behavior rebuilds from existing authority: an update can revert and a local create can disappear until delivered through a subscribed channel. Whether to retain this behavior needs a decision in [Settlement](architecture/client/engine/settlement.md).
 
