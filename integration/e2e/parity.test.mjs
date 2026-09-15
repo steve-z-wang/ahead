@@ -13,6 +13,21 @@ import {Client} from '../../packages/client-js/index.mts';
 // local create) and dump the same normalized view of their local state. The
 // dumps must be identical. Cursors and client ids are excluded: they legitimately
 // differ between two clients. parity_client.dart is the Dart half.
+//
+// Each runtime starts from the same published state: `reseed` puts entry-1 back to
+// its initial text and notifies the channel before every run, so the second
+// runtime does not inherit the first one's result. Each dump also records what the
+// runtime saw after catch-up and after the accepted edit, and those are asserted
+// per runtime, so a runtime that advanced its cursor while keeping old content
+// cannot pass by agreeing with the other one.
+const INITIAL='Hello from the server';
+async function reseed(app){
+ await app.db.$transaction(async tx=>{
+  await tx.entry.update({where:{id:'entry-1'},data:{text:INITIAL}});
+  await app.backend.notify(tx,{channel:'book:demo',records:[{model:'Entry',identity:{id:'entry-1'}}]});
+ });
+ assert.equal((await app.db.entry.findUnique({where:{id:'entry-1'}})).text,INITIAL);
+}
 const edit=text=>({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text}}]});
 const waitFor=async(condition,label)=>{for(let i=0;i<1000;i++){if(await condition())return;await new Promise(r=>setTimeout(r,10));}throw Error(`timed out waiting for ${label}`);};
 
@@ -23,13 +38,16 @@ async function nodeScript(url,directory,schema){
   const connection=await client.connect({url,token:'demo-user'});
   const settled=async()=>(await client.status()).pending===0;
   await waitFor(async()=>(await client.read('Entry',{id:'entry-1'}))!==null,'initial catch-up');
+  const initial=(await client.read('Entry',{id:'entry-1'})).text;
   await client.mutate(edit('  parity  '));await waitFor(settled,'accepted edit');
+  const afterAccepted=(await client.read('Entry',{id:'entry-1'})).text;
   await client.mutate(edit('reject'));await waitFor(settled,'rejected edit');
   await client.transaction(tx=>tx.direct({model:'Entry',op:'create',identity:{id:'local-only'},values:{text:'local',note:null}}));
   await connection.close();
   const entries=(await client.query('Entry')).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
   const status=await client.status();
   return {
+   initial,afterAccepted,
    entries:entries.map(row=>({id:row.id,text:row.text,note:row.note})),
    pending:status.pending,beforeImages:status.beforeImages,channels:status.channels,rejections:status.rejections,
    entry1:await client.recordStatus('Entry',{id:'entry-1'}),
@@ -56,8 +74,14 @@ test('the Node and Dart clients reach identical local state from one script agai
  const app=await createExample();const directory=await mkdtemp(join(tmpdir(),'ahead-parity-'));let server;
  try{
   await app.initialize();server=await app.listen(0);
+  await reseed(app);
   const node=await nodeScript(server.url,directory,app.schema);
+  await reseed(app);
   const dart=await dartScript(server.url,directory);
+  for(const [runtime,dump] of [['node',node],['dart',dart]]){
+   assert.equal(dump.initial,INITIAL,`${runtime}: catch-up delivered the seeded value`);
+   assert.equal(dump.afterAccepted,'parity',`${runtime}: the accepted edit's normalized value came back from the server`);
+  }
   assert.deepEqual(dart,node,'the two runtimes disagree on local state after the same script');
   // Guard against agreeing on the wrong thing: the script's outcomes are visible.
   assert.equal(node.entries.find(e=>e.id==='entry-1').text,'parity');

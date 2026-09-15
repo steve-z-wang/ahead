@@ -44,8 +44,12 @@ Future<void> main(List<String> args) async {
       () async => await client.read('Entry', {'id': 'entry-1'}) != null,
       'initial catch-up',
     );
+    final initial = (await client.read('Entry', {'id': 'entry-1'}))!['text'];
     await client.mutate(edit('  parity  '));
     await waitFor(settled, 'accepted edit');
+    final afterAccepted = (await client.read('Entry', {
+      'id': 'entry-1',
+    }))!['text'];
     await client.mutate(edit('reject'));
     await waitFor(settled, 'rejected edit');
     await client.transaction((tx) async {
@@ -61,6 +65,8 @@ Future<void> main(List<String> args) async {
       ..sort((a, b) => (a['id'] as String).compareTo(b['id'] as String));
     final status = await client.status();
     final dump = {
+      'initial': initial,
+      'afterAccepted': afterAccepted,
       'entries': [
         for (final row in entries)
           {'id': row['id'], 'text': row['text'], 'note': row['note']},
