@@ -31,7 +31,7 @@ npx expo prebuild --platform ios --no-install
 npm run ios:build
 ```
 
-`ios:build` compiles the Release simulator app without installing it on any simulator; the product is `ios/build/Build/Products/Release-iphonesimulator/aheadrnharness.app`, which the runner uses by default. `npm run ios:release` additionally installs and launches the app on the selected simulator. Set `AHEAD_RN_APP_BUNDLE` when the app is built elsewhere. `expo prebuild` regenerates the whole `ios` directory, so run `pod install` again after it. The `plugins/expo-path-spaces` config plugin quotes the two Expo-generated script phases (Expo Constants and the React Native bundle phase) that otherwise fail when the repository path contains spaces; the build is arm64-only because the vendored Rust library carries that simulator slice. Native projects and compiled libraries are generated artifacts and are not committed. The native module is a local package and must be built before CocoaPods resolves its vendored library.
+`ios:build` compiles the Release simulator app without installing it on any simulator; the product is `ios/build/Build/Products/Release-iphonesimulator/aheadrnharness.app`, which the runner uses by default. `npm run ios:release` additionally installs and launches the app on the selected simulator. Set `AHEAD_RN_APP_BUNDLE` when the app is built elsewhere. `expo prebuild` regenerates the whole `ios` directory, so run `pod install` again after it. The `packages/client-react-native/plugins/expo-path-spaces` config plugin quotes the two Expo-generated script phases (Expo Constants and the React Native bundle phase) that otherwise fail when the repository path contains spaces; the build is arm64-only because the vendored Rust library carries that simulator slice. Native projects and compiled libraries are generated artifacts and are not committed. The native module is a local package and must be built before CocoaPods resolves its vendored library.
 
 ## Run
 
@@ -42,7 +42,7 @@ AHEAD_RN_APP_BUNDLE=/absolute/path/to/aheadrnharness.app \
   bash integration/platform/run_react_native_ios_smoke.sh
 ```
 
-By default the runner creates two disposable iPhone 17 simulators with iOS 26.5, then removes only those simulators. Override `AHEAD_RN_SIM_RUNTIME` and `AHEAD_RN_SIM_DEVICE` with installed identifiers, or supply two dedicated simulator UDIDs as arguments. Existing harness installs on caller-provided simulators are refused to avoid resetting their data, and the runner leaves its installation on caller-provided simulators afterwards; it deletes only simulators it created.
+By default the runner creates two disposable simulators on the newest installed iOS runtime with the first iPhone device type, then removes only those simulators. Override `AHEAD_RN_SIM_RUNTIME` and `AHEAD_RN_SIM_DEVICE` with installed identifiers, or supply two dedicated simulator UDIDs as arguments. Existing harness installs on caller-provided simulators are refused to avoid resetting their data, and the runner leaves its installation on caller-provided simulators afterwards; it deletes only simulators it created.
 
 The runner creates an isolated PostgreSQL cluster and two per-client proxies. It installs the same bundled application separately, writes test-only configuration into each app's Documents directory, and checks JSON assertion results there. The app reads and writes through the generated client; the files only coordinate the test and record evidence.
 
@@ -64,7 +64,7 @@ Verified 2026-09-15 on branch `codex/react-native` (base `9b81fad`, plus the unc
 Commands, from the repository root after the setup above:
 
 ```sh
-node --test integration/platform/react-native/plugins/expo-path-spaces.test.js
+node --test packages/client-react-native/plugins/expo-path-spaces.test.cjs
 (cd integration/platform/react-native && ./node_modules/.bin/tsc --noEmit)
 (cd integration/platform/react-native && npx expo prebuild --platform ios --no-install && (cd ios && pod install) && npm run ios:build)
 bash integration/platform/run_react_native_ios_smoke.sh

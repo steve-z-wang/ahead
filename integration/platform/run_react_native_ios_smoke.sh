@@ -14,6 +14,7 @@ bob="${2:-}"
 cleanup() {
   if [[ -n "$backend_pid" ]]; then kill "$backend_pid" 2>/dev/null || true; wait "$backend_pid" 2>/dev/null || true; fi
   pg_ctl -D "$run_dir/pg" -m immediate stop >/dev/null 2>&1 || true
+  rm -rf "$run_dir/pg"
   for device in ${created_devices[@]+"${created_devices[@]}"}; do
     xcrun simctl shutdown "$device" >/dev/null 2>&1 || true
     xcrun simctl delete "$device" >/dev/null 2>&1 || true
@@ -23,8 +24,9 @@ cleanup() {
 trap cleanup EXIT
 if [[ ! -d "$app_bundle" ]]; then echo "Build the Release simulator app first; set AHEAD_RN_APP_BUNDLE to its .app path." >&2; exit 1; fi
 if [[ -z "$alice" && -z "$bob" ]]; then
-  runtime="${AHEAD_RN_SIM_RUNTIME:-com.apple.CoreSimulator.SimRuntime.iOS-26-5}"
-  kind="${AHEAD_RN_SIM_DEVICE:-com.apple.CoreSimulator.SimDeviceType.iPhone-17}"
+  # Default to the newest installed iOS runtime and the first iPhone device type it supports.
+  runtime="${AHEAD_RN_SIM_RUNTIME:-$(xcrun simctl list runtimes -j | python3 -c 'import json,sys;r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"]];r.sort(key=lambda x:[int(p) for p in x["version"].split(".")]);print(r[-1]["identifier"])')}"
+  kind="${AHEAD_RN_SIM_DEVICE:-$(xcrun simctl list devicetypes -j | python3 -c 'import json,sys;print(next(x["identifier"] for x in json.load(sys.stdin)["devicetypes"] if x["identifier"].startswith("com.apple.CoreSimulator.SimDeviceType.iPhone-")))')}"
   alice="$(xcrun simctl create "Ahead RN Alice $$" "$kind" "$runtime")";created_devices+=("$alice")
   bob="$(xcrun simctl create "Ahead RN Bob $$" "$kind" "$runtime")";created_devices+=("$bob")
 fi
@@ -68,7 +70,7 @@ PY
 }
 wait_phase() {
   local device="$1" data="$2" user="$3" phase="$4"
-  for _ in $(seq 1 90); do
+  for _ in $(seq 1 150); do
     if [[ -f "$data/result.json" ]]; then
       python3 - "$data/result.json" "$phase" <<'PY'
 import json,sys

@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { patchPodfile, patchBundlePhase, patchXcodeProject } = require('./expo-path-spaces');
+const { patchPodfile, patchBundlePhase, patchXcodeProject } = require('./expo-path-spaces.cjs');
 
 test('adds an idempotent post-install correction for the Expo Constants script', () => {
   const podfile = `post_install do |installer|\n  react_native_post_install(installer)\nend\n`;

@@ -16,7 +16,7 @@
       }
     },
     "plugins": [
-      "./plugins/expo-path-spaces"
+      "../../../packages/client-react-native/plugins/expo-path-spaces.cjs"
     ]
   }
 }

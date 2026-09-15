@@ -1,6 +1,10 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { withDangerousMod, withXcodeProject } = require('expo/config-plugins');
+// Resolved from the consuming app (Expo CLI runs with the app as working directory), since this
+// file lives in the SDK package and has no node_modules of its own.
+function configPlugins() {
+  return require(require.resolve('expo/config-plugins', { paths: [process.cwd(), __dirname] }));
+}
 
 // Expo 57's generated scripts execute unquoted paths in two places, which
 // breaks when the repository path contains spaces. Both corrections are
@@ -48,6 +52,7 @@ function patchXcodeProject(project) {
 }
 
 module.exports = function withExpoPathSpaces(config) {
+  const { withDangerousMod, withXcodeProject } = configPlugins();
   config = withDangerousMod(config, ['ios', async modConfig => {
     const podfile = path.join(modConfig.modRequest.platformProjectRoot, 'Podfile');
     fs.writeFileSync(podfile, patchPodfile(fs.readFileSync(podfile, 'utf8')));

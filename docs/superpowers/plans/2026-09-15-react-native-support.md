@@ -19,7 +19,7 @@ Reuse `/Users/stevewang/Github/local first state/.worktrees/react-native` on `co
 - [x] Complete the Release simulator build using the commands below. The path-with-spaces Expo Constants fix already exists as a repeatable config plugin.
 
 ```sh
-node --test integration/platform/react-native/plugins/expo-path-spaces.test.js
+node --test packages/client-react-native/plugins/expo-path-spaces.test.cjs
 cd integration/platform/react-native
 ./node_modules/.bin/tsc --noEmit
 npx expo prebuild --platform ios --no-install

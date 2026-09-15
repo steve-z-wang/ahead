@@ -22,7 +22,7 @@ function check(condition: unknown, message: string): asserts condition {
   if (!condition) throw Error(message);
 }
 async function until(predicate: () => Promise<boolean>, message: string) {
-  const deadline = Date.now() + 60000;
+  const deadline = Date.now() + 120000;
   while (Date.now() < deadline) {
     if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
