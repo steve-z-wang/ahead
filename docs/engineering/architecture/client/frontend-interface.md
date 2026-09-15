@@ -2,7 +2,7 @@
 
 ## 1. Introduction and Goals
 
-The frontend interface is the one Rust surface every language binding drives: open a database, run transactions, read, queue, sync, observe. It holds almost nothing in memory (the open store, the schema, the client id and a generation counter), so a client can be dropped and reopened at any commit.
+The frontend interface is the one Rust surface every language binding drives: open a database, run transactions, read, queue, sync, observe. It holds almost no state in memory: the open store, the schema, the client id and a generation counter, plus the registered watchers, the open session if any, and the bounded record of issued pulls and subscription epochs that [Pull](engine/pull.md#5-building-block-view) uses to recognize a page from an earlier subscription. None of that is durable, so a client can be dropped and reopened at any commit.
 
 ## 3. Context and Scope
 

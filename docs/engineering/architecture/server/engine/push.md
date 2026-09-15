@@ -6,7 +6,7 @@ Server push executes a client's batch exactly once, in order, inside the applica
 
 ## 3. Context and Scope
 
-Input: the authenticated owner, the request bytes ([Protocol / Push](../../protocol/push.md)) and a host. Output: the receipt text, also stored for replay; or an error that aborts the transaction (`request.invalid:…`, `owner_mismatch`, `gap`, `overlap`, `mutation_version_unsupported:…`, or any handler or persistence error). The [connection](../connection/transport.md) maps these to HTTP statuses.
+Input: the authenticated owner, the request bytes ([Protocol / Push](../../protocol/push.md)) and a host. Output: the receipt text, also stored for replay; or an error that aborts the transaction (`request.invalid`, `client.owner_mismatch`, `gap`, `overlap`, `mutation_version_unsupported`, or any handler or persistence error). The codes are declared in [server/error.rs](../../../../../crates/server/src/error.rs) and the [connection](../connection/transport.md) maps them to HTTP statuses.
 
 ## 5. Building Block View
 

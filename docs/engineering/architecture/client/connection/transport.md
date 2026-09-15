@@ -33,4 +33,4 @@ Tests read, not executed.
 
 ## 11. Risks and Technical Debt
 
-**Accepted limitation.** The TypeScript transport is Node-only: it depends on the `ws` package and sets an upgrade header browsers cannot set. Nothing in the repository records a browser target either way.
+**Accepted limitation.** The TypeScript transport is Node-only: it depends on the `ws` package and sets an upgrade header browsers cannot set. A browser and WebAssembly target is a separate open decision ([#59](https://github.com/zanminwang/ahead/issues/59)).
