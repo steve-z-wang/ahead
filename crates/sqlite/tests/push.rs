@@ -185,7 +185,7 @@ fn next_task_walks_pending_tasks_fails_unhandled_ones_and_records_reasons() {
         json!([{"model":"Entry","field":"note","name":"Upload","arguments":{"key":"self"}}]);
     value["prerequisites"] = json!([{"name":"Upload","fields":[{"name":"key","type":"String"}]}]);
     let schema = Schema::from_value(value).unwrap();
-    let mut c = Client::open(SqliteStore::open(&dir.path().join("db")).unwrap(), schema).unwrap();
+    let mut c = Client::open(SqliteStore::open(dir.path().join("db")).unwrap(), schema).unwrap();
     subscribe(&mut c, "book");
     c.apply_page(page("book", 0, 1, Some("A"))).unwrap();
     c.transaction(|tx| {
