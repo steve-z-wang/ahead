@@ -42,7 +42,7 @@ console.log(server.url);
 
 The generated `createBackend` needs no `config` option: the schema is already bound. The runtime's own `createBackend` (`packages/server/index.mts`) still takes `config` explicitly, for callers that build the schema themselves.
 
-`db` is your Prisma client and `Tx` is `Prisma.TransactionClient`. The application supplies `canEdit` and `loadVisibleEntry` to enforce its write and read permissions.
+`db` is your Prisma client and `Tx` is `Prisma.TransactionClient`. The application supplies `canEdit` and `loadVisibleEntry` to enforce its write and read permissions. Authorization, unique constraints, child deletion and client identity are the application's responsibility; the runtime does not enforce them ([What your backend owns](api.md#what-your-backend-owns)).
 
 ## Call objects
 
@@ -100,4 +100,4 @@ Run `integration/persistence/server/run.sh` for the disposable PostgreSQL/Prisma
 
 `backend.listen({ port, host? })` starts a Node HTTP+WebSocket server that serves `/sync/mutations`, `/sync/pull`, and `/sync/live` on one port, and returns `{ url, close() }`. It resolves once the listener is bound.
 
-For every option, callback, return value and failure mode, see the [backend interface reference](api.md).
+For every option, callback, return value and failure mode, see the [backend interface reference](api.md). For process placement, the reverse-proxy configuration and trust boundaries, see [Deploy the backend](deployment.md).
