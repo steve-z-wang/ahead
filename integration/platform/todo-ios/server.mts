@@ -54,6 +54,9 @@ async function proxy(dropFirstPush: boolean) {
     socket.on("close", () => sockets.delete(socket));
   });
   server.on("upgrade", (req, socket, head) => {
+    // The HTTP server drops its own error listener on upgrade; a reset from the phone
+    // (for example when the runner terminates it) must not crash the proxy.
+    socket.on("error", () => {});
     if (!online) {
       socket.end("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
       return;
