@@ -29,4 +29,8 @@ Batch `n+1` is accepted only after `n`. Resending `n` returns the stored receipt
 
 ## 11. Risks and Technical Debt
 
-- **Accepted limitation:** `requiredScope` and `requiredSyncId` are mandatory on the wire even when `requiredCheckpoints` is present; the server fills them from the first sorted checkpoint or with `""` and `0`. Retiring them would break byte compatibility.
+- **Decision needed ([#63](https://github.com/zanminwang/ahead/issues/63)): whether to retire `requiredScope` and `requiredSyncId`.** They are mandatory on the wire even when `requiredCheckpoints` is present; the server fills them from the first sorted checkpoint or with `""` and `0`. Inventory (2026-09-14, code inspection):
+    - *Emitters.* `process_push` in [server/lib.rs](../../../../crates/server/src/lib.rs); every test that builds a `PushReceipt` (the SQLite harness, `bindings/common/tests/session.rs`, the JS and Dart live-test fixtures, `fixtures/protocol/counter-and-checkpoint.json`).
+    - *Decoders.* `PushReceipt::decode` requires both fields and uses them only as the fallback checkpoint when `requiredCheckpoints` is absent; `validate` range-checks `requiredSyncId`. The client engine settles from `requiredCheckpoints` and `rejections` alone; neither SDK reads the pair.
+    - *Stated constraint.* [Common §2](common.md) says wire names inherited from the reference implementation must not change; no external client of this server is known, and the sim's byte comparison of stored receipts is within one version.
+    - *Staged path if retired.* (1) make the pair optional on decode while keeping the fallback for receipts without `requiredCheckpoints`, which stays compatible with receipts already stored on servers; (2) stop emitting it; (3) remove the fields. Each step is a wire-contract change and waits for the decision.
