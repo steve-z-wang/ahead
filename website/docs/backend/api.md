@@ -92,7 +92,16 @@ A handler returns `Promise<void | { channel: string }>`. Returning void selects 
 
 One mutation can have several slots and perform several business writes. Ahead runs it in a savepoint inside the batch transaction. The schema describes the local operation and typed input; it does not require the backend to replay the same database operations. The backend can normalize values or use different tables.
 
-The latest `Edit` version uses `handlers.edit`. Additional retained versions use names such as `editV1`. Keep the handlers required by the generated interface while clients can still send those versions. A known but unsupported version fails before any handler executes.
+`handlers.edit` holds every retained version of `Edit`. While only v1 is retained, the function above is shorthand for `{ v1: ... }`. Once a second version is retained, register each one explicitly and keep them all while clients can still send those versions:
+
+```text
+handlers.edit = {
+  v1: handleOriginalEdit,   // receives EditV1Input
+  v2: handleNewEdit,        // receives EditInput
+};
+```
+
+A bare function always means v1, never the latest version, so a mutation whose retained versions are not exactly v1 refuses it at startup, as does a missing version, an unknown `v<n>` key or a value that is not a function. A request reaches only the handler of the version it names; there is no fallback. A known but unsupported version fails before any handler executes.
 
 ## Loaders
 

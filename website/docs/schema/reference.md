@@ -16,7 +16,7 @@ cargo run -p ahead-compiler -- compile INPUT_DIR OUTPUT_DIR \
 | `OUTPUT_DIR` | Destination for generated artifacts |
 | `--backend-runtime SPEC` | TypeScript backend import; default `@ahead/server` |
 | `--client-runtime SPEC` | TypeScript client import; default `@ahead/client` |
-| `--mutation-history FILE` | Retained mutation history; default output directory's `mutation-history.json` |
+| `--mutation-history FILE` | Override the retained mutation history path; default `INPUT_DIR/history/mutations.json` |
 | `--initialize-mutation-history` | Allow a missing explicitly selected history file; only version 1 declarations |
 | `--schema-fence FILE` | Published schema to check; default existing output `schema.json` |
 
@@ -32,9 +32,10 @@ For source-checkout use, supply runtime paths relative to the output directory; 
 | `client.ts` | Schema-bound `GeneratedClient`, channels and runtime re-exports |
 | `backend.ts` | Typed `Handlers`, `Loaders`, inputs, record references and bound `createBackend` |
 | `generated.dart` | Dart models, patches, mutation builders and generated client |
-| `mutation-history.json` | Retained mutation versions and input contracts; path configurable |
 
-Dart output imports `package:ahead/ahead.dart`. Commit the history used to generate released clients; regenerating from an empty history loses compatibility information.
+Mutation history is not generated output: it is written to `INPUT_DIR/history/mutations.json`, beside your `.model` files, and holds the retained mutation versions and input contracts. `--mutation-history FILE` overrides the path.
+
+Dart output imports `package:ahead/ahead.dart`. Commit the history used to generate released clients; regenerating from an empty history loses compatibility information. A history left at the superseded `OUTPUT_DIR/mutation-history.json` is read once, rewritten at the new default and reported on stderr; the old file stays where it is and you can delete it after committing the new one.
 
 ## Fields and identities
 
@@ -93,7 +94,7 @@ Builders emit operations in declared slot order. Slot bindings can connect opera
 
 ## History and compatibility
 
-Backend descriptors retain declared mutation versions with their input schemas and known field sets. Latest handlers use names such as `edit`; older versions use `editV1`.
+Backend descriptors retain declared mutation versions with their input schemas and known field sets. The generated `Handlers` interface groups them under one key per mutation, such as `edit: { v1, v2 }`; input types keep names such as `EditInput` for the latest version and `EditV1Input` for older ones.
 
 Same-version changes must be backward compatible. Adding nullable create fields or additional permitted patch/enum values can be compatible. Required create fields, field removal, changed types, reordered slots, changed bindings and changed dependency policy require a new mutation version. Versions cannot decrease and retained mutations cannot disappear.
 

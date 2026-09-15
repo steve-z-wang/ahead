@@ -90,7 +90,7 @@ The outer transaction belongs to the application. Persistence, Handler, and Load
 
 ## Mutation results
 
-A successful Handler returns `{channel: string}` to select its receipt checkpoint or returns `undefined` to use the single notified channel. Notification is explicit and can target several channels, but the receipt still settles against exactly one. An explicit `MutationRejected` or registered `translateRejection` code rolls back that mutation's savepoint, including business effects and notification; every other exception aborts the batch. Translation must produce a stable machine code. A known unsupported mutation version aborts the batch before any handler executes. The `handlers` key for a mutation's latest version is its lowerFirst name (e.g. `editTask`); a non-latest version appends `V<n>` (e.g. `editTaskV1`).
+A successful Handler returns `{channel: string}` to select its receipt checkpoint or returns `undefined` to use the single notified channel. Notification is explicit and can target several channels, but the receipt still settles against exactly one. An explicit `MutationRejected` or registered `translateRejection` code rolls back that mutation's savepoint, including business effects and notification; every other exception aborts the batch. Translation must produce a stable machine code. A known unsupported mutation version aborts the batch before any handler executes. The `handlers` key for a mutation is its lowerFirst name (e.g. `editTask`), and its value registers every retained version under `v1`, `v2`, .... A mutation that retains only v1 also accepts the plain function shown above; see [handlers](api.md#handlers).
 
 ## Loaders and Pull
 

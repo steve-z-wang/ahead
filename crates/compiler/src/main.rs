@@ -12,8 +12,11 @@ fn run() -> Result<(), String> {
     if args.len() < 4 || args[1] != "compile" {
         return Err("usage: ahead compile INPUT_DIR OUTPUT_DIR [--mutation-history FILE] [--initialize-mutation-history] [--schema-fence FILE] [--backend-runtime SPEC] [--client-runtime SPEC]".into());
     }
+    let input = Path::new(&args[2]);
     let out = Path::new(&args[3]);
-    let mut history_path = out.join("mutation-history.json");
+    // History belongs beside the schema and is committed to Git, not with disposable output.
+    let mut history_path = input.join("history").join("mutations.json");
+    let superseded = out.join("mutation-history.json");
     let mut fence_path = out.join("schema.json");
     let mut backend_runtime = String::from("@ahead/server");
     let mut client_runtime = String::from("@ahead/client");
@@ -40,7 +43,10 @@ fn run() -> Result<(), String> {
         }
         index += 1;
     }
-    if initialize && history_path.exists() {
+    // An existing history at the superseded location is read and rewritten at the new default,
+    // never reinitialized.
+    let relocate = !explicit_history && !history_path.exists() && superseded.exists();
+    if initialize && (history_path.exists() || relocate) {
         return Err("mutation history already exists; initialization refused".into());
     }
     if explicit_history && !history_path.exists() && !initialize {
@@ -95,8 +101,13 @@ fn run() -> Result<(), String> {
     if fence_path.exists() {
         ahead_compiler::check_fence(&read_json(&fence_path)?, &config["schema"])?;
     }
-    let previous = if history_path.exists() {
-        Some(read_json(&history_path)?)
+    let history_source = if relocate {
+        superseded.clone()
+    } else {
+        history_path.clone()
+    };
+    let previous = if history_source.exists() {
+        Some(read_json(&history_source)?)
     } else {
         None
     };
@@ -135,15 +146,25 @@ fn run() -> Result<(), String> {
         ),
         (out.join("generated.dart"), ahead_compiler::dart(&config)),
         (
-            history_path,
+            history_path.clone(),
             serde_json::to_string_pretty(&history).unwrap(),
         ),
     ];
     fs::create_dir_all(out).map_err(|e| e.to_string())?;
+    if let Some(parent) = history_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
     for (path, contents) in files {
         let temp = path.with_extension(format!("{}.tmp", std::process::id()));
         fs::write(&temp, contents).map_err(|e| format!("{}: {e}", temp.display()))?;
         fs::rename(temp, &path).map_err(|e| e.to_string())?;
+    }
+    if relocate {
+        eprintln!(
+            "mutation history read from {} and written to {}; the old file is kept and no longer read",
+            superseded.display(),
+            history_path.display()
+        );
     }
     Ok(())
 }
