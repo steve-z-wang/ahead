@@ -21,6 +21,20 @@ A model declares the records an application stores: the stored fields, the ident
 
 Code: parsing in [compiler/parse.rs](../../../../crates/compiler/src/parse.rs); name, identity and unique checks in [compiler/validate.rs](../../../../crates/compiler/src/validate.rs); descriptor rules and record keys in [core/schema.rs](../../../../crates/core/src/schema.rs); tables and indexes in [client/ddl.rs](../../../../crates/client/src/ddl.rs).
 
+## 9. Architecture Decisions
+
+**Model versions — agreed, not implemented ([#91](https://github.com/zanminwang/ahead/issues/91)).** Declare the read contract version on the model with `@@version(n)`, defaulting to 1, independently of mutation versions and record stamps. Compatible changes keep the version; breaking changes retain the old definition and loader alongside the new one. Read compatibility needs its own rules: adding a field or enum value is not automatically safe for an old client. The field-evolution rules below are agreed; other compatibility rules and read-protocol version selection remain to be designed.
+
+**Adding a nullable field — agreed read contract.** Adding an ordinary nullable stored field, without changing identity or constraints, keeps the model version. An older client ignores the unknown extra field while applying the fields it recognizes; a newer client reads a missing nullable field as `null`. For example, adding `description String?` preserves reads of `Task {id, title}`. The local SQLite layout still needs the new column ([Reconciliation](../client/storage/reconciliation.md)). This permits ignoring extra fields, not wrong types in known fields; handling malformed records remains owned by [#51](https://github.com/zanminwang/ahead/issues/51). This decision does not settle mutation-input compatibility or cache refresh after previously ignoring a field.
+
+**Adding a required field — agreed read contract.** A new non-nullable stored field requires a model version bump: older records lack the required value. The new loader supplies valid values; Ahead must not invent a value. Local schema detection and replica rebuilding are framework responsibilities under [#20](https://github.com/zanminwang/ahead/issues/20).
+
+**Adding a returned enum value — agreed read contract.** Expanding an enum used by a model's existing read contract requires a new model version: an older client may recognize the field but cannot interpret the new value. For example, adding `archived` to `open | closed` requires retaining the old record definition and loader. The application implements the old loader's conversion into values allowed by that old contract; the framework does not guess a fallback or forward the new value to old readers. This is an output rule, not a change to mutation-input enum compatibility.
+
+**Renaming, removing or changing a field's type — agreed read contract.** Each is a breaking change and requires a model version bump. While supporting the old version, retain its definition and loader, returning the old field names and types. The application supplies the mapping or conversion; the compiler must not infer a rename or silently coerce values. This rule covers the public record contract, not permission to migrate identities, relations or persisted client data automatically.
+
+Model versions follow the same [deprecation lifecycle](mutations.md#9-architecture-decisions) as mutations. See [Typed API / Server](../sdks/typed-api/server.md#9-architecture-decisions) for loader registration and [Generate](../compiler/generate.md#9-architecture-decisions) for history storage. Contract history does not migrate existing local records; that belongs to [Reconciliation](../client/storage/reconciliation.md) and [#20](https://github.com/zanminwang/ahead/issues/20).
+
 ## 10. Quality Requirements
 
 - An invalid identity (nullable, non-scalar, missing, duplicated) is refused at compile time. Evidence: [compiler/tests/compiler.rs](../../../../crates/compiler/tests/compiler.rs) `rejects_invalid_identity`, `schema_and_mutations`.

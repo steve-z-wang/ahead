@@ -2,7 +2,7 @@
 
 ## 1. Introduction and Goals
 
-The client stores no schema descriptor. The tables themselves are the record of what schema created them, and opening the client compares them with the compiled schema it was given. Reconciliation makes the tables match when it can do so without losing data, and refuses to open when it cannot.
+Currently, the client stores no schema descriptor. The tables themselves are the record of what schema created them, and opening the client compares them with the compiled schema it was given. Reconciliation makes the tables match when it can do so without losing data, and refuses to open when it cannot.
 
 ## 3. Context and Scope
 
@@ -33,6 +33,20 @@ What reconciliation does depends on the kind of difference. The three outcomes a
 
 Consequences worth knowing: a field rename is handled as "remove the old field, add the new one", so the old column stays in place and the new column follows the rows above for an added field: filled with `null` if nullable, with the declared default if it has one, and refused (open fails) if it is non-nullable without a default; the old column's values are not carried over. A stale unique index keeps constraining rows; and rows holding an enum value the schema no longer declares remain readable as strings that normalization will reject. A refused reconciliation rolls back and leaves the file exactly as it was; the only remedy today is a new database file.
 
+## 9. Architecture Decisions
+
+**Detect compatibility and rebuild incompatible replicas — agreed, not implemented ([#20](https://github.com/zanminwang/ahead/issues/20)).** Generated clients carry the current schema. Store the schema descriptor when creating a local database; on each open, Rust compares that stored descriptor with the incoming schema using the [agreed compatibility rules](../../schema/models.md#9-architecture-decisions). A version or hash can identify a change, but cannot classify compatibility on its own.
+
+| Comparison | Target behavior |
+| --- | --- |
+| Unchanged | Open the existing database. |
+| Compatible change, such as a nullable-field addition | Apply the supported additive change and update the stored descriptor atomically. |
+| Incompatible | Create a database matching the new schema and synchronize server data from the beginning; do not reuse the old delivery cursors as evidence that the new database is populated. |
+
+This is automatic framework behavior, without application migration SQL, migration commands or manually registered upgrade callbacks. Reuse a compatible database rather than rebuilding on every startup. Retain the old database; selecting and switching databases and recovering interrupted rebuilds need implementation design.
+
+Continuing unfinished mutations and preserving access to local-only records across incompatible schemas are deferred follow-up work. Retaining the old file does not itself make those operations available in the new database. Do not delete the old database or rewrite frozen requests, and do not claim seamless upgrades for these cases until they are handled. Existing databases without a stored descriptor also need an explicit handling rule.
+
 ## 10. Quality Requirements
 
 - **Additive changes open and fill existing rows; unknown columns survive.** Evidence: [sqlite/tests/ddl.rs](../../../../../crates/sqlite/tests/ddl.rs) `adds_missing_columns_to_both_tables_and_keeps_unknown_ones`.
@@ -45,4 +59,4 @@ Tests read, not executed. Reconciliation with a non-empty queue is not tested; t
 
 **Problem: a non-nullable field cannot be added to a model with data.** The descriptor supports a default, but the compiler cannot emit one ([Models](../../schema/models.md)), so the "added with default" row above is unreachable from a `.model` file. Tracked in [#27](https://github.com/zanminwang/ahead/issues/27) and [#20](https://github.com/zanminwang/ahead/issues/20).
 
-**Accepted limitation (contract to be decided in [#20](https://github.com/zanminwang/ahead/issues/20)).** Kept columns, kept indexes and undetected enum changes are the current behavior, not a design; #20 lists the open decisions, including whether stale indexes should be dropped and what an explicit reset looks like.
+**Accepted limitation (contract to be decided in [#20](https://github.com/zanminwang/ahead/issues/20)).** Kept columns, kept indexes and undetected enum changes are the current behavior, not a design; #20 lists the open decisions, with the target comparison/rebuild direction in section 9; constraint compatibility and transition details still need design.

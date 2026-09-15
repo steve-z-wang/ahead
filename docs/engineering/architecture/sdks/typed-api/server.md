@@ -23,6 +23,29 @@ The runtime package holds `createBackend`, the HTTP and WebSocket servers and th
 
 Code: [server/index.mts](../../../../../packages/server/index.mts); generated signatures from `backend_typescript` in [compiler/emit.rs](../../../../../crates/compiler/src/emit.rs).
 
+## 9. Architecture Decisions
+
+**Handler and loader registration by version — agreed, not implemented ([#91](https://github.com/zanminwang/ahead/issues/91)).** Group versions under the mutation or model name. For an initial v1-only contract, a function is shorthand for `{v1: implementation}`. Once multiple versions are supported, register each explicitly:
+
+```ts
+handlers: {
+  edit: {
+    v1: handleOriginalEdit,
+    v2: handleNewEdit,
+  },
+},
+loaders: {
+  task: {
+    v1: loadOriginalTask,
+    v2: loadNewTask,
+  },
+}
+```
+
+Handlers receive generated input types for their mutation version; loaders return generated record types for their independent [model version](../../schema/models.md#9-architecture-decisions). Registration keys use `v1`, `v2`; wire versions remain numbers. Shorthand always means v1, never the latest version. Client calls remain `tx.mutate.edit(...)`, with their generated version fixed in the request.
+
+The current implementation still uses `edit` for the latest version and `editV1` for an older one. Loaders currently have no version dispatch. The compiler and server registration must change together to implement this decision.
+
 ## 10. Quality Requirements
 
 - **Startup fails on an invalid config or a missing handler or loader.** Evidence: [runtime.test.mjs](../../../../../integration/persistence/server/runtime.test.mjs) `backend validates config and complete registrations at startup`.

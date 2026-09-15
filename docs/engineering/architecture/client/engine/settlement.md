@@ -2,7 +2,7 @@
 
 ## 1. Introduction and Goals
 
-A local write is shown to the user before the server has seen it. Settlement is the moment that optimism ends: the client learns the server's answer and replaces the optimistic row with the authoritative one, or rolls the write back. Its job is to do this exactly once per mutation, in the order batches were sent, and only after the content the server promised has actually arrived.
+A local write is shown to the user before the server has seen it. Settlement is the moment that optimism ends: the client learns the server's answer and replaces the optimistic row with the authoritative one, or rolls the write back. Its job is to do this exactly once per mutation, in the order batches were sent, after required checkpoints on subscribed channels have been reached. Acceptance alone does not supply the final record; results outside the current subscriptions are not awaited.
 
 The rest of the engine sets settlement up. [Local operations](local-operations/README.md) keeps a *before image* (the last server-known row) under every record with pending mutations; [Push](push/README.md) freezes mutations into numbered batches; [Pull](pull.md) applies server pages and moves per-channel cursors. Settlement reads all three.
 
@@ -32,7 +32,7 @@ Rejected mutations are removed first (see below). For the accepted ones, the rec
 
 - Some checkpoints remain: they are stored, and the ordered settlement below decides when the batch settles.
 - No accepted mutation remains in the batch: there is nothing to settle.
-- Every checkpoint was dropped but accepted mutations remain: a *nothing-awaited* marker is stored instead (a checkpoint row on the empty channel at cursor 0, which every channel has reached). The batch is then ready, and the ordered walk below settles it as soon as every earlier batch has settled, never before. The marker also keeps the batch from reading as in flight, so it is not sent again after a restart. What the user sees once such a batch settles is recorded in section 11.
+- Every checkpoint was dropped but accepted mutations remain: a *nothing-awaited* marker is stored instead (a checkpoint row on the empty channel at cursor 0, which every channel has reached). The batch is then ready, and the ordered walk below settles it as soon as every earlier batch has settled, never before. The marker also keeps the batch from reading as in flight, so it is not sent again after a restart. The visible-state contract for this case is recorded in section 9.
 
 ### Waiting and settling in order
 
@@ -62,6 +62,12 @@ Because the pending edit is replayed over the new base rather than discarded, th
 
 Nothing will advance an unsubscribed channel's cursor again, so waiting would be forever. The channel's checkpoint rows are deleted and the batches they were holding are settled as if the checkpoint had been met.
 
+## 9. Architecture Decisions
+
+**Acceptance does not promote optimistic wire operations to local truth.** A receipt confirms execution, not the handler's final records. Keep the existing behavior: ignore checkpoints outside the current subscriptions, settle in batch order, and rebuild from the available base plus remaining pending edits. Without new authority, an update can revert to the previous value and a create can disappear. A later subscription can deliver the server's result. Unsubscribe releases its checkpoint requirement and can remove records with no remaining channel claims; it does not preserve pending optimism indefinitely.
+
+Applications that need to display the result must subscribe to the channel their backend publishes to and keep that subscription while awaiting the result. The loader must return the resulting record to that client. Sending a mutation without subscribing remains supported; Ahead neither auto-subscribes nor converts its optimistic wire operations into direct writes. See the [usage guide](https://github.com/zanminwang/ahead/blob/main/website/docs/frontend/sync.md#receive-mutation-results) and decision [#52](https://github.com/zanminwang/ahead/issues/52).
+
 ## 10. Quality Requirements
 
 - **Optimism is removed only after every stored checkpoint is met, regardless of arrival order** (guarantee A3). Evidence: [crates/sim/tests/authority.rs](../../../../../crates/sim/tests/authority.rs) `a3_ack_alone_does_not_settle`; [sqlite/tests/push.rs](../../../../../crates/sqlite/tests/push.rs) `offline_queue_and_frozen_bytes_survive_restart_and_ack_waits_for_pull`, `pull_before_ack_and_later_local_edit_replay_in_order`, `record_status_reports_phases_and_duplicate_ack_is_idempotent`.
@@ -75,12 +81,12 @@ Verified 2026-09-14: `cargo test -p ahead-sqlite --locked --test push` and `carg
 
 ## 11. Risks and Technical Debt
 
-**Potential risk: settling without authority reverts the record.**
+**Coverage gap: visible state after settlement without authority.**
 
 - *Condition.* Every checkpoint in a receipt names a channel the client is not subscribed to, so all are dropped and the batch settles as soon as the ordered walk reaches it. In practice: a client that subscribes to nothing, or a handler that publishes the record only to channels this client does not follow.
 - *Consequence.* No page ever delivers the server's version, so the rebuild restores the base as it was before the mutation: an updated row reverts to its pre-mutation value, and a locally created row disappears, even though the server accepted the mutation. The record reappears only if some subscribed channel later delivers it.
-- *Status.* Owned here; the guarantees page notes the consequence under A3. **To confirm:** whether this is the intended contract for records outside the client's channels, or whether such a mutation should keep its optimistic row until a page arrives.
-- *Evidence.* Code path: `awaitable` and `settle_push` in [client/push.rs](../../../../../crates/client/src/push.rs), then `rebuild` in [client/mutate.rs](../../../../../crates/client/src/mutate.rs). Executed once on this branch with the test below (`cargo test -p ahead-sqlite --test zz_scratch_probe -- --nocapture`, passed, file not committed). Observed: the updated row read `text: "A"` after settlement; the created row read `None`.
+- *Status.* The existing behavior is accepted (section 9, [#52](https://github.com/zanminwang/ahead/issues/52)). Named regressions still need to assert visible records and pending work for no subscriptions, unrelated subscriptions, later authoritative delivery and unsubscribe; the pending-count test alone is insufficient.
+- *Evidence.* Code path: `awaitable` and `settle_push` in [client/push.rs](../../../../../crates/client/src/push.rs), then `rebuild` in [client/mutate.rs](../../../../../crates/client/src/mutate.rs). Executed once during the earlier architecture review with the test below (`cargo test -p ahead-sqlite --test zz_scratch_probe -- --nocapture`, passed, file not committed). Observed: the updated row read `text: "A"` after settlement; the created row read `None`.
 
 <details>
 <summary>Reproduction: a test file for <code>crates/sqlite/tests/</code> using the existing <code>common</code> helpers</summary>

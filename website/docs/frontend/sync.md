@@ -25,6 +25,14 @@ Here `render` is your UI's update function. Subscribing records the desired chan
 
 Use channel names that your backend notifies, and subscribe before writing when the client needs to receive the resulting server state. A channel is not a database query or an authorization token. Loaders decide which requested records the authenticated user may see.
 
+## Receive mutation results
+
+**Subscribe before mutating when your UI needs the server's result.** Use `client.channels.subscribe(channel)` as above, with a channel your handler publishes to through `notify`, and keep it subscribed until the result arrives. Your loader must return the resulting record for that client. Subscription starts synchronization; it does not wait for initial data. Use `watch` to observe the records, and wait for an existing record to be available locally before updating it.
+
+A mutation's local changes are an optimistic prediction. Its receipt confirms that the backend accepted the operation, but does not contain the final records. Ahead receives those through the subscribed channels.
+
+You can send mutations without subscribing to their result channels. In that case Ahead does not wait for those channels: once earlier batches have settled, it removes the accepted prediction and rebuilds from the local base and remaining pending edits. Without a server record, an update can return to its previous value or a newly created record can disappear, even though the operation succeeded. Subscribing later can bring in the server's result. Unsubscribing while waiting also releases that channel's checkpoint requirement.
+
 ## Work offline
 
 === "TypeScript"
@@ -60,7 +68,7 @@ You can close and reopen the same local database without losing queued changes. 
 
 ## Understand acceptance and rejection
 
-After a local mutation, the connection pushes its frozen request. A successful receipt can require a channel checkpoint. The runtime retains optimistic state until the necessary authoritative progress is applied, then settles the accepted work and replays remaining local changes. This lets a handler's normalized result replace the optimistic value.
+After a local mutation, the connection pushes its frozen request. A successful receipt can require a channel checkpoint. The runtime waits for the required checkpoints on subscribed channels, then settles the accepted work in batch order and replays remaining local changes. This lets a handler's normalized result replace the optimistic value.
 
 If a handler rejects the mutation, Ahead removes that mutation's optimistic contribution and retains its rejection code locally. Later valid pending work may still affect the displayed record, so rollback is not necessarily a return to the value the user saw before all edits.
 
@@ -98,7 +106,7 @@ Authenticate requests on the backend and check business permissions in handlers 
 
 Use a separate local database per signed-in user. On an account change, stop and close the old client before opening the other user's database. Changing only the transport token leaves the old user's cached records and client identity in place.
 
-When permissions change, notify the channels whose visible records changed. A loader can then return null to withdraw a record. Unsubscribing does not erase cached data and does not enforce authorization.
+When permissions change, notify the channels whose visible records changed. A loader can then return null to withdraw a record. Unsubscribing can remove records no remaining channel claims; it is not a complete cache wipe or an authorization mechanism.
 
 ## Diagnose pending work
 

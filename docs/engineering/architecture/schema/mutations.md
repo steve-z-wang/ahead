@@ -35,7 +35,13 @@ Code: parsing in [compiler/parse.rs](../../../../crates/compiler/src/parse.rs) a
 
 ## 6. Runtime View
 
-Changing a mutation's input requires `@@version(n+1)`. The compiler keeps the previous snapshot, the server keeps a `nameVn` handler for it, and the client keeps its policy, so instances queued before the upgrade still decode. A batch that names a known mutation with an unregistered version is refused before any handler runs.
+An incompatible change to a mutation's input requires `@@version(n+1)`; compatible changes keep the same version. The compiler keeps the previous snapshot, the server keeps a `nameVn` handler for it, and the client keeps its policy, so instances queued before the upgrade still decode. Currently, a batch that names a known mutation with an unregistered version is refused before any handler runs; [P7 / Server Push](../server/engine/push.md#9-architecture-decisions) changes this to per-mutation rejection.
+
+## 9. Architecture Decisions
+
+**Version lifecycle — agreed target ([#91](https://github.com/zanminwang/ahead/issues/91)).** The compiler checks compatibility; an added input is not automatically compatible (for example, a new required field breaks old requests). Keep old contracts and handlers while their versions are supported. Versioned registration is defined in [Typed API / Server](../sdks/typed-api/server.md#9-architecture-decisions); history storage is owned by [Generate](../compiler/generate.md#9-architecture-decisions).
+
+A version may be marked **deprecated**, with a reason and recommended replacement. Generated APIs show deprecation notices; the version remains usable, with its history and runtime behavior preserved. Ending support requires a separate, explicit decision because offline clients may still send old mutations. Deprecation syntax and the retirement mechanism remain to be designed. Initial deprecation scope covers mutation and model versions, not individual fields; deprecation is not implemented yet.
 
 ## 10. Quality Requirements
 

@@ -25,6 +25,12 @@ Code: `process_pull` in [server/lib.rs](../../../../../crates/server/src/lib.rs)
 
 **Coherence.** Head, scan and load must observe one snapshot. That is a requirement on the application's transaction runner ([Persistence](../persistence.md)); the shipped Prisma runner uses repeatable read.
 
+## 9. Architecture Decisions
+
+**Loader failure isolation — agreed target ([D7](../../../guarantees.md#d-distribution), [#95](https://github.com/zanminwang/ahead/issues/95)).** A failure attributable to a read, including an unsupported model version, is a read error: the loader may throw, and the runtime reports the error to the application. Keep mutation rejection records, but do not introduce a durable loader-failure queue. Unrelated reads continue, including those sharing the same page or channel. An entire channel must not be paused solely because one of its reads failed. Preserve existing local data; a failed load is not a `null` deletion or successful synchronization.
+
+The current implementation groups identities by model and propagates loader errors as request errors. A failed read can be requested again; it does not reject a previously accepted mutation. Background errors must reach the application through an error event or status rather than an unhandled exception. Error reporting and isolation within a multi-record loader call remain to be designed. Failed reads must not advance synchronization evidence or satisfy checkpoints; infrastructure failures may require retrying the request.
+
 ## 10. Quality Requirements
 
 - **Every change carries the invalidation row's stamp; rows without a positive stamp are refused** (guarantee D2, server side). Evidence: [server/tests/stamp.rs](../../../../../crates/server/tests/stamp.rs) `pull_copies_the_row_stamp_into_the_change`, `pull_rejects_rows_without_a_positive_stamp`.
@@ -34,6 +40,8 @@ Code: `process_pull` in [server/lib.rs](../../../../../crates/server/src/lib.rs)
 Tests read, not executed.
 
 ## 11. Risks and Technical Debt
+
+**Problem: a loader failure aborts unrelated reads in the page.** `process_pull` propagates loader errors as request errors without isolating and reporting the affected read, contrary to target D7. No tests establishing D7 have been run for this documentation change. Track the protocol, recovery and cursor design in [#95](https://github.com/zanminwang/ahead/issues/95), alongside malformed-record handling in [#51](https://github.com/zanminwang/ahead/issues/51).
 
 **Accepted limitation (planned changes).** Page size is a fixed 50 with count-based completion ([#11](https://github.com/zanminwang/ahead/issues/11)); bootstrap is a cursor walk from zero over every model ([#14](https://github.com/zanminwang/ahead/issues/14) proposes snapshots).
 
