@@ -2,7 +2,7 @@
 
 ## 1. Introduction and Goals
 
-A backend author writes handlers (one per mutation) and loaders (one per model) against their own database transaction; the server typed API gives them typed inputs, a `notify` to publish changes, and an HTTP and WebSocket server, while the Rust engine decides what runs and what the client is told.
+A backend author writes handlers (one per mutation) and loaders (one per model) against their own database transaction; the server typed API gives them typed inputs, `changes` and `publish` to report and distribute what a handler changed, and an HTTP and WebSocket server, while the Rust engine decides what runs, reads the results back and tells the client.
 
 ## 3. Context and Scope
 
@@ -10,16 +10,17 @@ A backend author writes handlers (one per mutation) and loaders (one per model) 
 
 | Piece | Shape |
 | --- | --- |
-| Handler | `({input, tx, userId, notify}) => Promise<void \| {channel}>`; `input` is one typed value per slot |
-| Loader | `({ids, tx, userId, channel}) => Promise<(Row \| null)[]>`, aligned with `ids`; one per retained model version, `Row` being that version's record type |
-| Rejecting one mutation | throw `MutationRejected(code)`, or throw anything `translateRejection` maps to a code |
-| Publishing | `notify({channel, records})` inside a handler; `backend.bindTransaction(tx).notify(...)` outside one |
+| Handler | `({input, tx, userId, changes, publish}: HandlerCall) => Promise<void>`; `input` is one typed value per slot; the return value is ignored |
+| Change set | `changes.records` (the records the uploaded operations target) and `changes.add(record)` for a record the handler changed beyond them; every member is stamped, read back and returned in the receipt |
+| Loader | `({ids, tx, userId}: LoaderCall) => Promise<(Row \| null)[]>`, aligned with `ids`; one per retained model version, `Row` being that version's record type; no channel |
+| Rejecting one mutation, or refusing a read | throw `MutationRejected(code)`, or throw anything `translateRejection` maps to a code; from a loader in a push this rejects the mutation, in a pull it fails the page |
+| Publishing | `publish({channel})` or `publish({channel, records})` (`PublishArgs`) inside a handler; `backend.bindTransaction(tx).notify({channel, records})` (`NotifyArgs`) or the `backend.notify(tx, …)` shortcut outside one, which advance a stamp per record ([Notify](../../server/engine/notify.md)) |
 | Serving | `backend.listen({port, host?})` → `{url, close}` |
 | Development auth | `devAuth()` treats the bearer token as the user id; documented as development only |
 
 ## 5. Building Block View
 
-The runtime package holds `createBackend`, the HTTP and WebSocket servers and the Prisma-agnostic `Database<T>` contract; the Prisma adapter is a separate package ([Persistence](../../server/persistence.md)). Slot arguments handed to a handler are tagged with a hidden record reference, which is why `notify({records: [input.entry]})` works without spelling out model and identity.
+The runtime package holds `createBackend`, the HTTP and WebSocket servers and the Prisma-agnostic `Database<T>` contract; the Prisma adapter is a separate package ([Persistence](../../server/persistence.md)). Slot arguments handed to a handler are tagged with a hidden record reference, which is why `changes.add(input.entry)` and `publish({channel, records: [input.entry]})` work without spelling out model and identity.
 
 Code: [server/index.mts](../../../../../packages/server/index.mts); generated signatures from `backend_typescript` in [compiler/emit.rs](../../../../../crates/compiler/src/emit.rs).
 
@@ -53,11 +54,12 @@ Loader registration implements the same decision. Generated `Loaders<Tx>` holds 
 - **Startup fails on an invalid config or a missing handler or loader.** Evidence: [runtime.test.mjs](../../../../../integration/persistence/server/runtime.test.mjs) `backend validates config and complete registrations at startup`.
 - **Registration names every retained version; a bare function registers v1 only.** Evidence: `handler registration names every retained version and a function means v1 only`.
 - **A version reaches only its own handler, whichever way v1 was registered.** Evidence: `a version dispatches only to its own handler and a function registers v1`.
-- **Slot arguments can be passed to `notify` directly.** Evidence: `slot arguments are tagged so notify accepts them directly`.
+- **Slot arguments can be passed to `changes.add` and `publish` directly.** Evidence: `slot arguments are tagged so changes.add and publish accept them directly`.
+- **A handler returns nothing; the framework reads the change set back and publishes what was asked, with or without a `publish` call; loaders receive no channel.** Evidence: `a handler that publishes nothing still returns readback records and touches no channel`, `publish({channel}) publishes the final change set, an addition made after the call included`, `loaders receive no channel` ([Backend interface §10](../../server/backend-interface.md#10-quality-requirements)).
 - **Generated handlers group the retained versions of a mutation.** Evidence: [compiler/tests/compiler.rs](../../../../../crates/compiler/tests/compiler.rs) `backend_emitter_groups_handler_versions_under_the_mutation_name`, `backend_emitter_accepts_a_bare_function_only_for_a_v1_only_mutation`.
-- **Loader registration names every retained model version, a bare function registers v1 only, and a pull reaches only the served version's loader.** Evidence: [runtime.test.mjs](../../../../../integration/persistence/server/runtime.test.mjs) `loader registration names every retained model version and a function means v1 only`, `a pull reaches the loader of the served model version and normalizes rows with that contract`; [compiler/tests/compiler.rs](../../../../../crates/compiler/tests/compiler.rs) `backend_emitter_groups_loader_versions_under_the_model_name`; the `@ts-expect-error` loader negatives (bare function, missing and unknown versions, a value outside the v1 contract) in [test.ts](../../../../../integration/generated-api/test.ts).
+- **Loader registration names every retained model version, a bare function registers v1 only, and a pull reaches only the served version's loader.** Evidence: [runtime.test.mjs](../../../../../integration/persistence/server/runtime.test.mjs) `loader registration names every retained model version and a function means v1 only`, `a pull reaches the loader of the declared model version and normalizes rows with that contract`; [compiler/tests/compiler.rs](../../../../../crates/compiler/tests/compiler.rs) `backend_emitter_groups_loader_versions_under_the_model_name`; the `@ts-expect-error` loader negatives (bare function, missing and unknown versions, a value outside the v1 contract) in [test.ts](../../../../../integration/generated-api/test.ts).
 
-Executed 2026-09-15: `bash integration/persistence/server/run.sh` (50 passed), `cargo test -p ahead-compiler --locked` (38 passed), `bash integration/generated-api/verify.sh` (passed).
+Executed 2026-09-15 with the `changes`/`publish` handler API: `cargo test -p ahead-compiler --locked`, `bash integration/generated-api/verify.sh`, and `bash integration/persistence/server/run.sh` (61 passed).
 
 ## 11. Risks and Technical Debt
 

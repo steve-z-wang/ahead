@@ -3,7 +3,7 @@ use ahead_client::engine::Engine;
 use ahead_client::queue::OpKind;
 use ahead_client::rows::{decode_row, merge_identity};
 use ahead_client::{ClientStore, Mutation, Operation, OperationKind};
-use ahead_core::{ChannelCheckpoint, RecordKey, Schema};
+use ahead_core::{RecordKey, Schema};
 use ahead_sqlite::SqliteStore;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -19,7 +19,7 @@ fn store() -> (tempfile::TempDir, SqliteStore) {
     let dir = tempfile::tempdir().unwrap();
     let mut s = SqliteStore::open(dir.path().join("db")).unwrap();
     s.execute_batch(FRAMEWORK_DDL).unwrap();
-    s.execute("INSERT INTO ahead_client VALUES ('c', 1, 1, 1)", &[])
+    s.execute("INSERT INTO ahead_client (client_id, next_ordinal, next_push, generation) VALUES ('c', 1, 1, 1)", &[])
         .unwrap();
     s.begin().unwrap();
     reconcile(&mut s, &schema()).unwrap();
@@ -89,7 +89,7 @@ fn model_rows_round_trip_booleans_lists_and_copy_aside() {
 }
 
 #[test]
-fn ledger_tracks_stamps_claims_and_subscriptions() {
+fn ledger_tracks_stamps_and_subscriptions() {
     let (_d, mut s) = store();
     let schema = schema();
     let mut changed = BTreeSet::new();
@@ -99,17 +99,6 @@ fn ledger_tracks_stamps_claims_and_subscriptions() {
     e.set_record_stamp(&key("t1"), 7).unwrap();
     e.set_record_stamp(&key("t1"), 9).unwrap();
     assert_eq!(e.record_stamp(&key("t1")).unwrap(), 9);
-    e.claim_add("a", &key("t1")).unwrap();
-    e.claim_add("a", &key("t1")).unwrap();
-    e.claim_add("b", &key("t1")).unwrap();
-    assert_eq!(e.claims(&key("t1")).unwrap(), vec!["a", "b"]);
-    assert_eq!(e.claimed_by("b").unwrap(), vec![key("t1")]);
-    e.claim_remove("a", &key("t1")).unwrap();
-    assert_eq!(e.claims(&key("t1")).unwrap(), vec!["b"]);
-    e.claims_remove_all(&key("t1")).unwrap();
-    assert!(e.claims(&key("t1")).unwrap().is_empty());
-    e.drop_record(&key("t1")).unwrap();
-    assert_eq!(e.record_stamp(&key("t1")).unwrap(), 0);
     assert_eq!(e.cursor("x").unwrap(), None);
     e.set_cursor("x", 0).unwrap();
     e.set_cursor("x", 4).unwrap();
@@ -207,26 +196,11 @@ fn queue_rows_reconstruct_mutations_and_cascade_on_delete() {
     assert_eq!(push, 1);
     e.assign_push(&[1, 2], push).unwrap();
     assert_eq!(e.queued_one(2).unwrap().unwrap().push, Some(1));
-    e.insert_checkpoints(
-        push,
-        &[ChannelCheckpoint {
-            channel: "a".into(),
-            cursor: 5,
-        }],
-    )
-    .unwrap();
-    assert_eq!(
-        e.checkpoints(push).unwrap(),
-        vec![ChannelCheckpoint {
-            channel: "a".into(),
-            cursor: 5
-        }]
-    );
-    assert_eq!(
-        e.checkpoint_channels().unwrap(),
-        BTreeSet::from(["a".to_string()])
-    );
-    assert_eq!(e.pushes().unwrap(), vec![1]);
+    assert_eq!(e.in_flight().unwrap(), Some(1));
+    assert_eq!(e.push_models().unwrap(), None);
+    e.set_push_models(&json!({"Task":1})).unwrap();
+    assert_eq!(e.push_models().unwrap(), Some(json!({"Task":1})));
+    assert_eq!(e.last_completed_push().unwrap(), 0);
     e.insert_rejection(2, "Edit", "denied", &json!({"records":[]}))
         .unwrap();
     assert_eq!(e.rejections().unwrap()[0].code, "denied");
@@ -237,7 +211,13 @@ fn queue_rows_reconstruct_mutations_and_cascade_on_delete() {
         "operations cascade with the mutation"
     );
     assert!(e.queued_one(2).unwrap().is_none());
-    e.delete_checkpoints(push).unwrap();
+    e.set_last_completed_push(push).unwrap();
+    assert_eq!(e.last_completed_push().unwrap(), 1);
+    assert_eq!(
+        e.push_models().unwrap(),
+        None,
+        "completion releases the frozen declaration"
+    );
     e.delete_rejection(2).unwrap();
     assert!(e.rejections().unwrap().is_empty());
     s.rollback().unwrap();

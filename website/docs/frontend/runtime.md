@@ -257,7 +257,7 @@ All controls return promise/future void. Pause/close cancel network activity and
 | `dismissRejection(ordinal)` | Remove a handled rejection from the durable local inbox; does not retry it |
 | `drop(ordinal)` | Remove eligible unsent work and recompute local state; frozen/sent work cannot be cancelled this way |
 
-Phases are `queued` (not frozen), `frozen` (request retained for sending/retry), and `accepted` (awaiting settlement). A mutation ordinal is local bookkeeping. To retry a rejected business operation, make a new edit after resolving the cause. See [sync and recovery](sync.md).
+Phases are `queued` (not frozen) and `frozen` (request retained for sending or retry); a receipt completes a frozen mutation and removes it, so there is no phase after `frozen`. A mutation ordinal is local bookkeeping. To retry a rejected business operation, make a new edit after resolving the cause. See [sync and recovery](sync.md).
 
 ## Prerequisites
 

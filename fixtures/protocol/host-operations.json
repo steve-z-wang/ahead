@@ -5,13 +5,13 @@
       "op": "claim",
       "request": {"op": "claim", "owner": "alice", "clientId": "client-1"},
       "responses": [
-        {"variant": "claimed", "value": {"clientId": "client-1", "owner": "alice", "sequence": 2, "receipt": "{\"requiredScope\":\"shared\",\"requiredSyncId\":6,\"rejections\":[]}"}},
+        {"variant": "claimed", "value": {"clientId": "client-1", "owner": "alice", "sequence": 2, "receipt": "{\"batchSequence\":2,\"clientId\":\"client-1\",\"records\":[{\"identity\":{\"id\":\"t-1\"},\"model\":\"Task\",\"stamp\":4,\"state\":{\"title\":\"typed\"}}],\"rejections\":[]}"}},
         {"variant": "unused", "value": {"clientId": "client-1", "owner": "alice", "sequence": 0, "receipt": null}}
       ]
     },
     {
       "op": "saveReceipt",
-      "request": {"op": "saveReceipt", "owner": "alice", "clientId": "client-1", "sequence": 3, "receipt": "{\"requiredScope\":\"shared\",\"requiredSyncId\":6,\"rejections\":[]}"},
+      "request": {"op": "saveReceipt", "owner": "alice", "clientId": "client-1", "sequence": 3, "receipt": "{\"batchSequence\":3,\"clientId\":\"client-1\",\"records\":[{\"identity\":{\"id\":\"t-1\"},\"model\":\"Task\",\"stamp\":5,\"state\":{\"title\":\"typed\"}}],\"rejections\":[]}"},
       "responses": [{"variant": "acknowledged", "value": null}]
     },
     {
@@ -26,7 +26,7 @@
       "op": "scan",
       "request": {"op": "scan", "channel": "shared", "after": 4, "limit": 50},
       "responses": [
-        {"variant": "rows", "value": [{"channel": "shared", "cursor": 5, "model": "Task", "identity": {"id": "t-1"}, "identityKey": "{\"id\":\"t-1\"}", "stamp": 3}]},
+        {"variant": "rows", "value": [{"channel": "shared", "cursor": 5, "model": "Task", "identity": {"id": "t-1"}, "identityKey": "{\"id\":\"t-1\"}", "stamp": 4}]},
         {"variant": "none", "value": []}
       ]
     },
@@ -49,18 +49,32 @@
       "op": "handle",
       "request": {"op": "handle", "name": "edit", "version": 1, "arguments": {"task": {"identity": {"id": "t-1"}, "patch": {"title": "typed"}}}, "owner": "alice", "ordinal": 1},
       "responses": [
-        {"variant": "settled", "value": {"channel": "shared"}},
+        {"variant": "settled", "value": {"changes": [{"model": "Task", "identity": {"id": "t-1"}}, {"model": "Task", "identity": {"id": "t-2"}}], "publications": [{"channel": "shared"}, {"channel": "other", "records": [{"model": "Task", "identity": {"id": "t-1"}}]}]}},
+        {"variant": "quiet", "value": {"changes": [], "publications": []}},
         {"variant": "rejected", "value": {"rejection": "task.refused"}}
       ]
     },
     {
       "op": "load",
-      "request": {"op": "load", "model": "Task", "version": 1, "identities": [{"id": "t-1"}, {"id": "t-2"}], "owner": "alice", "channel": "shared"},
-      "responses": [{"variant": "rows", "value": [{"id": "t-1", "title": "typed"}, null]}]
+      "request": {"op": "load", "model": "Task", "version": 1, "identities": [{"id": "t-1"}, {"id": "t-2"}], "owner": "alice"},
+      "responses": [
+        {"variant": "rows", "value": [{"id": "t-1", "title": "typed"}, null]},
+        {"variant": "refused", "value": {"rejection": "task.forbidden"}}
+      ]
+    },
+    {
+      "op": "advanceStamp",
+      "request": {"op": "advanceStamp", "model": "Task", "identityKey": "{\"id\":\"t-1\"}"},
+      "responses": [{"variant": "stamped", "value": 4}]
+    },
+    {
+      "op": "ensureStamp",
+      "request": {"op": "ensureStamp", "model": "Task", "identityKey": "{\"id\":\"t-2\"}"},
+      "responses": [{"variant": "stamped", "value": 1}]
     },
     {
       "op": "publish",
-      "request": {"op": "publish", "channel": "shared", "model": "Task", "identity": {"id": "t-1"}, "identityKey": "{\"id\":\"t-1\"}"},
+      "request": {"op": "publish", "channel": "shared", "model": "Task", "identity": {"id": "t-1"}, "identityKey": "{\"id\":\"t-1\"}", "stamp": 4},
       "responses": [{"variant": "published", "value": {"cursor": 6, "stamp": 4}}]
     }
   ]

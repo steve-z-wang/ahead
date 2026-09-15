@@ -72,10 +72,10 @@ fn backend_emitter_declares_handlers_loaders_and_references() {
     assert!(ts.contains("from \"@ahead/server\""));
     assert!(ts.contains("export interface Handlers<Tx> {"));
     assert!(ts.contains(
-        " addBook: { v1(call: HandlerCall<Tx, AddBookInput>): Promise<void | { channel: string }> } | ((call: HandlerCall<Tx, AddBookInput>) => Promise<void | { channel: string }>);"
+        " addBook: { v1(call: HandlerCall<Tx, AddBookInput>): Promise<void> } | ((call: HandlerCall<Tx, AddBookInput>) => Promise<void>);"
     ));
     assert!(ts.contains(
-        " addComment: { v1(call: HandlerCall<Tx, AddCommentInput>): Promise<void | { channel: string }> } | ((call: HandlerCall<Tx, AddCommentInput>) => Promise<void | { channel: string }>);"
+        " addComment: { v1(call: HandlerCall<Tx, AddCommentInput>): Promise<void> } | ((call: HandlerCall<Tx, AddCommentInput>) => Promise<void>);"
     ));
     assert!(ts.contains("export interface Loaders<Tx> {"));
     assert!(
@@ -98,7 +98,7 @@ fn backend_emitter_groups_handler_versions_under_the_mutation_name() {
     let ts = ahead_compiler::backend_typescript(&with_history, "@ahead/server");
     assert!(
         ts.contains(
-            " edit: { v1(call: HandlerCall<Tx, EditV1Input>): Promise<void | { channel: string }>; v2(call: HandlerCall<Tx, EditInput>): Promise<void | { channel: string }> };\n"
+            " edit: { v1(call: HandlerCall<Tx, EditV1Input>): Promise<void>; v2(call: HandlerCall<Tx, EditInput>): Promise<void> };\n"
         ),
         "{ts}"
     );
@@ -112,7 +112,7 @@ fn backend_emitter_accepts_a_bare_function_only_for_a_v1_only_mutation() {
     let ts = ahead_compiler::backend_typescript(&v, "@ahead/server");
     assert!(
         ts.contains(
-            " save: { v1(call: HandlerCall<Tx, SaveInput>): Promise<void | { channel: string }> } | ((call: HandlerCall<Tx, SaveInput>) => Promise<void | { channel: string }>);\n"
+            " save: { v1(call: HandlerCall<Tx, SaveInput>): Promise<void> } | ((call: HandlerCall<Tx, SaveInput>) => Promise<void>);\n"
         ),
         "{ts}"
     );
@@ -122,9 +122,7 @@ fn backend_emitter_accepts_a_bare_function_only_for_a_v1_only_mutation() {
     .unwrap();
     let ts = ahead_compiler::backend_typescript(&later, "@ahead/server");
     assert!(
-        ts.contains(
-            " save: { v2(call: HandlerCall<Tx, SaveInput>): Promise<void | { channel: string }> };\n"
-        ),
+        ts.contains(" save: { v2(call: HandlerCall<Tx, SaveInput>): Promise<void> };\n"),
         "{ts}"
     );
     assert!(

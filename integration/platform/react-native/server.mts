@@ -17,12 +17,12 @@ import {
 const db = new PrismaClient();
 const calls = { add: 0, edit: 0 };
 const handlers: Handlers<Prisma.TransactionClient> = {
-  async addEntry({ input, tx, notify }) {
+  async addEntry({ input, tx, publish }) {
     calls.add++;
     await tx.entry.create({ data: input.entry });
-    notify({ channel: "book:demo", records: [input.entry] });
+    publish({ channel: "book:demo" });
   },
-  async edit({ input, tx, notify }) {
+  async edit({ input, tx, publish }) {
     calls.edit++;
     if (input.entry.patch.text === "reject")
       throw new MutationRejected("entry.denied");
@@ -30,7 +30,7 @@ const handlers: Handlers<Prisma.TransactionClient> = {
       where: input.entry.identity,
       data: input.entry.patch,
     });
-    notify({ channel: "book:demo", records: [input.entry] });
+    publish({ channel: "book:demo" });
   },
 };
 const loaders: Loaders<Prisma.TransactionClient> = {

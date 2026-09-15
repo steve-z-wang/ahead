@@ -538,7 +538,7 @@ pub fn backend_typescript(v: &Value, runtime: &str) -> String {
             .iter()
             .map(|x| {
                 format!(
-                    "v{}(call: HandlerCall<Tx, {}>): Promise<void | {{ channel: string }}>;",
+                    "v{}(call: HandlerCall<Tx, {}>): Promise<void>;",
                     x["version"].as_u64().unwrap(),
                     input_name(x)
                 )
@@ -548,7 +548,7 @@ pub fn backend_typescript(v: &Value, runtime: &str) -> String {
         if versions.len() == 1 && versions[0]["version"].as_u64() == Some(1) {
             writeln!(
                 o,
-                " {}: {grouped} | ((call: HandlerCall<Tx, {}>) => Promise<void | {{ channel: string }}>);",
+                " {}: {grouped} | ((call: HandlerCall<Tx, {}>) => Promise<void>);",
                 lower(n),
                 input_name(versions[0])
             )

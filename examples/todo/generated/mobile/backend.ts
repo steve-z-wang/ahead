@@ -16,8 +16,8 @@ export interface SetTodoDoneInput {
  todo: { identity: TodoIdentity; patch: Pick<TodoPatch, "done"> };
 }
 export interface Handlers<Tx> {
- addTodo: { v1(call: HandlerCall<Tx, AddTodoInput>): Promise<void | { channel: string }> } | ((call: HandlerCall<Tx, AddTodoInput>) => Promise<void | { channel: string }>);
- setTodoDone: { v1(call: HandlerCall<Tx, SetTodoDoneInput>): Promise<void | { channel: string }> } | ((call: HandlerCall<Tx, SetTodoDoneInput>) => Promise<void | { channel: string }>);
+ addTodo: { v1(call: HandlerCall<Tx, AddTodoInput>): Promise<void> } | ((call: HandlerCall<Tx, AddTodoInput>) => Promise<void>);
+ setTodoDone: { v1(call: HandlerCall<Tx, SetTodoDoneInput>): Promise<void> } | ((call: HandlerCall<Tx, SetTodoDoneInput>) => Promise<void>);
 }
 export interface Loaders<Tx> {
  user: { v1(call: LoaderCall<Tx, UserIdentity>): Promise<readonly (User | null)[]> } | ((call: LoaderCall<Tx, UserIdentity>) => Promise<readonly (User | null)[]>);

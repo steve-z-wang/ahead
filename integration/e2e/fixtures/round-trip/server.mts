@@ -17,7 +17,7 @@ export async function createExample() {
   const db = new PrismaClient();
   let calls = 0;
   const handlers: Handlers<Tx> = {
-    async edit({ input, tx, notify }) {
+    async edit({ input, tx, publish }) {
       calls++;
       const { identity, patch } = input.entry;
       if (patch.text === "reject") throw new MutationRejected("entry.denied");
@@ -25,7 +25,9 @@ export async function createExample() {
         where: identity,
         data: { ...patch, ...(typeof patch.text === "string" ? { text: patch.text.trim() } : {}) },
       });
-      notify({ channel: "book:demo", records: [input.entry] });
+      // The edited entry is stamped and read back for the receipt regardless;
+      // publishing distributes that same version to the channel's subscribers.
+      publish({ channel: "book:demo" });
     },
   };
   const loaders: Loaders<Tx> = {

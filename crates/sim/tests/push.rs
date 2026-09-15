@@ -1,4 +1,5 @@
-//! Guarantees P1–P6 on the simulation.
+//! Guarantees P1–P6 on the simulation, and the receipt's completion semantics:
+//! duplicated, lost and retried receipts, overlapping records, rejected siblings.
 use ahead_core::PushReceipt;
 use ahead_sim::{Action, MutationSpec, Sim, schema::entry_key};
 
@@ -31,9 +32,10 @@ fn edit(sim: &mut Sim, text: &str) {
     .unwrap();
 }
 
-/// P1: a push whose receipt is lost is re-sent with the same bytes and executes once.
+/// P1: a push whose receipt is lost is re-sent with the same bytes and executes
+/// once; the retry is answered with the stored receipt.
 #[test]
-fn p1_lost_receipt_retry_executes_once() {
+fn p1_lost_receipt_retry_executes_once_and_returns_the_stored_receipt() {
     let mut sim = setup(21);
     edit(&mut sim, "x");
     sim.apply(Action::Freeze { client: 0 }).unwrap();
@@ -42,6 +44,7 @@ fn p1_lost_receipt_retry_executes_once() {
     sim.apply(Action::Drop).unwrap(); // receipt lost
     sim.apply(Action::Crash { client: 0 }).unwrap();
     sim.apply(Action::Restart { client: 0 }).unwrap();
+    assert_eq!(sim.client(0).pending_count().unwrap(), 1);
     sim.apply(Action::Freeze { client: 0 }).unwrap(); // same batch again
     sim.apply(Action::Deliver).unwrap();
     assert_eq!(
@@ -49,8 +52,13 @@ fn p1_lost_receipt_retry_executes_once() {
         2,
         "cached receipt, no second execution"
     );
-    sim.settle();
+    sim.apply(Action::Deliver).unwrap(); // the stored receipt completes the batch
     assert_eq!(sim.client(0).pending_count().unwrap(), 0);
+    let id = sim.client(0).client_id().to_string();
+    let stored = PushReceipt::decode(sim.host.receipt(&id, 2).unwrap().as_bytes()).unwrap();
+    assert_eq!(sim.clients[0].receipts[&2], stored);
+    assert_eq!(sim.read_text(0, &entry_key("e1")).as_deref(), Some("x"));
+    sim.settle();
     sim.check().unwrap();
 }
 
@@ -67,10 +75,11 @@ fn p2_contiguous_sequence_and_server_refuses_gap_and_overlap() {
     sim.settle();
     let sequences: Vec<u64> = sim.clients[0].receipts.keys().copied().collect();
     assert_eq!(sequences, vec![1, 2, 3]);
+    assert_eq!(sim.client(0).last_completed_push().unwrap(), 3);
     // Hand-built gap and overlap against the host directly.
     let id = sim.client(0).client_id().to_string();
     let batch = |seq: u64| {
-        let body = serde_json::json!({"clientId":id,"batchSequence":seq,"mutations":[{"ordinal":99,"name":"Edit","version":1,"operations":[{"model":"Entry","op":"update","identity":{"id":"e1"},"values":{"text":"z"}}]}]});
+        let body = serde_json::json!({"clientId":id,"batchSequence":seq,"models":ahead_sim::schema::declared_models(),"mutations":[{"ordinal":99,"name":"Edit","version":1,"operations":[{"model":"Entry","op":"update","identity":{"id":"e1"},"values":{"text":"z"}}]}]});
         ahead_core::PushRequest::decode(ahead_core::canonical_json(&body).unwrap().as_bytes())
             .unwrap()
             .encode()
@@ -216,8 +225,8 @@ fn p5_rejection_rolls_back_and_rejects_dependents() {
     sim.check().unwrap();
 }
 
-/// P6: a handler failure aborts the batch; the business state and channel head are
-/// untouched and the client retries the same bytes.
+/// P6: a handler failure aborts the batch; the business state, stamps and channel
+/// head are untouched and the client retries the same bytes.
 #[test]
 fn p6_handler_failure_aborts_the_batch_and_the_client_retries() {
     let mut sim = setup(26);
@@ -235,6 +244,7 @@ fn p6_handler_failure_aborts_the_batch_and_the_client_retries() {
     sim.apply(Action::Deliver).unwrap();
     assert_eq!(sim.host.state(&entry_key("e1")).unwrap()["text"], "base");
     assert_eq!(sim.host.head("a"), 1);
+    assert_eq!(sim.host.stamp(&entry_key("e1")), 1);
     sim.drain(); // PushFailed is consumed
     assert_eq!(
         sim.client(0).freeze().unwrap().unwrap(),
@@ -243,16 +253,120 @@ fn p6_handler_failure_aborts_the_batch_and_the_client_retries() {
     );
     sim.settle();
     assert_eq!(sim.host.state(&entry_key("e1")).unwrap()["text"], "x");
+    assert_eq!(sim.host.stamp(&entry_key("e1")), 2);
     sim.check().unwrap();
 }
 
-/// Receipts the client holds are exactly what the server stored.
+/// Receipts the client holds are exactly what the server stored, and carry the
+/// authority the framework read back.
 #[test]
 fn receipts_round_trip() {
     let mut sim = setup(27);
     edit(&mut sim, "x");
     sim.settle();
     let r: &PushReceipt = sim.clients[0].receipts.get(&2).unwrap();
-    assert_eq!(r.required_checkpoints.len(), 1);
+    assert_eq!(r.records.len(), 1);
+    assert_eq!(r.records[0].stamp, sim.host.stamp(&entry_key("e1")));
+    assert_eq!(r.records[0].state["text"], "x");
+    sim.check().unwrap();
+}
+
+/// A duplicated receipt is a no-op: it completes nothing twice, touches no row and
+/// leaves an edit queued after the first copy exactly as it was.
+#[test]
+fn a_duplicated_receipt_is_a_no_op() {
+    let mut sim = setup(28);
+    edit(&mut sim, "x");
+    sim.apply(Action::Freeze { client: 0 }).unwrap();
+    sim.apply(Action::Deliver).unwrap(); // receipt queued
+    sim.apply(Action::Duplicate).unwrap(); // twice
+    sim.apply(Action::Deliver).unwrap(); // first copy completes the batch
+    assert_eq!(sim.client(0).pending_count().unwrap(), 0);
+    assert_eq!(sim.client(0).last_completed_push().unwrap(), 2);
+    edit(&mut sim, "y");
+    assert_eq!(sim.client(0).pending_count().unwrap(), 1);
+    sim.apply(Action::Deliver).unwrap(); // second copy: stale
+    assert_eq!(sim.client(0).pending_count().unwrap(), 1);
+    assert_eq!(sim.client(0).last_completed_push().unwrap(), 2);
+    assert_eq!(sim.read_text(0, &entry_key("e1")).as_deref(), Some("y"));
+    assert_eq!(sim.client(0).record_stamp(&entry_key("e1")).unwrap(), 2);
+    assert_eq!(sim.conflicts, 0);
+    sim.check().unwrap();
+    sim.settle();
+    assert_eq!(sim.read_text(0, &entry_key("e1")).as_deref(), Some("y"));
+    sim.check().unwrap();
+}
+
+/// Two mutations on the same record in one batch: the receipt reports that record
+/// once, at the stamp of the last successful mutation, and both complete.
+#[test]
+fn overlapping_records_in_one_batch_complete_at_the_last_stamp() {
+    let mut sim = setup(29);
+    edit(&mut sim, "one");
+    edit(&mut sim, "two");
+    sim.apply(Action::Freeze { client: 0 }).unwrap();
+    assert_eq!(sim.net.len(), 1);
+    sim.apply(Action::Deliver).unwrap();
+    assert_eq!(sim.host.handler_calls(), 3, "both mutations ran");
+    sim.apply(Action::Deliver).unwrap();
+    assert_eq!(sim.client(0).pending_count().unwrap(), 0);
+    let r = &sim.clients[0].receipts[&2];
+    assert_eq!(r.records.len(), 1, "one record, reported once");
+    assert_eq!(r.records[0].stamp, 3);
+    assert_eq!(r.records[0].state["text"], "two");
+    assert_eq!(sim.host.stamp(&entry_key("e1")), 3);
+    assert_eq!(sim.client(0).record_stamp(&entry_key("e1")).unwrap(), 3);
+    assert_eq!(sim.read_text(0, &entry_key("e1")).as_deref(), Some("two"));
+    assert_eq!(sim.client(0).before_image_count().unwrap(), 0);
+    assert_eq!(sim.conflicts, 0);
+    sim.check().unwrap();
+}
+
+/// A rejected mutation beside an accepted one in the same batch: the rejected
+/// optimism is rolled back, the accepted record takes the server's authority, the
+/// batch completes and the rejection is retained.
+#[test]
+fn a_rejected_mutation_beside_an_accepted_one() {
+    let mut sim = setup(30);
+    sim.apply(Action::RejectNext {
+        code: "entry.denied".into(),
+    })
+    .unwrap();
+    edit(&mut sim, "no"); // the first handler call: rejected
+    sim.apply(Action::Enqueue {
+        client: 0,
+        mutation: MutationSpec::CreateEntry {
+            id: "e2".into(),
+            text: "yes".into(),
+        },
+    })
+    .unwrap();
+    sim.apply(Action::Freeze { client: 0 }).unwrap();
+    assert_eq!(sim.net.len(), 1, "both in one batch");
+    sim.apply(Action::Deliver).unwrap();
+    sim.apply(Action::Deliver).unwrap();
+    assert_eq!(sim.client(0).pending_count().unwrap(), 0);
+    let r = &sim.clients[0].receipts[&2];
+    assert_eq!(r.rejections.len(), 1);
+    assert_eq!(r.rejections[0].code, "entry.denied");
+    assert_eq!(r.records.len(), 1, "only the accepted record is reported");
+    assert_eq!(r.records[0].identity["id"], "e2");
+    assert_eq!(
+        sim.read_text(0, &entry_key("e1")).as_deref(),
+        Some("base"),
+        "the rejected edit is rolled back"
+    );
+    assert_eq!(sim.host.state(&entry_key("e1")).unwrap()["text"], "base");
+    assert_eq!(
+        sim.host.stamp(&entry_key("e1")),
+        1,
+        "a rejection advances nothing"
+    );
+    assert_eq!(sim.read_text(0, &entry_key("e2")).as_deref(), Some("yes"));
+    assert_eq!(sim.client(0).record_stamp(&entry_key("e2")).unwrap(), 1);
+    let rejections = sim.client(0).rejections().unwrap();
+    assert_eq!(rejections.len(), 1);
+    assert_eq!(rejections[0].code, "entry.denied");
+    assert_eq!(sim.conflicts, 0);
     sim.check().unwrap();
 }

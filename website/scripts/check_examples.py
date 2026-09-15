@@ -79,7 +79,7 @@ Future<void> uploadFile(dynamic key) async {}
         backend.write_text('''import { PrismaClient, type Prisma } from '@prisma/client';
 import { createBackend, devAuth, Entry, MutationRejected, type Handlers, type Loaders } from '../generated/backend.ts';
 import { prisma } from '../../../../../packages/persistence-prisma/index.mts';
-import type { Database, Notify } from '../../../../../packages/server/index.mts';
+import type { Database, Publish } from '../../../../../packages/server/index.mts';
 type Tx = Prisma.TransactionClient;
 declare function canEdit(tx: Tx, userId: string, identity: { id: string }): Promise<boolean>;
 declare function loadVisibleEntry(tx: Tx, userId: string, identity: { id: string }): Promise<Entry | null>;
@@ -89,7 +89,7 @@ declare const database: Database<Prisma.TransactionClient>;
 declare const handlers: Handlers<Prisma.TransactionClient>;
 declare const loaders: Loaders<Prisma.TransactionClient>;
 declare const backend: ReturnType<typeof createBackend<Prisma.TransactionClient>>;
-declare const notify: Notify;
+declare const publish: Publish;
 ''' + '\n'.join(f'// {source}\nasync function example{i}() {{\n{code.replace("export const", "const")}\n}}'
                   for i, (source, code) in enumerate(snippets('ts', BACKEND_SOURCES))))
         subprocess.run([str(ROOT / 'node_modules/.bin/tsc'), '--noEmit', '--strict',

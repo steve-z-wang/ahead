@@ -127,13 +127,44 @@ test('built-in live catch-up pages, dependent pushes, watches, offline reconnect
   assert.ok(pullRequests.length>=2,'more than 50 records catch up via HTTP pages');
   assert.equal(pullRequests[0].fromCursor,0);
   const caughtUpPulls=pullRequests.length;
-  // Queue two edits to the same record. The second waits for the first checkpoint;
-  // streamed settlement must wake push without another application event.
+  // Queue two edits to the same record. Each batch completes from its own receipt
+  // (no channel page is awaited); the second push must follow the first without
+  // another application event, and the row ends at the server's normalized value.
   await reader.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:' first dependent '}}]});
   await reader.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:' second dependent '}}]});
-  await wait(async()=>(await reader.status()).pending===0,'dependent mutation settlement');
+  await wait(async()=>(await reader.status()).pending===0,'dependent mutation completion');
   assert.equal((await reader.read('Entry',{id:'entry-1'})).text,'second dependent');
+  assert.equal((await reader.status()).beforeImages,0,'nothing is held once the receipts have completed both batches');
   assert.equal(pullRequests.length,caughtUpPulls,'ordinary live updates do not trigger HTTP polling');
+  // A client with no subscription at all: its push's response alone corrects the
+  // local row, leaves nothing pending, and the result survives a reopen. The reader,
+  // subscribed to the channel, receives the same record at the same stamp.
+  const stampOf=async(client,id)=>{const rows=await client.readSql('SELECT stamp FROM ahead_record WHERE model = ? AND identity = ?',['Entry',JSON.stringify({id})]);assert.equal(rows.length,1,`${id} has stamp evidence`);return rows[0].stamp;};
+  const lonePath=join(directory,'lone.sqlite');
+  let lone=await Client.open({path:lonePath,schema:app.schema});
+  let loneStamp;
+  try{
+   await lone.transaction(tx=>tx.direct({model:'Entry',op:'create',identity:{id:'entry-1'},values:{text:'stale local copy',note:null}}));
+   await lone.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:'  lone push  '}}]});
+   assert.equal((await lone.read('Entry',{id:'entry-1'})).text,'  lone push  ','the prediction is visible before the push');
+   assert.deepEqual((await lone.status()).channels,[],'the lone client follows no channel');
+   const loneConnection=await lone.connect(config,{onError:e=>errors.push(e)});
+   try{
+    await wait(async()=>(await lone.status()).pending===0,'lone push completion');
+    assert.equal((await lone.read('Entry',{id:'entry-1'})).text,'lone push','the response alone corrected the local row to the server value');
+    assert.equal((await lone.status()).beforeImages,0);
+    loneStamp=await stampOf(lone,'entry-1');
+    assert.ok(Number.isInteger(loneStamp)&&loneStamp>0,`the receipt stamped the record: ${loneStamp}`);
+   }finally{await loneConnection.close();}
+   await lone.close();
+   lone=await Client.open({path:lonePath,schema:app.schema});
+   assert.equal((await lone.read('Entry',{id:'entry-1'})).text,'lone push','the completed state survives a reopen');
+   assert.equal((await lone.status()).pending,0);
+   assert.equal(await stampOf(lone,'entry-1'),loneStamp,'the stamp evidence survives a reopen');
+  }finally{await lone.close();}
+  await wait(async()=>(await reader.read('Entry',{id:'entry-1'}))?.text==='lone push','the subscribed reader receives the lone push through the channel');
+  assert.equal(await stampOf(reader,'entry-1'),loneStamp,'the channel delivers the same record at the same stamp the receipt carried');
+  assert.equal(pullRequests.length,caughtUpPulls,'the channel delivery did not trigger HTTP polling');
   const saved=(await reader.status()).cursors['book:demo'];
   await connection.pause();
   await reader.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'entry-1'},values:{text:' offline reconciled '}}]});

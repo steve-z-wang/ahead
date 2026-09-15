@@ -17,12 +17,13 @@ Use this index to find the interface you call or implement. The examples use the
 | Model, Identity, Patch, Filter and Order types | Pass typed data to generated methods | [Generated data types](frontend/client-api.md#generated-data-types) |
 | `Handlers<Tx>`, `HandlerCall` | Implement each mutation's authoritative business logic | [Handlers](backend/api.md#handlers) |
 | `Loaders<Tx>`, `LoaderCall` | Return current records for synchronization | [Loaders](backend/api.md#loaders) |
-| `notify`, `NotifyArgs`, model reference functions | Tell Ahead which records changed on which channels | [Notifications](backend/api.md#notifications) |
+| `changes`, `Changes` | Report a record a handler changed beyond the uploaded operations, so it is stamped, read back and returned in the receipt | [Handlers](backend/api.md#handlers) |
+| `publish`, `PublishArgs`, model reference functions | Distribute a mutation's changed records, or chosen records, to a channel | [Publishing](backend/api.md#publishing) |
 | `createBackend`, `Options<Tx>` | Connect your implementations to the backend runtime | [Backend setup](backend/api.md#createbackend), [What your backend owns](backend/api.md#what-your-backend-owns) |
 | `backend.listen` | Serve sync requests and close the listener | [Listener](backend/api.md#listener), [Deploy the backend](backend/deployment.md) |
 | `Authenticate`, `devAuth` | Identify the caller | [Authentication](backend/api.md#authentication) |
 | `MutationRejected`, `translateRejection`, `onError`, `EngineError` | Reject business operations and diagnose failures | [Errors](backend/api.md#errors) |
-| `backend.notify`, `backend.bindTransaction` | Notify about writes performed outside a handler | [Background writes](backend/api.md#background-writes) |
+| `backend.notify`, `NotifyArgs`, `backend.bindTransaction` | Stamp and publish writes performed outside a handler | [Background writes](backend/api.md#background-writes) |
 | `Database`, `Persistence`, `prisma` | Run business and sync storage in the same database transaction | [Database adapters](backend/database.md) |
 
 ## Advanced interfaces

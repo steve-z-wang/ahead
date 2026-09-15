@@ -23,15 +23,15 @@ Local reads and writes go through the Rust engine and SQLite. A connection handl
 
 Here `render` is your UI's update function. Subscribing records the desired channel and wakes the connection; it does not wait for the initial data. Expect an empty initial result on a new database. `watch` emits again when synchronization commits records.
 
-Use channel names that your backend notifies, and subscribe before writing when the client needs to receive the resulting server state. A channel is not a database query or an authorization token. Loaders decide which requested records the authenticated user may see.
+Use channel names that your backend publishes to, and subscribe when the client needs to receive changes other clients make. A channel is not a database query or an authorization token. Loaders decide which requested records the authenticated user may see.
 
 ## Receive mutation results
 
-**Subscribe before mutating when your UI needs the server's result.** Use `client.channels.subscribe(channel)` as above, with a channel your handler publishes to through `notify`, and keep it subscribed until the result arrives. Your loader must return the resulting record for that client. Subscription starts synchronization; it does not wait for initial data. Use `watch` to observe the records, and wait for an existing record to be available locally before updating it.
+**A subscription is not required to see your own result.** A mutation's local changes are an optimistic prediction. Its receipt confirms that the backend accepted the operation and carries the final content of every record the handler changed, read back by your loader in the handler's transaction. Ahead replaces the prediction with that content as soon as the receipt arrives: a normalized value shows up, and a record the backend refused to create disappears with the rejection. Your loader must return the resulting record for that user, exactly as it would for a page.
 
-A mutation's local changes are an optimistic prediction. Its receipt confirms that the backend accepted the operation, but does not contain the final records. Ahead receives those through the subscribed channels.
+Subscribe with `client.channels.subscribe(channel)` as above when the client needs changes made elsewhere: by other users, by background jobs, or by handlers that touch records without reporting them. Subscription starts synchronization; it does not wait for initial data. Use `watch` to observe the records, and wait for an existing record to be available locally before updating it.
 
-You can send mutations without subscribing to their result channels. In that case Ahead does not wait for those channels: once earlier batches have settled, it removes the accepted prediction and rebuilds from the local base and remaining pending edits. Without a server record, an update can return to its previous value or a newly created record can disappear, even though the operation succeeded. Subscribing later can bring in the server's result. Unsubscribing while waiting also releases that channel's checkpoint requirement.
+You can send mutations without subscribing to any channel. The receipt still corrects the local row to the server's result; what you do not receive is later changes to that record from elsewhere. If you subscribe to a channel the handler publishes to, the page for your own change carries the same stamp as the receipt and rewrites nothing, whichever arrives first.
 
 ## Work offline
 
@@ -68,7 +68,7 @@ You can close and reopen the same local database without losing queued changes. 
 
 ## Understand acceptance and rejection
 
-After a local mutation, the connection pushes its frozen request. A successful receipt can require a channel checkpoint. The runtime waits for the required checkpoints on subscribed channels, then settles the accepted work in batch order and replays remaining local changes. This lets a handler's normalized result replace the optimistic value.
+After a local mutation, the connection pushes its frozen request. A successful receipt completes the batch at once: the runtime applies the server's content for every record the accepted mutations changed, removes the completed mutations and replays remaining local changes, in one local transaction. This lets a handler's normalized result replace the optimistic value without waiting for any channel. One batch is in flight at a time, so later mutations complete after earlier ones.
 
 If a handler rejects the mutation, Ahead removes that mutation's optimistic contribution and retains its rejection code locally. Later valid pending work may still affect the displayed record, so rollback is not necessarily a return to the value the user saw before all edits.
 
@@ -106,7 +106,7 @@ Authenticate requests on the backend and check business permissions in handlers 
 
 Use a separate local database per signed-in user. On an account change, stop and close the old client before opening the other user's database. Changing only the transport token leaves the old user's cached records and client identity in place.
 
-When permissions change, notify the channels whose visible records changed. A loader can then return null to withdraw a record. Unsubscribing can remove records no remaining channel claims; it is not a complete cache wipe or an authorization mechanism.
+When permissions change, publish the affected records to the channels that deliver them. A loader can then return null to withdraw a record. Unsubscribing removes nothing: it stops that channel's delivery and keeps the records, their stamps and any pending edits in place. It is not a cache wipe or an authorization mechanism.
 
 ## Diagnose pending work
 
@@ -115,8 +115,8 @@ When permissions change, notify the channels whose visible records changed. A lo
 | Empty local query after opening | Desired channel, running connection, loader output and read permission |
 | `queued` with failed prerequisites | Host callback failure; reset its readiness to pending and run it again |
 | `frozen` after a network failure | Connectivity/authentication; retain the frozen bytes for retry |
-| `accepted` still pending | Required channel progress, notification and loader failures |
-| Server values do not update | Whether every affected channel was notified |
+| `frozen` long after the network recovered | The receipt was refused locally (it named another client or batch, or omitted an accepted record): the batch is resent as is; check `onError` and the backend's loaders |
+| Server values do not update | Whether every affected channel was published to, and whether the handler reported every record it changed with `changes.add` |
 | Local client fails after another process wrote | One active client per SQLite file; close/reopen the stale instance |
 
 See [runtime APIs](runtime.md) for controls and [compatibility and recovery](storage.md) for storage constraints.

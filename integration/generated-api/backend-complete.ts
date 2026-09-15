@@ -1,14 +1,16 @@
-import { createBackend, devAuth, type Handlers, type Loaders } from "./backend.ts";
+import { Book, createBackend, devAuth, type Handlers, type Loaders } from "./backend.ts";
 type Tx = { rows: Map<string, object> };
 export const handlers: Handlers<Tx> = {
-  async createEntry({ input, notify }) { notify({ channel: "c", records: [input.entry] }); },
+  // An ordinary write: the changed record is stamped and read back without any publication.
+  async createEntry({ input, tx }) { tx.rows.set(input.entry.id, input.entry); },
   editEntry: {
-    async v1({ input, notify }) { notify({ channel: "c", records: [input.target] }); },
-    async v2({ input, notify }) { notify({ channel: "c", records: [input.entry] }); },
+    async v1({ publish }) { publish({ channel: "c" }); },
+    // Publication of the change set includes a record added after the call; explicit records publish only those.
+    async v2({ input, changes, publish }) { publish({ channel: "c" }); changes.add(input.entry); publish({ channel: "audit", records: [input.entry] }); },
   },
-  async removeEntries({ input, notify }) { notify({ channel: "c", records: input.entries }); },
-  async addBook({ input, notify }) { notify({ channel: "c", records: [input.book] }); },
-  async addComment({ input, notify }) { notify({ channel: "c", records: [input.comment] }); },
+  async removeEntries({ input, publish }) { publish({ channel: "c", records: input.entries }); },
+  async addBook({ input, changes, publish }) { changes.add(Book({ id: input.book.id })); publish({ channel: "c", records: [] }); },
+  async addComment({ publish }) { publish({ channel: "c" }); },
 };
 export const loaders: Loaders<Tx> = {
   entry: {

@@ -1,74 +1,27 @@
 //! Apply a Pull page: channel order by cursor, record content by stamp.
+use crate::authority::Disposition;
 use crate::engine::Engine;
-use crate::rows::merge_identity;
 use crate::store::ClientStore;
 use crate::{ApplyReport, Client};
-use ahead_core::{PullPage, RecordChange, Result, invalid};
+use ahead_core::{AuthorityRecord, PullPage, RecordChange, Result, invalid};
 use serde_json::json;
 
 impl<S: ClientStore> Engine<'_, S> {
+    /// Apply one channel change through the common applier. The channel only
+    /// names the diagnostic; content is ordered by stamp.
     pub fn apply_change(
         &mut self,
         channel: &str,
         change: &RecordChange,
         report: &mut ApplyReport,
     ) -> Result<()> {
-        let key = self.schema.record_key(&change.model, &change.identity)?;
-        let local = self.record_stamp(&key)?;
-        let is_delete = change.state.is_null();
-        let incoming = if is_delete {
-            None
-        } else {
-            Some(merge_identity(
-                &key.identity,
-                &self.schema.validate_state(&change.model, &change.state)?,
-            ))
-        };
-        let stamp = change.stamp;
-        let newer = if stamp > local {
-            true
-        } else if stamp < local {
-            false
-        } else {
-            // equal stamp: idempotent when content matches, diagnostic otherwise
-            let current = self.truth(&key)?;
-            if current != incoming {
-                report.conflicts += 1;
-                report.diagnostics.push(json!({
-                    "model": key.model, "identity": key.identity, "stamp": stamp, "channel": channel,
-                    "local": current, "incoming": incoming,
-                }));
-            }
-            false
-        };
-        if !newer {
-            if is_delete {
-                self.claim_remove(channel, &key)?;
-                if self.read_row(&key)?.is_none()
-                    && !self.dirty(&key)?
-                    && self.claims(&key)?.is_empty()
-                {
-                    self.drop_record(&key)?;
-                }
-            } else {
-                self.claim_add(channel, &key)?;
-            }
-            return Ok(());
-        }
-        if is_delete {
-            // A newer delete removes the record regardless of remaining claims; the
-            // claims left are the channels whose copy of this delete has not arrived.
-            self.set_authority(&key, None)?;
-            self.claim_remove(channel, &key)?;
-            if self.claims(&key)?.is_empty() {
-                self.drop_record(&key)?;
-            } else {
-                self.set_record_stamp(&key, stamp)?;
-            }
-        } else {
-            self.set_authority(&key, incoming)?;
-            self.claim_add(channel, &key)?;
-            self.set_record_stamp(&key, stamp)?;
+        let record: AuthorityRecord = change.clone().into();
+        if let Disposition::Conflict { local, incoming } = self.apply_authority(&record)? {
+            report.conflicts += 1;
+            report.diagnostics.push(json!({
+                "model": record.model, "identity": record.identity, "stamp": record.stamp, "channel": channel,
+                "local": local, "incoming": incoming,
+            }));
         }
         Ok(())
     }
@@ -94,9 +47,9 @@ impl<S: ClientStore> Client<S> {
     /// matching request, so each incoming page runs it exactly once.
     pub(crate) fn apply_current_page(&mut self, page: PullPage) -> Result<ApplyReport> {
         // A subscription row exists iff the client is subscribed. Applying a page for
-        // any other channel would insert one through `set_cursor` and re-claim every
-        // record it carries, so a page for an unsubscribed channel - a pull still in
-        // flight when the unsubscribe committed - is dropped without writing anything.
+        // any other channel would insert one through `set_cursor`, so a page for an
+        // unsubscribed channel - a pull still in flight when the unsubscribe
+        // committed - is dropped without writing anything.
         let Some(current) = self.view(|e| e.cursor(&page.channel))? else {
             return Ok(ApplyReport {
                 stale: true,
@@ -131,16 +84,12 @@ impl<S: ClientStore> Client<S> {
                         report.skipped += 1;
                     }
                 }
-                e.set_cursor(&channel, change.cursor)?;
-                e.settle()
+                e.set_cursor(&channel, change.cursor)
             })?;
         }
         if self.cursor(&page.channel)? < page.to_cursor {
             let channel = page.channel.clone();
-            self.write(|e| {
-                e.set_cursor(&channel, page.to_cursor)?;
-                e.settle()
-            })?;
+            self.write(|e| e.set_cursor(&channel, page.to_cursor))?;
         }
         Ok(report)
     }

@@ -7,8 +7,9 @@
  * (`crates/server/tests/host_contract.rs`,
  * `integration/persistence/server/host-contract.test.mjs`) fail on a one-sided one.
  *
- * This types what exists today. It adds no failure result and changes no
- * transaction semantics; #95 may extend `handle`, `rollback` and `load` later.
+ * `handle` and `load` may answer with a refusal: the engine rolls that mutation
+ * back to its savepoint and records the code as its rejection. Every thrown
+ * host error still aborts the whole delivery.
  */
 
 /** Lock this client's row and report its last accepted batch. */
@@ -45,22 +46,41 @@ export type HandleRequest = {
   owner: string;
   ordinal: number;
 };
-/** Load the current state of these identities for this channel, as records of one retained model read contract. */
+/**
+ * Load the current state of these identities as records of one retained model
+ * read contract, for this caller. Loads name no channel: the same identity,
+ * version and stamp describe the same content on every delivery path.
+ */
 export type LoadRequest = {
   op: "load";
   model: string;
   version: number;
   identities: Record<string, unknown>[];
   owner: string;
-  channel: string;
 };
-/** Invalidate one record on one channel and allocate its cursor and stamp. */
+/** Allocate the next stamp of one record: initialize it at 1 or increment it. */
+export type AdvanceStampRequest = {
+  op: "advanceStamp";
+  model: string;
+  identityKey: string;
+};
+/** The record's current stamp, initialized at 1 only when it has none. */
+export type EnsureStampRequest = {
+  op: "ensureStamp";
+  model: string;
+  identityKey: string;
+};
+/**
+ * Invalidate one record on one channel at this stamp, allocating only the
+ * channel cursor. `stamp` must be the record's current stamp.
+ */
 export type PublishRequest = {
   op: "publish";
   channel: string;
   model: string;
   identity: Record<string, unknown>;
   identityKey: string;
+  stamp: number;
 };
 
 export type HostRequest =
@@ -73,6 +93,8 @@ export type HostRequest =
   | ReleaseRequest
   | HandleRequest
   | LoadRequest
+  | AdvanceStampRequest
+  | EnsureStampRequest
   | PublishRequest;
 
 export type HostOperation = HostRequest["op"];
@@ -94,7 +116,11 @@ export type Claimed = {
 };
 /** The answer to `head`: a bare counter. */
 export type Head = number;
-/** One row of the answer to `scan`. */
+/**
+ * One row of the answer to `scan`: the invalidation's own cursor with the
+ * record's *current* stamp, read from the record metadata in the same snapshot
+ * the loader will read.
+ */
 export type Invalidation = {
   channel: string;
   cursor: number;
@@ -103,10 +129,24 @@ export type Invalidation = {
   identityKey: string;
   stamp: number;
 };
-/** The answer to `publish`. */
+/** The answer to `advanceStamp` and `ensureStamp`: the record's stamp. */
+export type Stamped = number;
+/** The answer to `publish`: the allocated cursor and the stamp the request named. */
 export type Published = { cursor: number; stamp: number };
+/** A record a handler names: an additional change or a publication member. */
+export type HostRecordRef = {
+  model: string;
+  identity: Record<string, unknown>;
+};
 /**
- * The answer to `handle`: a settlement channel or a rejection code, never both.
+ * One publication a handler asked for. `records` absent means the mutation's
+ * final change set; present and empty means nothing.
+ */
+export type PublicationIntent = { channel: string; records?: HostRecordRef[] };
+/**
+ * The answer to `handle`: the records the handler changed beyond the uploaded
+ * operations and the publications it asked for, or a rejection code, never
+ * both.
  *
  * "Never both" is not something this union can enforce. TypeScript only applies
  * its excess-property check to object literals, so a value that reaches here
@@ -114,9 +154,15 @@ export type Published = { cursor: number; stamp: number };
  * on decode (`HandledWire` in crates/server/src/host.rs), which refuses such an
  * answer with `handler.invalid` rather than reading it as a rejection.
  */
-export type Handled = { channel: string } | { rejection: string };
-/** The answer to `load`: one entry per identity, `null` for a record the channel cannot see. */
-export type Loaded = (Record<string, unknown> | null)[];
+export type Handled =
+  | { changes: HostRecordRef[]; publications: PublicationIntent[] }
+  | { rejection: string };
+/**
+ * The answer to `load`: one entry per identity, `null` for a record that does
+ * not exist for this caller, or a refusal the engine records as the mutation's
+ * rejection (push) or reports for the page (pull).
+ */
+export type Loaded = (Record<string, unknown> | null)[] | { rejection: string };
 
 /** The answer each operation owes, keyed by `op`. */
 export type HostResponse = {
@@ -129,6 +175,8 @@ export type HostResponse = {
   release: Acknowledged;
   handle: Handled;
   load: Loaded;
+  advanceStamp: Stamped;
+  ensureStamp: Stamped;
   publish: Published;
 };
 
@@ -146,6 +194,8 @@ const OPERATIONS: Record<HostOperation, true> = {
   release: true,
   handle: true,
   load: true,
+  advanceStamp: true,
+  ensureStamp: true,
   publish: true,
 };
 

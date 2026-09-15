@@ -38,6 +38,47 @@ fn random_sequences_with_direct_writes() {
     }
 }
 
+/// Publishing a change to a channel outside a record's membership is harmless to
+/// the engine: loads are channel-blind, so the extra channel delivers the same
+/// content at the same stamp. Every invariant still holds with such faults generated.
+#[test]
+fn publication_outside_membership_violates_no_invariant() {
+    for seed in 200..220u64 {
+        let mut sim = Sim::new(seed, 2);
+        sim.generate_direct = false;
+        sim.generate_membership_faults = true;
+        for i in 0..2 {
+            sim.apply(ahead_sim::Action::Subscribe {
+                client: i,
+                channel: "a".into(),
+            })
+            .unwrap();
+        }
+        for step in 0..100 {
+            if let Err(error) = sim.step().and_then(|()| sim.check()) {
+                let minimal = ahead_sim::shrink::shrink(seed, 2, sim.trace.clone());
+                let failure = ahead_sim::Failure {
+                    seed,
+                    step,
+                    error,
+                    trace: sim.trace.clone(),
+                    minimal,
+                };
+                panic!("{failure}");
+            }
+        }
+        for i in 0..2 {
+            sim.apply(ahead_sim::Action::Restart { client: i }).unwrap();
+        }
+        sim.settle();
+        sim.check().unwrap_or_else(|e| panic!("seed {seed}: {e}"));
+        assert_eq!(
+            sim.conflicts, 0,
+            "seed {seed}: same stamp, same content, never a conflict"
+        );
+    }
+}
+
 #[test]
 fn every_run_ends_converged_after_settle() {
     for seed in 100..110u64 {

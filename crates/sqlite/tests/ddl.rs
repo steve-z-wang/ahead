@@ -126,3 +126,78 @@ fn rejects_non_nullable_column_without_default_identity_change_and_type_change()
         "a failed reconciliation changes nothing"
     );
 }
+
+/// A database laid out by the checkpoint-era runtime is refused before
+/// anything is written, and the refusal leaves it exactly as found
+/// ([#55](https://github.com/zanminwang/ahead/issues/55)).
+#[test]
+fn a_database_from_the_checkpoint_era_is_refused_untouched() {
+    let dir = tempfile::tempdir().unwrap();
+    let entry: Schema = Schema::from_value(
+        serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap(),
+    )
+    .unwrap();
+    let refused = |path: &std::path::Path| {
+        let err = ahead_client::Client::open(SqliteStore::open(path).unwrap(), entry.clone())
+            .err()
+            .expect("an earlier layout is refused");
+        assert!(err.to_string().contains("earlier Ahead runtime"), "{err}");
+    };
+    let count = |path: &std::path::Path, sql: &str| -> i64 {
+        let mut s = SqliteStore::open(path).unwrap();
+        s.query_committed(sql, &[]).unwrap().rows[0][0]
+            .as_i64()
+            .unwrap()
+    };
+
+    // A checkpoint table beside the current layout.
+    let checkpoint = dir.path().join("checkpoint");
+    {
+        let mut s = SqliteStore::open(&checkpoint).unwrap();
+        s.execute_batch(FRAMEWORK_DDL).unwrap();
+        s.execute_batch(
+            "CREATE TABLE ahead_push_checkpoint (push INTEGER NOT NULL, channel TEXT NOT NULL, cursor INTEGER NOT NULL, PRIMARY KEY (push, channel));
+             INSERT INTO ahead_push_checkpoint VALUES (1, 'book', 2);",
+        )
+        .unwrap();
+    }
+    refused(&checkpoint);
+    assert_eq!(
+        count(
+            &checkpoint,
+            "SELECT COUNT(*) FROM ahead_push_checkpoint WHERE push = 1 AND channel = 'book' AND cursor = 2"
+        ),
+        1,
+        "the checkpoint row is left untouched"
+    );
+
+    // An `ahead_client` table without the completion column.
+    let narrow = dir.path().join("narrow");
+    {
+        let mut s = SqliteStore::open(&narrow).unwrap();
+        s.execute_batch(
+            "CREATE TABLE ahead_client (client_id TEXT PRIMARY KEY, next_ordinal INTEGER NOT NULL, next_push INTEGER NOT NULL, generation INTEGER NOT NULL);
+             INSERT INTO ahead_client VALUES ('old', 3, 2, 1);",
+        )
+        .unwrap();
+    }
+    refused(&narrow);
+    assert_eq!(
+        count(
+            &narrow,
+            "SELECT COUNT(*) FROM ahead_client WHERE client_id = 'old' AND next_ordinal = 3 AND next_push = 2 AND generation = 1"
+        ),
+        1,
+        "the client row is left untouched"
+    );
+    assert_eq!(
+        columns(&mut SqliteStore::open(&narrow).unwrap(), "ahead_client").len(),
+        4,
+        "no column was added"
+    );
+
+    // A database this runtime created reopens.
+    let fresh = dir.path().join("fresh");
+    drop(ahead_client::Client::open(SqliteStore::open(&fresh).unwrap(), entry.clone()).unwrap());
+    ahead_client::Client::open(SqliteStore::open(&fresh).unwrap(), entry).unwrap();
+}

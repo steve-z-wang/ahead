@@ -36,11 +36,11 @@ export interface RemoveEntriesInput {
  maybe: { identity: EntryIdentity } | null;
 }
 export interface Handlers<Tx> {
- addBook: { v1(call: HandlerCall<Tx, AddBookInput>): Promise<void | { channel: string }> } | ((call: HandlerCall<Tx, AddBookInput>) => Promise<void | { channel: string }>);
- addComment: { v1(call: HandlerCall<Tx, AddCommentInput>): Promise<void | { channel: string }> } | ((call: HandlerCall<Tx, AddCommentInput>) => Promise<void | { channel: string }>);
- createEntry: { v1(call: HandlerCall<Tx, CreateEntryInput>): Promise<void | { channel: string }> } | ((call: HandlerCall<Tx, CreateEntryInput>) => Promise<void | { channel: string }>);
- editEntry: { v1(call: HandlerCall<Tx, EditEntryV1Input>): Promise<void | { channel: string }>; v2(call: HandlerCall<Tx, EditEntryInput>): Promise<void | { channel: string }> };
- removeEntries: { v1(call: HandlerCall<Tx, RemoveEntriesInput>): Promise<void | { channel: string }> } | ((call: HandlerCall<Tx, RemoveEntriesInput>) => Promise<void | { channel: string }>);
+ addBook: { v1(call: HandlerCall<Tx, AddBookInput>): Promise<void> } | ((call: HandlerCall<Tx, AddBookInput>) => Promise<void>);
+ addComment: { v1(call: HandlerCall<Tx, AddCommentInput>): Promise<void> } | ((call: HandlerCall<Tx, AddCommentInput>) => Promise<void>);
+ createEntry: { v1(call: HandlerCall<Tx, CreateEntryInput>): Promise<void> } | ((call: HandlerCall<Tx, CreateEntryInput>) => Promise<void>);
+ editEntry: { v1(call: HandlerCall<Tx, EditEntryV1Input>): Promise<void>; v2(call: HandlerCall<Tx, EditEntryInput>): Promise<void> };
+ removeEntries: { v1(call: HandlerCall<Tx, RemoveEntriesInput>): Promise<void> } | ((call: HandlerCall<Tx, RemoveEntriesInput>) => Promise<void>);
 }
 export interface EntryV1 {
  id: string;

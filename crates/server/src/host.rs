@@ -5,9 +5,10 @@
 //! mirror is `packages/server/host-contract.mts` and the shared examples are
 //! `fixtures/protocol/host-operations.json`; a change here belongs in all three.
 //!
-//! This types what exists today. It adds no failure result and changes no
-//! transaction semantics; [#95](https://github.com/zanminwang/ahead/issues/95)
-//! may extend `handle`, `rollback` and `load` later.
+//! `handle` and `load` may answer with a refusal: the engine rolls the
+//! mutation back to its savepoint and records the code as that mutation's
+//! rejection. Every thrown host error still aborts the whole delivery
+//! ([#95](https://github.com/zanminwang/ahead/issues/95) narrows nothing more).
 use crate::{Error, Host, Result, code, valid_code};
 use ahead_core::read_counter;
 use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
@@ -52,7 +53,7 @@ fn present<'de, D: Deserializer<'de>>(
 /// Every operation, in the order [`HostRequest`] declares them. The fixture
 /// and `packages/server/host-contract.mts` carry the same list; the contract
 /// test checks this one against the enum itself.
-pub const OPERATIONS: [&str; 10] = [
+pub const OPERATIONS: [&str; 12] = [
     "claim",
     "saveReceipt",
     "head",
@@ -62,6 +63,8 @@ pub const OPERATIONS: [&str; 10] = [
     "release",
     "handle",
     "load",
+    "advanceStamp",
+    "ensureStamp",
     "publish",
 ];
 
@@ -106,21 +109,28 @@ pub enum HostRequest {
         owner: String,
         ordinal: u64,
     },
-    /// Load the current state of these identities for this channel, as the
-    /// records of one retained model read contract (`version`).
+    /// Load the current state of these identities as the records of one
+    /// retained model read contract (`version`), for this caller. Loads name
+    /// no channel: the same identity, version and stamp describe the same
+    /// content on every delivery path.
     Load {
         model: String,
         version: u64,
         identities: Vec<Value>,
         owner: String,
-        channel: String,
     },
-    /// Invalidate one record on one channel and allocate its cursor and stamp.
+    /// Allocate the next stamp of one record: initialize it at 1 or increment it.
+    AdvanceStamp { model: String, identity_key: String },
+    /// The record's current stamp, initialized at 1 only when it has none.
+    EnsureStamp { model: String, identity_key: String },
+    /// Invalidate one record on one channel at this stamp, allocating only
+    /// the channel cursor. `stamp` must be the record's current stamp.
     Publish {
         channel: String,
         model: String,
         identity: Value,
         identity_key: String,
+        stamp: u64,
     },
 }
 
@@ -137,6 +147,8 @@ impl HostRequest {
             Self::Release { ordinal } => format!("release(ordinal {ordinal})"),
             Self::Handle { ordinal, .. } => format!("handle(ordinal {ordinal})"),
             Self::Load { .. } => "load".into(),
+            Self::AdvanceStamp { .. } => "advanceStamp".into(),
+            Self::EnsureStamp { .. } => "ensureStamp".into(),
             Self::Publish { .. } => "publish".into(),
         }
     }
@@ -152,6 +164,8 @@ impl HostRequest {
             | Self::Savepoint { .. }
             | Self::Rollback { .. }
             | Self::Release { .. }
+            | Self::AdvanceStamp { .. }
+            | Self::EnsureStamp { .. }
             | Self::Publish { .. } => code::HOST_INVALID,
         }
     }
@@ -186,7 +200,10 @@ pub struct Claimed {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Head(#[serde(with = "counter")] pub u64);
 
-/// One row of the answer to `scan`.
+/// One row of the answer to `scan`: the invalidation's own cursor with the
+/// record's *current* stamp, read from the record metadata in the same
+/// snapshot the loader will read. A record may have advanced since it was
+/// published; the cursor is delivery progress, the stamp is the content version.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Invalidation {
@@ -203,11 +220,49 @@ pub struct Invalidation {
 /// The answer to `scan`.
 pub type Scanned = Vec<Invalidation>;
 
-/// The answer to `load`: one entry per requested identity, `null` for a
-/// record the channel cannot see.
-pub type Loaded = Vec<Option<Value>>;
+/// The answer to `load`: one entry per requested identity, `null` for a record
+/// that does not exist for this caller, or a refusal the engine records as the
+/// mutation's rejection (in a push) or reports for the page (in a pull).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged, try_from = "LoadedWire")]
+pub enum Loaded {
+    Rows(Vec<Option<Value>>),
+    Refused { rejection: String },
+}
 
-/// The answer to `publish`.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum LoadedWire {
+    Rows(Vec<Option<Value>>),
+    Object(LoadedRefusal),
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LoadedRefusal {
+    rejection: Value,
+}
+impl TryFrom<LoadedWire> for Loaded {
+    type Error = String;
+    fn try_from(wire: LoadedWire) -> std::result::Result<Self, String> {
+        match wire {
+            LoadedWire::Rows(rows) => Ok(Self::Rows(rows)),
+            LoadedWire::Object(LoadedRefusal { rejection }) => rejection
+                .as_str()
+                .filter(|code| valid_code(code))
+                .map(|code| Self::Refused {
+                    rejection: code.into(),
+                })
+                .ok_or_else(|| "invalid loader refusal code".into()),
+        }
+    }
+}
+
+/// The answer to `advanceStamp` and `ensureStamp`: the record's stamp.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stamped(#[serde(with = "stamp")] pub u64);
+
+/// The answer to `publish`: the cursor the channel allocated and the stamp
+/// the invalidation carries, which must be the one the request named.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Published {
@@ -217,20 +272,46 @@ pub struct Published {
     pub stamp: u64,
 }
 
-/// The answer to `handle`: exactly one of a settlement channel or a rejection
+/// A record a handler names: additional changes and publication members.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecordRef {
+    pub model: String,
+    pub identity: Value,
+}
+
+/// One publication a handler asked for. `records` absent means the mutation's
+/// final change set; present and empty means nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PublicationIntent {
+    pub channel: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub records: Option<Vec<RecordRef>>,
+}
+
+/// The answer to `handle`: the records the handler changed beyond the
+/// uploaded operations and the publications it asked for, or a rejection
 /// code. Carrying both, or neither, is refused.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged, try_from = "HandledWire")]
 pub enum Handled {
-    Settled { channel: String },
-    Rejected { rejection: String },
+    Settled {
+        changes: Vec<RecordRef>,
+        publications: Vec<PublicationIntent>,
+    },
+    Rejected {
+        rejection: String,
+    },
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct HandledWire {
     #[serde(default, deserialize_with = "present")]
-    channel: Option<Value>,
+    changes: Option<Value>,
+    #[serde(default, deserialize_with = "present")]
+    publications: Option<Value>,
     #[serde(default, deserialize_with = "present")]
     rejection: Option<Value>,
 }
@@ -238,24 +319,41 @@ struct HandledWire {
 impl TryFrom<HandledWire> for Handled {
     type Error = String;
     fn try_from(wire: HandledWire) -> std::result::Result<Self, String> {
-        match (wire.channel, wire.rejection) {
-            (Some(_), Some(_)) => {
-                Err("a settlement carries a channel or a rejection, not both".into())
-            }
-            (_, Some(rejection)) => rejection
+        match (wire.changes, wire.publications, wire.rejection) {
+            (None, None, Some(rejection)) => rejection
                 .as_str()
                 .filter(|code| valid_code(code))
                 .map(|code| Self::Rejected {
                     rejection: code.into(),
                 })
                 .ok_or_else(|| "invalid rejection code".into()),
-            (Some(channel), None) => channel
-                .as_str()
-                .map(|channel| Self::Settled {
-                    channel: channel.into(),
+            (_, _, Some(_)) => {
+                Err("a settlement carries changes and publications or a rejection, not both".into())
+            }
+            (Some(changes), Some(publications), None) => {
+                let changes: Vec<RecordRef> = serde_json::from_value(changes)
+                    .map_err(|error| format!("invalid handler changes: {error}"))?;
+                let publications: Vec<PublicationIntent> = serde_json::from_value(publications)
+                    .map_err(|error| format!("invalid handler publications: {error}"))?;
+                if changes
+                    .iter()
+                    .any(|r| r.model.is_empty() || !r.identity.is_object())
+                    || publications.iter().any(|p| {
+                        p.channel.is_empty()
+                            || p.records
+                                .iter()
+                                .flatten()
+                                .any(|r| r.model.is_empty() || !r.identity.is_object())
+                    })
+                {
+                    return Err("invalid handler settlement".into());
+                }
+                Ok(Self::Settled {
+                    changes,
+                    publications,
                 })
-                .ok_or_else(|| "invalid handler settlement".into()),
-            (None, None) => Err("invalid handler settlement".into()),
+            }
+            _ => Err("invalid handler settlement".into()),
         }
     }
 }

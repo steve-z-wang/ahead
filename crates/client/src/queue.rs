@@ -1,11 +1,11 @@
-//! Pending mutations, their operations, dependencies, prerequisites, push checkpoints and rejections.
+//! Pending mutations, their operations, dependencies, prerequisites, the push in flight and rejections.
 use crate::engine::{Engine, as_u64};
 use crate::store::ClientStore;
 use crate::{Mutation, Operation, OperationKind};
-use ahead_core::{ChannelCheckpoint, RecordKey, Rejection, Result, invalid};
+use ahead_core::{RecordKey, Rejection, Result, invalid};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -292,9 +292,56 @@ impl<S: ClientStore> Engine<'_, S> {
         }
         Ok(())
     }
-    pub fn pushes(&mut self) -> Result<Vec<u64>> {
-        let rows = self.rows("SELECT push FROM ahead_mutation WHERE push IS NOT NULL UNION SELECT push FROM ahead_push_checkpoint ORDER BY 1", &[])?;
-        rows.rows.iter().map(|r| as_u64(&r[0])).collect()
+    /// The push that was frozen and not yet completed, if any. Completion
+    /// deletes a push's rows, so any assigned push is in flight; the queue
+    /// never holds more than one.
+    pub fn in_flight(&mut self) -> Result<Option<u64>> {
+        let rows = self.rows(
+            "SELECT DISTINCT push FROM ahead_mutation WHERE push IS NOT NULL ORDER BY push",
+            &[],
+        )?;
+        let pushes: Vec<u64> = rows
+            .rows
+            .iter()
+            .map(|r| as_u64(&r[0]))
+            .collect::<Result<_>>()?;
+        if pushes.len() > 1 {
+            return Err(invalid("more than one push in flight"));
+        }
+        Ok(pushes.first().copied())
+    }
+    /// The sequence of the last push a receipt completed. A receipt at or
+    /// below it is a duplicate and changes nothing.
+    pub fn last_completed_push(&mut self) -> Result<u64> {
+        let value = self
+            .scalar("SELECT last_completed_push FROM ahead_client", &[])?
+            .ok_or_else(|| invalid("client row missing"))?;
+        as_u64(&value)
+    }
+    /// Remember that `push` completed and forget its frozen declaration.
+    pub fn set_last_completed_push(&mut self, push: u64) -> Result<()> {
+        self.exec(
+            "ahead_client",
+            "UPDATE ahead_client SET last_completed_push=?, push_models=NULL",
+            &[json!(push)],
+        )?;
+        Ok(())
+    }
+    /// The read contracts the push in flight declared, frozen when it was
+    /// allocated so a retry sends what the original request sent.
+    pub fn push_models(&mut self) -> Result<Option<Value>> {
+        Ok(self
+            .scalar("SELECT push_models FROM ahead_client", &[])?
+            .and_then(|v| v.as_str().map(serde_json::from_str::<Value>))
+            .transpose()?)
+    }
+    pub fn set_push_models(&mut self, models: &Value) -> Result<()> {
+        self.exec(
+            "ahead_client",
+            "UPDATE ahead_client SET push_models=?",
+            &[json!(serde_json::to_string(models)?)],
+        )?;
+        Ok(())
     }
     pub fn prerequisite_keys(&mut self) -> Result<Vec<(String, Option<String>)>> {
         let rows = self.rows(
@@ -327,68 +374,6 @@ impl<S: ClientStore> Engine<'_, S> {
             "UPDATE ahead_mutation_prerequisite SET error=NULL WHERE key=?",
             &[json!(key)],
         )
-    }
-    pub fn checkpoints(&mut self, push: u64) -> Result<Vec<ChannelCheckpoint>> {
-        let rows = self.rows(
-            "SELECT channel, cursor FROM ahead_push_checkpoint WHERE push=? ORDER BY channel",
-            &[json!(push)],
-        )?;
-        rows.rows
-            .iter()
-            .map(|r| {
-                Ok(ChannelCheckpoint {
-                    channel: text(&r[0]),
-                    cursor: as_u64(&r[1])?,
-                })
-            })
-            .collect()
-    }
-    pub fn insert_checkpoints(
-        &mut self,
-        push: u64,
-        checkpoints: &[ChannelCheckpoint],
-    ) -> Result<()> {
-        for cp in checkpoints {
-            self.exec(
-                "ahead_push_checkpoint",
-                "INSERT INTO ahead_push_checkpoint (push, channel, cursor) VALUES (?,?,?)",
-                &[json!(push), json!(cp.channel), json!(cp.cursor)],
-            )?;
-        }
-        Ok(())
-    }
-    pub fn delete_checkpoints(&mut self, push: u64) -> Result<()> {
-        self.exec(
-            "ahead_push_checkpoint",
-            "DELETE FROM ahead_push_checkpoint WHERE push=?",
-            &[json!(push)],
-        )?;
-        Ok(())
-    }
-    /// The pushes waiting on `channel`, taken before its checkpoint rows are deleted.
-    pub fn pushes_awaiting(&mut self, channel: &str) -> Result<BTreeSet<u64>> {
-        let rows = self.rows(
-            "SELECT DISTINCT push FROM ahead_push_checkpoint WHERE channel=?",
-            &[json!(channel)],
-        )?;
-        rows.rows.iter().map(|r| as_u64(&r[0])).collect()
-    }
-    pub fn delete_channel_checkpoints(&mut self, channel: &str) -> Result<()> {
-        self.exec(
-            "ahead_push_checkpoint",
-            "DELETE FROM ahead_push_checkpoint WHERE channel=?",
-            &[json!(channel)],
-        )?;
-        Ok(())
-    }
-    /// Channels some acknowledged batch is waiting on; the nothing-awaited marker
-    /// is not a channel.
-    pub fn checkpoint_channels(&mut self) -> Result<BTreeSet<String>> {
-        let rows = self.rows(
-            "SELECT DISTINCT channel FROM ahead_push_checkpoint WHERE channel<>?",
-            &[json!(crate::push::NOTHING_AWAITED)],
-        )?;
-        Ok(rows.rows.iter().map(|r| text(&r[0])).collect())
     }
     pub fn insert_rejection(
         &mut self,

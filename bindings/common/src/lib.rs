@@ -231,9 +231,10 @@ impl RuntimeHost {
                         let receipt = PushReceipt::decode(
                             serde_json::to_string(&request["receipt"])?.as_bytes(),
                         )?;
-                        e.client
-                            .acknowledge(read_counter(&request["sequence"], true)?, receipt)?;
-                        Value::Null
+                        serde_json::to_value(
+                            e.client
+                                .acknowledge(read_counter(&request["sequence"], true)?, receipt)?,
+                        )?
                     }
                     "pull" => {
                         let page =

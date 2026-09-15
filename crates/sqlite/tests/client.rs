@@ -196,19 +196,7 @@ fn schema_cascade_is_optimistic_same_fate_and_not_extra_wire_operations() {
             .len(),
         1
     );
-    let mut ack = PushReceipt {
-        required_channel: "book".into(),
-        required_cursor: 0,
-        required_checkpoints: vec![ChannelCheckpoint {
-            channel: "book".into(),
-            cursor: 0,
-        }],
-        rejections: vec![],
-    };
-    ack.rejections.push(Rejection {
-        ordinal: 1,
-        code: "denied".into(),
-    });
+    let ack = rejecting(&mut c, 1, &[1], "denied", vec![]);
     c.acknowledge(1, ack).unwrap();
     assert_eq!(c.query("Comment", &json!({})).unwrap().len(), 1);
     assert_eq!(table_count(&mut c, "ahead_before_Comment"), 0);
@@ -276,32 +264,37 @@ fn creating_then_editing_a_record_automatically_has_lifecycle_dependency() {
     assert_eq!(batch.mutations.len(), 1);
 }
 
+/// Unsubscribing restarts the channel's cursor and keeps every record it
+/// delivered, whether or not another channel also provides it.
 #[test]
-fn unsubscribe_drops_records_nobody_else_claims_and_restarts_from_zero() {
+fn unsubscribe_retains_records_and_restarts_from_zero() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = open(&dir.path().join("db"));
     subscribe(&mut c, "a");
     subscribe(&mut c, "b");
     c.apply_page(page("a", 0, 1, Some("A"))).unwrap();
-    c.apply_page(page("b", 0, 1, Some("B"))).unwrap();
+    let mut newer = page("b", 0, 1, Some("B"));
+    newer.changes[0].stamp = 2;
+    c.apply_page(newer).unwrap();
     let mut other = page("a", 1, 2, Some("O"));
     other.changes[0].identity = json!({"id":"only-a"});
     c.apply_page(other).unwrap();
     c.transaction(|tx| tx.set_channel("a".into(), false))
         .unwrap();
     assert_eq!(c.cursor("a").unwrap(), 0);
-    assert!(c.read(&key()).unwrap().is_some(), "still claimed by b");
-    assert!(
-        c.read(
-            &schema()
-                .record_key("Entry", &json!({"id":"only-a"}))
-                .unwrap()
-        )
-        .unwrap()
-        .is_none()
+    assert_eq!(c.read(&key()).unwrap().unwrap()["text"], "B");
+    let only_a = schema()
+        .record_key("Entry", &json!({"id":"only-a"}))
+        .unwrap();
+    assert_eq!(
+        c.read(&only_a).unwrap().unwrap()["text"],
+        "O",
+        "a record only the unsubscribed channel delivered is retained"
     );
-    assert_eq!(table_count(&mut c, "ahead_record"), 1);
-    assert_eq!(table_count(&mut c, "ahead_claim"), 1);
+    assert_eq!(table_count(&mut c, "ahead_record"), 2);
+    assert_eq!(c.record_stamp(&only_a).unwrap(), 2);
+    subscribe(&mut c, "a");
+    assert_eq!(c.cursor("a").unwrap(), 0, "resubscribing starts over");
 }
 
 /// L3: a host transaction cannot commit with a savepoint still open; the refusal

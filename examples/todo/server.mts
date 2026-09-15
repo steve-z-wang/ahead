@@ -56,7 +56,7 @@ export async function createExample() {
   const db = new PrismaClient();
   let calls = 0;
   const handlers: Handlers<Tx> = {
-    async addTodo({ input, tx, userId, notify }) {
+    async addTodo({ input, tx, userId, publish }) {
       calls++;
       const { todo } = input;
       const title = titleForInsert(todo.title);
@@ -71,9 +71,9 @@ export async function createExample() {
         throw new MutationRejected("todo.id_conflict");
       }
       await tx.$executeRawUnsafe(`RELEASE SAVEPOINT ${savepoint}`);
-      notify({ channel: CHANNEL, records: [input.todo] });
+      publish({ channel: CHANNEL });
     },
-    async setTodoDone({ input, tx, notify }) {
+    async setTodoDone({ input, tx, publish }) {
       calls++;
       const { identity, patch } = input.todo;
       // The generated patch type keeps `done` optional, but the runtime refuses a patch without it
@@ -85,19 +85,16 @@ export async function createExample() {
         if (prismaCode(error) !== "P2025") throw error;
         throw new MutationRejected("todo.missing");
       }
-      notify({ channel: CHANNEL, records: [input.todo] });
+      publish({ channel: CHANNEL });
     },
   };
-  const scoped = (channel: string) => channel === CHANNEL;
   const loaders: Loaders<Tx> = {
-    async user({ ids, tx, channel }) {
-      if (!scoped(channel)) return ids.map(() => null);
+    async user({ ids, tx }) {
       const rows = await tx.user.findMany({ where: { id: { in: ids.map((identity) => identity.id) } } });
       const byId = new Map(rows.map((row) => [row.id, row]));
       return ids.map((identity) => byId.get(identity.id) ?? null);
     },
-    async todo({ ids, tx, channel }) {
-      if (!scoped(channel)) return ids.map(() => null);
+    async todo({ ids, tx }) {
       const rows = await tx.todo.findMany({ where: { id: { in: ids.map((identity) => identity.id) } } });
       const byId = new Map(rows.map((row) => [row.id, row]));
       return ids.map((identity) => byId.get(identity.id) ?? null);
