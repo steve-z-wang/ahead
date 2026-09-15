@@ -310,3 +310,23 @@ fn structural_refusals_a_schema_author_is_likely_to_hit() {
         );
     }
 }
+
+#[test]
+fn model_versions_reach_every_generated_surface() {
+    // The client's declared read contract is the `version` of each model in the
+    // embedded schema; the backend additionally carries every retained contract.
+    let v = compile("enum Status { open closed } model Task { id UUID status Status @@id(id) @@version(2) } model Note { id UUID @@id(id) }").unwrap();
+    assert_eq!(v["schema"]["models"][0]["version"], 2);
+    assert_eq!(v["schema"]["models"][1]["version"], 1, "omitted is version 1");
+    let ts = ahead_compiler::typescript(&v);
+    assert!(ts.contains(r#""name":"Task","relations":[],"unique":[],"version":2}"#), "{ts}");
+    assert!(ts.contains(r#""name":"Note","relations":[],"unique":[],"version":1}"#), "{ts}");
+    let dart = ahead_compiler::dart(&v);
+    assert!(dart.contains(r#""name":"Task","relations":[],"unique":[],"version":2}"#), "{dart}");
+    let mut with_history = v.clone();
+    let old = serde_json::json!({"name":"Task","version":1,"identity":["id"],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}}],"enums":[]});
+    with_history["backendModels"] = serde_json::json!([old]);
+    let backend = ahead_compiler::backend_typescript(&with_history, "@ahead/server");
+    assert!(backend.contains(r#""models":[{"enums":[],"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}}],"identity":["id"],"name":"Task","version":1}]"#), "{backend}");
+    assert!(!backend.contains("backendModels"), "{backend}");
+}

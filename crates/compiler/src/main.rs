@@ -10,28 +10,37 @@ fn read_json(path: &Path) -> Result<Value, String> {
 fn run() -> Result<(), String> {
     let args: Vec<_> = env::args().collect();
     if args.len() < 4 || args[1] != "compile" {
-        return Err("usage: ahead compile INPUT_DIR OUTPUT_DIR [--mutation-history FILE] [--initialize-mutation-history] [--schema-fence FILE] [--backend-runtime SPEC] [--client-runtime SPEC]".into());
+        return Err("usage: ahead compile INPUT_DIR OUTPUT_DIR [--mutation-history FILE] [--initialize-mutation-history] [--model-history FILE] [--initialize-model-history] [--schema-fence FILE] [--backend-runtime SPEC] [--client-runtime SPEC]".into());
     }
     let input = Path::new(&args[2]);
     let out = Path::new(&args[3]);
     // History belongs beside the schema and is committed to Git, not with disposable output.
     let mut history_path = input.join("history").join("mutations.json");
+    let mut model_history_path = input.join("history").join("models.json");
     let superseded = out.join("mutation-history.json");
     let mut fence_path = out.join("schema.json");
     let mut backend_runtime = String::from("@ahead/server");
     let mut client_runtime = String::from("@ahead/client");
     let mut initialize = false;
     let mut explicit_history = false;
+    let mut initialize_models = false;
+    let mut explicit_model_history = false;
     let mut index = 4;
     while index < args.len() {
         match args[index].as_str() {
             "--initialize-mutation-history" => initialize = true,
-            "--mutation-history" | "--schema-fence" | "--backend-runtime" | "--client-runtime" => {
+            "--initialize-model-history" => initialize_models = true,
+            "--mutation-history" | "--model-history" | "--schema-fence" | "--backend-runtime"
+            | "--client-runtime" => {
                 let value = args.get(index + 1).ok_or("missing option value")?;
                 match args[index].as_str() {
                     "--mutation-history" => {
                         history_path = PathBuf::from(value);
                         explicit_history = true;
+                    }
+                    "--model-history" => {
+                        model_history_path = PathBuf::from(value);
+                        explicit_model_history = true;
                     }
                     "--schema-fence" => fence_path = PathBuf::from(value),
                     "--backend-runtime" => backend_runtime = value.clone(),
@@ -51,6 +60,12 @@ fn run() -> Result<(), String> {
     }
     if explicit_history && !history_path.exists() && !initialize {
         return Err("missing mutation history; restore it or initialize explicitly".into());
+    }
+    if initialize_models && model_history_path.exists() {
+        return Err("model history already exists; initialization refused".into());
+    }
+    if explicit_model_history && !model_history_path.exists() && !initialize_models {
+        return Err("missing model history; restore it or initialize explicitly".into());
     }
     let mut paths = fs::read_dir(&args[2])
         .map_err(|e| e.to_string())?
@@ -98,6 +113,15 @@ fn run() -> Result<(), String> {
     {
         return Err("initial mutation history must begin at version 1".into());
     }
+    if initialize_models
+        && config["schema"]["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["version"] != 1)
+    {
+        return Err("initial model history must begin at version 1".into());
+    }
     if fence_path.exists() {
         ahead_compiler::check_fence(&read_json(&fence_path)?, &config["schema"])?;
     }
@@ -111,18 +135,33 @@ fn run() -> Result<(), String> {
     } else {
         None
     };
+    // Both histories are reconciled before anything is written, so a refusal
+    // from either leaves every output and both histories as they were.
     let history = ahead_compiler::reconcile_history(&config, previous.as_ref())?;
-    let historical: Vec<_> = history["mutations"]
-        .as_object()
-        .unwrap()
-        .values()
-        .flat_map(|v| v.as_object().unwrap().values().cloned())
-        .collect();
+    let previous_models = if model_history_path.exists() {
+        Some(read_json(&model_history_path)?)
+    } else {
+        None
+    };
+    let model_history = ahead_compiler::reconcile_model_history(&config, previous_models.as_ref())?;
+    let retained = |history: &Value, key: &str| -> Vec<Value> {
+        history[key]
+            .as_object()
+            .unwrap()
+            .values()
+            .flat_map(|v| v.as_object().unwrap().values().cloned())
+            .collect()
+    };
+    let historical = retained(&history, "mutations");
     config["backendMutations"] = serde_json::json!(historical);
     config["schema"]["clientPolicies"] = serde_json::json!(historical);
+    // Every retained model read contract, for the loader of each version.
+    config["backendModels"] = serde_json::json!(retained(&model_history, "models"));
     let mut backend = config.clone();
     backend["mutations"] = serde_json::json!(historical);
+    backend["models"] = config["backendModels"].clone();
     backend.as_object_mut().unwrap().remove("backendMutations");
+    backend.as_object_mut().unwrap().remove("backendModels");
     let files = [
         (
             out.join("schema.json"),
@@ -149,15 +188,37 @@ fn run() -> Result<(), String> {
             history_path.clone(),
             serde_json::to_string_pretty(&history).unwrap(),
         ),
+        (
+            model_history_path.clone(),
+            serde_json::to_string_pretty(&model_history).unwrap(),
+        ),
     ];
     fs::create_dir_all(out).map_err(|e| e.to_string())?;
-    if let Some(parent) = history_path.parent() {
+    for parent in [history_path.parent(), model_history_path.parent()]
+        .into_iter()
+        .flatten()
+    {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
+    // Stage every file first, then move them into place: a write failure leaves
+    // the previous outputs and histories untouched.
+    let mut staged = vec![];
     for (path, contents) in files {
-        let temp = path.with_extension(format!("{}.tmp", std::process::id()));
-        fs::write(&temp, contents).map_err(|e| format!("{}: {e}", temp.display()))?;
-        fs::rename(temp, &path).map_err(|e| e.to_string())?;
+        // Keep the full file name so `backend.json` and `backend.ts` stage apart.
+        let mut temp = path.clone().into_os_string();
+        temp.push(format!(".{}.tmp", std::process::id()));
+        let temp = PathBuf::from(temp);
+        if let Err(e) = fs::write(&temp, contents) {
+            for (temp, _) in &staged {
+                let _ = fs::remove_file(temp);
+            }
+            let _ = fs::remove_file(&temp);
+            return Err(format!("{}: {e}", temp.display()));
+        }
+        staged.push((temp, path));
+    }
+    for (temp, path) in staged {
+        fs::rename(temp, &path).map_err(|e| format!("{}: {e}", path.display()))?;
     }
     if relocate {
         eprintln!(

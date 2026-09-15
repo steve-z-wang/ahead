@@ -36,12 +36,20 @@ pub struct EnumDescriptor {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ModelDescriptor {
     pub name: String,
+    /// The read-contract version of the records this descriptor describes
+    /// (`@@version(n)`, 1 when omitted). Independent of mutation versions and
+    /// of record stamps; a loader is selected by model name and this version.
+    #[serde(default = "first_version")]
+    pub version: u64,
     pub identity: Vec<String>,
     pub fields: Vec<FieldDescriptor>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub relations: Vec<RelationDescriptor>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unique: Vec<Vec<String>>,
+}
+fn first_version() -> u64 {
+    1
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -134,6 +142,9 @@ impl Schema {
                 || model.identity.is_empty()
             {
                 return Err(invalid("invalid model descriptor"));
+            }
+            if model.version == 0 || model.version > MAX_SAFE_INTEGER {
+                return Err(invalid("invalid model version"));
             }
             let mut fields = BTreeSet::new();
             for field in &model.fields {

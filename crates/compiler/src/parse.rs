@@ -126,6 +126,23 @@ impl Parser {
         }
         Ok(Value::Object(args))
     }
+    /// The `(n)` of a `@@version` directive: a positive integer within the safe range.
+    fn version(&mut self, seen: &mut bool) -> Result<u64, String> {
+        if *seen {
+            return Err(self.err("duplicate version"));
+        }
+        *seen = true;
+        self.need("(")?;
+        let version = self
+            .take()
+            .parse::<u64>()
+            .map_err(|_| self.err("expected positive version"))?;
+        if version == 0 || version > ahead_core::MAX_SAFE_INTEGER {
+            return Err(self.err("version must be positive"));
+        }
+        self.need(")")?;
+        Ok(version)
+    }
     fn names(&mut self, end: &str) -> Result<Vec<String>, String> {
         let mut n = vec![];
         while !self.eat(end) {
@@ -225,6 +242,8 @@ pub struct EnumDecl {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ModelDecl {
     pub name: String,
+    /// The read-contract version declared by `@@version(n)`; 1 when omitted.
+    pub version: u64,
     pub identity: Vec<String>,
     pub fields: Vec<FieldDecl>,
     pub unique: Vec<UniqueDecl>,
@@ -325,11 +344,16 @@ pub fn parse(source: &str) -> Result<Declarations, String> {
             }
             "model" => {
                 let (mut fields, mut identity, mut unique) = (vec![], vec![], vec![]);
+                let (mut version, mut version_seen) = (1, false);
                 while !p.eat("}") {
                     let directive_pos = p.pos();
                     if p.eat("@") {
                         p.need("@")?;
                         let attr = p.ident()?;
+                        if attr == "version" {
+                            version = p.version(&mut version_seen)?;
+                            continue;
+                        }
                         p.need("(")?;
                         let names = p.names(")")?;
                         match attr.as_str() {
@@ -379,6 +403,7 @@ pub fn parse(source: &str) -> Result<Declarations, String> {
                 }
                 d.models.push(ModelDecl {
                     name,
+                    version,
                     identity,
                     fields,
                     unique,
@@ -404,19 +429,7 @@ pub fn parse(source: &str) -> Result<Declarations, String> {
                         if attr != "version" {
                             return Err(p.err(format!("unsupported mutation directive {attr}")));
                         }
-                        if version_seen {
-                            return Err(p.err("duplicate version"));
-                        }
-                        version_seen = true;
-                        p.need("(")?;
-                        version = p
-                            .take()
-                            .parse::<u64>()
-                            .map_err(|_| p.err("expected positive version"))?;
-                        if version == 0 || version > ahead_core::MAX_SAFE_INTEGER {
-                            return Err(p.err("version must be positive"));
-                        }
-                        p.need(")")?;
+                        version = p.version(&mut version_seen)?;
                         continue;
                     }
                     let slot = p.ident()?;

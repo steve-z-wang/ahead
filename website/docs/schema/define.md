@@ -86,8 +86,8 @@ Slot bindings and `@@sequence` express operation dependencies. Use the [compiler
 
 ## Evolve the contract
 
-Keep `history/mutations.json` beside your `.model` files and commit it. Regenerating retains prior input contracts so each queued mutation retains a defined input contract.
+Keep `history/mutations.json` and `history/models.json` beside your `.model` files and commit them. Regenerating retains prior contracts: each queued mutation keeps a defined input contract, and each published model version keeps the record shape its readers expect.
 
-A compatible change can keep the same version; breaking slot/input/policy changes require `@@version(n)` with a newer version. Implement every supported handler version exposed by the generated backend interface. Do not delete history to silence a compatibility error.
+A compatible change can keep the same version; breaking slot/input/policy changes require `@@version(n)` with a newer version on the mutation, and a breaking change to the records a model returns (a required field, a rename, a removal, a type change, a new enum value) requires a newer `@@version(n)` on the model. Implement every supported handler version exposed by the generated backend interface. Do not delete history to silence a compatibility error.
 
 There are three separate responsibilities: compiler compatibility checks, migration of the client's local cache, and migration of your backend database. A successful compile does not perform the other two. Read [compiler compatibility](reference.md#history-and-compatibility) and [client migration](../frontend/runtime.md#opening-and-schema-changes) before shipping a schema change.

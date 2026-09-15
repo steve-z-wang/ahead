@@ -98,7 +98,8 @@
       ],
       "name": "Entry",
       "relations": [],
-      "unique": []
+      "unique": [],
+      "version": 1
     }
   ],
   "prerequisites": [],
