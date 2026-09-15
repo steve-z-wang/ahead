@@ -28,4 +28,8 @@ Ahead is a schema-driven framework for local-first applications with an applicat
 
 ## Skills
 
-- Consult the [skills index](docs/agents/skills.md) for workflows relevant to the task. Read the selected skill's instructions before using it; an index entry does not install or activate a skill.
+- Consult the [skills index](docs/agents/skills.md) for skills relevant to the task. Read the selected skill's instructions before using it; an index entry does not install or activate a skill.
+
+## Workflows
+
+- Follow [ship an issue](docs/agents/workflows/ship-issue.md) when working on a GitHub issue. A workflow sequences skills from the index, names the labels to set, and says when to write state back to the issue.
