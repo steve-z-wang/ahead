@@ -90,7 +90,10 @@ fn startup_rejects_invalid_patch_capabilities() {
 /// which records every `handle` call, for asserting protocol refusals in
 /// process without a database.
 mod refusals {
-    use ahead_server::{Host, HostResult, code};
+    use ahead_server::{
+        Host, HostResult, code,
+        host::{self, Acknowledged, Handled, Head, HostRequest},
+    };
     use serde_json::{Value, json};
     use std::{
         future::Future,
@@ -111,23 +114,36 @@ mod refusals {
     struct Claimed {
         owner: &'static str,
         sequence: u64,
-        handled: Mutex<Vec<Value>>,
+        handled: Mutex<Vec<HostRequest>>,
     }
     impl Host for Claimed {
         fn call(&self, r: Value) -> Pin<Box<dyn Future<Output = HostResult<Value>> + Send + '_>> {
             Box::pin(async move {
-                Ok(match r["op"].as_str().unwrap() {
-                    "claim" => json!({
-                        "clientId": r["clientId"], "owner": self.owner,
-                        "sequence": self.sequence, "receipt": "{}"
-                    }),
-                    "handle" => {
-                        self.handled.lock().unwrap().push(r.clone());
-                        json!({"channel":"a"})
+                let request: HostRequest = serde_json::from_value(r)
+                    .map_err(|error| format!("unsupported host request: {error}"))?;
+                Ok(match &request {
+                    HostRequest::Claim { client_id, .. } => serde_json::to_value(host::Claimed {
+                        client_id: client_id.clone(),
+                        owner: self.owner.into(),
+                        sequence: self.sequence,
+                        receipt: Some("{}".into()),
+                    })
+                    .unwrap(),
+                    HostRequest::Handle { .. } => {
+                        self.handled.lock().unwrap().push(request.clone());
+                        serde_json::to_value(Handled::Settled {
+                            channel: "a".into(),
+                        })
+                        .unwrap()
                     }
-                    "head" => json!(0),
-                    "savepoint" | "rollback" | "release" | "saveReceipt" => Value::Null,
-                    other => return Err(format!("unsupported {other}")),
+                    HostRequest::Head { .. } => serde_json::to_value(Head(0)).unwrap(),
+                    HostRequest::Savepoint { .. }
+                    | HostRequest::Rollback { .. }
+                    | HostRequest::Release { .. }
+                    | HostRequest::SaveReceipt { .. } => {
+                        serde_json::to_value(Acknowledged).unwrap()
+                    }
+                    other => return Err(format!("unsupported {}", other.label())),
                 })
             })
         }

@@ -3,7 +3,13 @@
 //! per-channel heads, one invalidation row per (channel, record) carrying the latest
 //! cursor and stamp, and one stamp counter per record.
 use ahead_core::{PushRequest, RecordKey};
-use ahead_server::Host;
+use ahead_server::{
+    Host,
+    host::{
+        Acknowledged, Claimed, Handled, Head, HostRequest, Invalidation as ContractInvalidation,
+        Loaded, Published, Scanned,
+    },
+};
 use serde_json::{Map, Value, json};
 use std::{
     collections::BTreeMap,
@@ -43,7 +49,7 @@ struct Tables {
 struct State {
     tables: Tables,
     membership: BTreeMap<String, Vec<String>>,
-    clients: BTreeMap<String, Value>,
+    clients: BTreeMap<String, Claimed>,
     savepoints: Vec<Tables>,
     reject_next: Option<String>,
     fail_next: bool,
@@ -229,8 +235,8 @@ impl MemHost {
     pub fn receipt(&self, client_id: &str, sequence: u64) -> Option<String> {
         let s = self.0.lock().unwrap();
         let row = s.clients.get(client_id)?;
-        if row["sequence"].as_u64() == Some(sequence) {
-            row["receipt"].as_str().map(str::to_string)
+        if row.sequence == sequence {
+            row.receipt.clone()
         } else {
             None
         }
@@ -410,43 +416,63 @@ fn apply_business(
     Ok(changed)
 }
 
+/// The sim answers with the contract's own response types, so a drift between
+/// `crates/server/src/host.rs` and this host is a Rust compile error.
+macro_rules! response {
+    ($value:expr) => {
+        serde_json::to_value($value).expect("host responses encode")
+    };
+}
+
 impl Host for MemHost {
     fn call(
         &self,
-        r: Value,
+        request: Value,
     ) -> Pin<Box<dyn Future<Output = ahead_server::HostResult<Value>> + Send + '_>> {
         Box::pin(async move {
+            let request: HostRequest = serde_json::from_value(request)
+                .map_err(|error| format!("unsupported host request: {error}"))?;
             let mut s = self.0.lock().unwrap();
-            let op = r["op"].as_str().unwrap_or("");
-            Ok(match op {
-                "claim" => {
-                    let id = r["clientId"].as_str().unwrap().to_string();
-                    s.clients
-                        .entry(id)
-                        .or_insert_with(|| json!({"clientId":r["clientId"],"owner":r["owner"],"sequence":0,"receipt":null}))
-                        .clone()
+            Ok(match request {
+                HostRequest::Claim { owner, client_id } => {
+                    let claimed = s
+                        .clients
+                        .entry(client_id.clone())
+                        .or_insert_with(|| Claimed {
+                            client_id,
+                            owner,
+                            sequence: 0,
+                            receipt: None,
+                        })
+                        .clone();
+                    response!(claimed)
                 }
-                "saveReceipt" => {
-                    let id = r["clientId"].as_str().unwrap().to_string();
+                HostRequest::SaveReceipt {
+                    owner,
+                    client_id,
+                    sequence,
+                    receipt,
+                } => {
                     s.clients.insert(
-                        id,
-                        json!({"clientId":r["clientId"],"owner":r["owner"],"sequence":r["sequence"],"receipt":r["receipt"]}),
+                        client_id.clone(),
+                        Claimed {
+                            client_id,
+                            owner,
+                            sequence,
+                            receipt: Some(receipt),
+                        },
                     );
-                    Value::Null
+                    response!(Acknowledged)
                 }
-                "head" => json!(
-                    s.tables
-                        .heads
-                        .get(r["channel"].as_str().unwrap())
-                        .copied()
-                        .unwrap_or(0)
-                ),
-                "savepoint" => {
+                HostRequest::Head { channel } => {
+                    response!(Head(s.tables.heads.get(&channel).copied().unwrap_or(0)))
+                }
+                HostRequest::Savepoint { .. } => {
                     let snap = s.tables.clone();
                     s.savepoints.push(snap);
-                    Value::Null
+                    response!(Acknowledged)
                 }
-                "rollback" => {
+                HostRequest::Rollback { .. } => {
                     // Mirrors SQL ROLLBACK TO SAVEPOINT: restores the snapshot but leaves
                     // it on the stack. The server always follows with a `release`, which
                     // is the one that pops it (mirroring RELEASE SAVEPOINT).
@@ -456,17 +482,20 @@ impl Host for MemHost {
                         .cloned()
                         .expect("rollback without savepoint");
                     s.tables = snap;
-                    Value::Null
+                    response!(Acknowledged)
                 }
-                "release" => {
+                HostRequest::Release { .. } => {
                     s.savepoints.pop().expect("release without savepoint");
-                    Value::Null
+                    response!(Acknowledged)
                 }
-                "handle" => {
+                HostRequest::Handle {
+                    name,
+                    arguments,
+                    ordinal,
+                    ..
+                } => {
                     s.handler_calls += 1;
-                    if let (Some((client_id, batch_sequence)), Some(ordinal)) =
-                        (s.current_push.clone(), r["ordinal"].as_u64())
-                    {
+                    if let Some((client_id, batch_sequence)) = s.current_push.clone() {
                         s.handler_invocations
                             .push((client_id, batch_sequence, ordinal));
                     }
@@ -477,10 +506,9 @@ impl Host for MemHost {
                     }
                     if let Some(code) = s.reject_next.take() {
                         s.rejected += 1;
-                        return Ok(json!({ "rejection": code }));
+                        return Ok(response!(Handled::Rejected { rejection: code }));
                     }
-                    let name = r["name"].as_str().unwrap();
-                    match apply_business(&mut s.tables, name, &r["arguments"]) {
+                    match apply_business(&mut s.tables, &name, &arguments) {
                         Ok(changed) => {
                             let mut selected: Option<String> = None;
                             for key in &changed {
@@ -494,82 +522,93 @@ impl Host for MemHost {
                             }
                             s.accepted += 1;
                             match selected {
-                                Some(c) => json!({ "channel": c }),
+                                Some(channel) => response!(Handled::Settled { channel }),
+                                // No channel claims anything the handler changed, so
+                                // there is no settlement to report. `Handled` cannot
+                                // express that, and the engine refuses the empty object
+                                // with `handler.invalid` - which is the outcome this
+                                // host has always produced here.
                                 None => json!({}),
                             }
                         }
                         Err(code) => {
                             s.rejected += 1;
-                            json!({ "rejection": code })
+                            response!(Handled::Rejected {
+                                rejection: code.to_string(),
+                            })
                         }
                     }
                 }
-                "publish" => {
-                    let key = key_of(r["model"].as_str().unwrap(), &r["identity"]);
-                    let (cursor, stamp) =
-                        publish_one(&mut s.tables, r["channel"].as_str().unwrap(), &key);
-                    json!({ "cursor": cursor, "stamp": stamp })
+                HostRequest::Publish {
+                    channel,
+                    model,
+                    identity,
+                    ..
+                } => {
+                    let key = key_of(&model, &identity);
+                    let (cursor, stamp) = publish_one(&mut s.tables, &channel, &key);
+                    response!(Published { cursor, stamp })
                 }
-                "scan" => {
-                    let channel = r["channel"].as_str().unwrap();
-                    let after = r["after"].as_u64().unwrap();
-                    let limit = r["limit"].as_u64().unwrap() as usize;
+                HostRequest::Scan {
+                    channel,
+                    after,
+                    limit,
+                } => {
                     let mut rows: Vec<&Invalidation> = s
                         .tables
                         .invalidations
                         .iter()
-                        .filter(|((c, _), row)| c == channel && row.cursor > after)
+                        .filter(|((c, _), row)| *c == channel && row.cursor > after)
                         .map(|(_, row)| row)
                         .collect();
                     rows.sort_by_key(|row| row.cursor);
-                    Value::Array(
-                        rows.into_iter()
-                            .take(limit)
-                            .map(|row| {
-                                json!({"channel":channel,"cursor":row.cursor,"model":row.model,"identity":row.identity,"identityKey":row.identity_key,"stamp":row.stamp})
-                            })
-                            .collect(),
-                    )
+                    let scanned: Scanned = rows
+                        .into_iter()
+                        .take(limit as usize)
+                        .map(|row| ContractInvalidation {
+                            channel: channel.clone(),
+                            cursor: row.cursor,
+                            model: row.model.clone(),
+                            identity: row.identity.clone(),
+                            identity_key: row.identity_key.clone(),
+                            stamp: row.stamp,
+                        })
+                        .collect();
+                    response!(scanned)
                 }
-                "load" => {
-                    let model = r["model"].as_str().unwrap();
-                    let channel = r["channel"].as_str();
-                    Value::Array(
-                        r["identities"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .map(|identity| {
-                                let key = key_of(model, identity);
-                                let k = encoded(&key);
-                                // A channel-blind load would let a stale request from a
-                                // channel that no longer claims this record see another
-                                // channel's newer content. Membership set explicitly
-                                // (even if the requesting channel isn't in it) is
-                                // authoritative for that channel's view; membership
-                                // never set at all keeps the old, channel-blind lookup.
-                                if let (Some(channel), Some(members)) =
-                                    (channel, s.membership.get(&k))
-                                    && !members.iter().any(|m| m == channel)
-                                {
-                                    return Value::Null;
+                HostRequest::Load {
+                    model,
+                    identities,
+                    channel,
+                    ..
+                } => {
+                    let loaded: Loaded = identities
+                        .iter()
+                        .map(|identity| {
+                            let key = key_of(&model, identity);
+                            let k = encoded(&key);
+                            // A channel-blind load would let a stale request from a
+                            // channel that no longer claims this record see another
+                            // channel's newer content. Membership set explicitly
+                            // (even if the requesting channel isn't in it) is
+                            // authoritative for that channel's view; membership
+                            // never set at all keeps the old, channel-blind lookup.
+                            if let Some(members) = s.membership.get(&k)
+                                && !members.contains(&channel)
+                            {
+                                return None;
+                            }
+                            s.tables.records.get(&k).map(|v| {
+                                let mut m: Map<String, Value> = v.as_object().unwrap().clone();
+                                if model == "Entry" {
+                                    m.entry("note").or_insert(Value::Null);
                                 }
-                                match s.tables.records.get(&k) {
-                                    Some(v) => {
-                                        let mut m: Map<String, Value> =
-                                            v.as_object().unwrap().clone();
-                                        if model == "Entry" {
-                                            m.entry("note").or_insert(Value::Null);
-                                        }
-                                        Value::Object(m)
-                                    }
-                                    None => Value::Null,
-                                }
+                                Value::Object(m)
                             })
-                            .collect(),
-                    )
+                        })
+                        .collect();
+                    response!(loaded)
                 }
-                other => return Err(format!("unsupported host op {other}")),
             })
         })
     }
