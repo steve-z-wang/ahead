@@ -85,7 +85,7 @@ The e2e runner covers the happy path, every rejection code, an unknown identity,
 
 ## Evidence
 
-Verified 2026-09-15 on branch `codex/todo-mobile` at the working tree committed as `4ce53b8` (on top of the React Native support commit `2155a7a`) with Xcode 26.5 (17F42), the iOS 26.5 simulator runtime (23F77), two disposable iPhone 17 simulators, Node 26.4.0, cargo 1.98.1, CocoaPods 1.16.2, Expo 57.0.22, React Native 0.86.3 and React 19.2.3.
+Verified 2026-09-15 on branch `codex/todo-mobile` on the working tree later committed as `bd1678c` and rebased onto `c54ff70` (React Native support, #100); the SDK follow-up between those commits changed only build tooling and test timeouts with Xcode 26.5 (17F42), the iOS 26.5 simulator runtime (23F77), two disposable iPhone 17 simulators, Node 26.4.0, cargo 1.98.1, CocoaPods 1.16.2, Expo 57.0.22, React Native 0.86.3 and React 19.2.3.
 
 ```sh
 bash integration/e2e/todo-run.sh                      # 15 scenarios, all passed

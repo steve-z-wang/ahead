@@ -231,7 +231,7 @@ Classify Entry/Edit references: retain generic API examples that need their rich
 - [x] Move the old files into the integration fixture. Adjust backend/client package imports to the new depth, regenerate fixture clients with correct runtime imports, and update JS/Dart test fixture paths. Update fixture-local npm lockfile metadata only if needed. Keep all original behavioral assertions.
 - [x] Update `scripts/test.sh`, both E2E runners, root typecheck inclusion and snippet checking. Let focused Entry snippets compile against the relocated fixture and To-do quickstart snippets against the new generated client. Remove the old public directory only once those consumers resolve.
 - [x] Update getting-started/schema/backend/frontend guides, platform matrix and API index with actual supported mobile APIs and setup. Link the mobile example from `marketing/videos/README.md`; leave video production issues separate. Add no browser capability claim.
-- [ ] Run the affected host gates, then the complete host gate once:
+- [x] Run the affected host gates, then the complete host gate once:
 
 ```sh
 bash integration/e2e/run.sh
@@ -245,7 +245,7 @@ Run the strict website build using `website/README.md`. Expected: existing and n
 ## Final review and handoff report
 
 - [ ] Map spec criteria A1–A9 to actual tests and artifacts. A1/A3/A4/A5 need real iOS execution; Node tests alone cannot satisfy them.
-- [ ] Inspect the final diff for dropped regression assertions, generated files edited by hand, task controls outside scope, credentials, temporary database files, and build outputs.
+- [x] Inspect the final diff for dropped regression assertions, generated files edited by hand, task controls outside scope, credentials, temporary database files, and build outputs.
 - [ ] Update #31 with concrete validation results and remaining limitations. Keep #31 and #59 as blockers for #72; do not close browser issues because the mobile demo works.
 - [ ] Report what changed, executed commands, UI/runtime evidence, unsupported targets, and remaining work. If simulator/toolchain access is missing, finish independent host work and report the mobile acceptance gap explicitly; do not mark the mobile demo complete.
 
