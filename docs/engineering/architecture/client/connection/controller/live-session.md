@@ -75,6 +75,119 @@ Rust owns: the snapshot of channels and generation; the epoch that invalidates e
 
 **Validation plan.** Shared transition tests in `crates/client/tests` and `crates/server/tests` (step 1 and 4); the existing SDK integration tests for cancellation, overlap, reconnect and after-commit delivery must pass unchanged after steps 2–4, since they assert observable behavior rather than implementation; `bash integration/e2e/run.sh` after each SDK step.
 
+### Vocabulary for the move (proposal, pending confirmation) ([#58](https://github.com/zanminwang/ahead/issues/58))
+
+Every item below is a **proposal, pending confirmation**. It fills in detail the decision above leaves open and changes none of it: the connection model, the ownership split and the migration steps stand as decided. Each item states the behavior it preserves and cites the code it was derived from. Where the two SDKs behave differently, both are recorded and the difference is marked; nothing is picked silently.
+
+#### 1. Session states and transitions
+
+`LiveSession` holds one of `Idle`, `Opening`, `Subscribing`, `CatchingUp { channel }`, `Streaming`, `Closing`. Actions come one at a time from `next()`, so a step that both applies a page and issues a request answers `apply` first and the follow-up on the next call.
+
+| State | Event | Next state | Action |
+| --- | --- | --- | --- |
+| `Idle` | `start`, snapshot has no channels | `Idle` | `idle` — the cycle ends successfully and the lane waits for a subscribe |
+| `Idle` | `start`, snapshot has channels | `Opening` | `open { subscribe }` |
+| `Opening` | `opened` | `Subscribing` | `idle` — the frame from `open` is already sent |
+| `Subscribing` | `acknowledged { scopes, rejections }` equal to the snapshot | `CatchingUp { first }` | `request { channel, body }` |
+| `Subscribing` | `acknowledged` differing from the snapshot | `Closing` | `close { reason: protocol }` |
+| `CatchingUp { c }` | `catchUp { channel: c, body }`, page continues or recovers | `CatchingUp { c }` | `apply`, then `request` for `c` |
+| `CatchingUp { c }` | `catchUp { channel: c, body }`, page ends | `CatchingUp { next }` or `Streaming` | `apply`, then `request` or `idle` |
+| `CatchingUp { c }` | `catchUp` naming another channel | `Closing` | `close { reason: protocol }` |
+| `Streaming` | `page { body }`, disposition `covered` or `applied` | `Streaming` | `apply` |
+| `Streaming` | `page { body }`, disposition `recover` | `CatchingUp { channel }` | `apply`, then `request` |
+| `CatchingUp`, `Streaming` | `overflow` | `CatchingUp { first }` | `request` for every channel in turn |
+| any | `subscriptionsChanged` | `Closing` | `close { reason: subscriptions }` |
+| any | `pause`, `stop` | `Closing` | `close { reason: paused }`, `close { reason: stopped }` |
+| `Opening`…`Closing` | `closed { failure }` | `Idle` | `retry { millis }` for a failure, `idle` otherwise |
+| `Idle` | `resume`, `opened`, `page`, `catchUp`, `overflow`, `acknowledged` | `Idle` | `idle` — a leftover from an older session is dropped by the epoch |
+
+Two rules the table depends on:
+
+- **A streamed page is not delivered while a `request` is outstanding.** The host's buffer already guarantees this (`drain` runs one thing at a time in [client-js/live.mts](../../../../../../packages/client-js/live.mts) and [dart/live.dart](../../../../../../packages/dart/lib/src/live.dart)), which is why `page` appears only in `Streaming` above. *Open for confirmation:* whether a `page` during `CatchingUp` is a host contract violation (`close { reason: protocol }`) or is simply applied through the same path, where the cursor gate makes it harmless.
+- **`recover` re-runs the catch-up for the channel that gapped**, as decided above; `overflow` re-runs it for every channel, because the host buffer it cleared is shared. *Difference from today:* both SDKs re-run the catch-up for **all** channels in both cases (`catchUp()` iterates the whole snapshot in [client-js/index.mts](../../../../../../packages/client-js/index.mts) and [dart/client.dart](../../../../../../packages/dart/lib/src/client.dart)). A channel that is already current answers one page that is neither full nor a gap, so the only observable difference is the number of requests, not the resulting state.
+
+#### 2. The `apply` payload
+
+`apply { disposition, continues }` — exactly today's `DownlinkProgress` from `receive_downlink` in [client/transport.rs](../../../../../../crates/client/src/transport.rs). `disposition` is `covered`, `applied` or `recover`; `continues` is true when the page carried the full 50 changes.
+
+- **No settlement flag.** Whether a settlement happened is not observable in Rust today: `apply_current_page` calls `Engine::settle`, which returns nothing, and both SDKs emit the work event on `disposition === "applied"` alone. Reporting a real settlement would narrow the wake and therefore change behavior; it needs `settle` to report whether a push settled, which is a separate change. Until then `applied` is the wake condition, and the decision's phrase "whether a settlement happened" reads as "a page was applied, so a settlement may have happened".
+- **`continues` stays** even though Rust now owns the catch-up loop, so the action and `DownlinkProgress` remain one type and the host can still log progress.
+- **Record changes stay on the envelope.** Every binding reply already carries `changed`, `changedTables` and `generation` ([bindings/common/src/lib.rs](../../../../../../bindings/common/src/lib.rs)); that is what raises the change event, not the `apply` payload.
+
+#### 3. Cancelling an in-flight request
+
+`close { reason }` closes the socket **and** abandons any in-flight `request`. There is no separate `cancel` action.
+
+This matches both SDKs, where one cancellation token covers the socket and the HTTP catch-up: TypeScript aborts a single `AbortController` that is passed to both `live.push("pull", …)` and `live.stream(…)`; Dart completes a single `Completer` that both `ServerSession.pull` and `ServerSession.stream` wait on. Reasons are `subscriptions`, `paused`, `stopped` and `protocol`; the response to a request abandoned this way never arrives, and if it does the epoch drops it.
+
+#### 4. Binding surface
+
+One `live` command family shaped like the existing `connection` op in [bindings/common/src/lib.rs](../../../../../../bindings/common/src/lib.rs): a single op with a nested `event`, not one op per event.
+
+```json
+{ "op": "live", "handle": 1, "event": "page", "body": { }, "now": 1739491200000, "entropy": 42 }
+```
+
+| `event` | Extra request fields | Reply `value` |
+| --- | --- | --- |
+| `start` | — | the next action |
+| `opened` | — | the next action |
+| `acknowledged` | `scopes`, `rejections` | the next action |
+| `page` | `body` (the page JSON) | the next action |
+| `catchUp` | `channel`, `body` (the page JSON) | the next action |
+| `overflow`, `subscriptionsChanged`, `pause`, `resume`, `stop` | — | the next action |
+| `closed` | `failure` (see 5) | the next action |
+| `next` | — | the next action |
+
+`now` and `entropy` accompany every event, as they do for `connection`, because `retry { millis }` is produced by the live lane's existing `ConnectionDriver`: the session reports the cycle outcome to it and returns the delay it computes, so backoff keeps one implementation. The op belongs in the arm that refuses to run while a client transaction is open, next to `connection`, `startSync` and `next`.
+
+**`LiveSession` lives in `Entry`**, beside `cycle`, `connection` and `live_connection`. It has to: the epoch, the channel snapshot and the subscription generation exist to invalidate work from an *earlier* session, which is only meaningful if the state outlives the session that created it. A session recreated per cycle would have to be handed its predecessor's epoch by the host, putting back the duplicated state this change removes.
+
+#### 5. Failure taxonomy
+
+`closed { failure }` carries `none`, `auth`, `protocol` or `transport` instead of a bool. `none` ends the cycle successfully (no backoff); the other three end it as a failure, so the lane retries with backoff, and only `auth` asks the host for an authentication refresh.
+
+| Kind | Meaning | TypeScript today | Dart today |
+| --- | --- | --- | --- |
+| `none` | The host closed the session on the session's own `close` action | `finish()` with no error resolves `stream` | `finish()` with no error completes `done` |
+| `auth` | 401 on the upgrade, the catch-up or a push | `error.status === 401`, from `httpTransport` or the `unexpected-response` handler | `AuthenticationExpired`, from the status check or `WebSocketException.httpStatusCode` |
+| `protocol` | An acknowledgement that does not match, a frame that is not a page, or a page Rust refuses | `Error("invalid live subscription acknowledgement")`, `Error("invalid live page")`, errors thrown by `downlinkPage` | `FormatException` with the same two messages, plus errors thrown by `downlinkPage` |
+| `transport` | Socket close or error, non-401 HTTP failure | `Error("live disconnected: …")`, `Error("live failed: <status>")`, `Error("pull failed: <status> …")` | `StateError('live disconnected: …')`, `HttpException` |
+
+Two differences between the SDKs, neither resolved here:
+
+- **An oversized frame.** TypeScript sets `maxPayload: 8 * 1024 * 1024` on the socket, so the library closes the connection and the host sees `transport`; Dart checks the decoded text length itself and throws `FormatException('live page too large')`, which reads as `protocol`. *Needs a choice:* classify an oversized frame as `transport` (the TypeScript path, and arguably right, since the peer may simply be too far ahead) or as `protocol` (the Dart path).
+- **Which signal carries 401.** TypeScript reads a numeric `status` off the error; Dart uses a dedicated `AuthenticationExpired` type. Both already reach `refreshAuth` through [scheduling](scheduling.md); the taxonomy only asks each host to map its own signal onto `auth`.
+
+Today every kind except `none` behaves identically (report through `onError`, retry with backoff, refresh once on 401), so adopting the taxonomy preserves behavior; it exists so that transition tests can assert *why* a session ended.
+
+#### 6. Page-buffer parameter
+
+`pageBuffer { pages, bytes }` — a host parameter, not part of the Rust state. `pages` counts buffered pages, `bytes` bounds their total encoded size; `0` means unbounded.
+
+| | TypeScript today | Dart today |
+| --- | --- | --- |
+| `pages` | 64 | 128 |
+| `bytes` | unbounded in aggregate; 8 MiB per frame through the socket's `maxPayload` | 8 MiB in aggregate, counted with the encoded page length, and 8 MiB per frame |
+| On overflow | clear the buffer, keep the arriving page, request recovery | clear the buffer, drop the arriving page, request recovery |
+
+**Rust does not need the bound.** Overflow reaches the session as an event and is treated as a gap, so the session never reasons about buffer capacity. Keeping the bound in the host is also what lets a platform with different memory pick a different number without a Rust change.
+
+*Needs a choice:* one default for both SDKs, or each keeps its current numbers. The retained-versus-dropped page on overflow is a third difference; it is not observable in the end state, because the catch-up that follows makes the retained page `covered`.
+
+#### 7. Server inputs and the server binding
+
+The `closed`, `stop` and error inputs to `Subscriptions`, the register-before-acknowledge ordering rule, who enforces "send only when the cursor advanced", and the conflict between a stateful `Subscriptions` and today's stateless native entry points are written in [Server / Connection / Controller](../../../server/connection/controller.md), section 9.
+
+#### 8. Ordering between `apply` and host events
+
+Both SDKs serialize every Rust call for one client through an exclusive queue (`#exclusive` in [client-js/index.mts](../../../../../../packages/client-js/index.mts), `_exclusive` in [dart/client.dart](../../../../../../packages/dart/lib/src/client.dart)). The contract that keeps after-commit delivery and the work wake deterministic:
+
+1. **One command at a time.** A host runs no other command for the same client between an event and the action it answers with. The session's actions are therefore ordered with respect to every read, write and push command.
+2. **Events come after the command returns, before the next one.** Rust has already applied and committed the page when `apply` is returned, so an observer woken by the change event reads the applied state. The host emits the change event (from the envelope's `changed`) and then the work event (when `disposition` is `applied`), both still inside the queued slot that produced them.
+3. **A work event may not re-enter.** Waking the push lane has to queue behind the current slot rather than call into Rust from inside it. TypeScript satisfies this because the listener calls `wake()`, which appends to the queue; Dart because `_work` is a broadcast stream delivered on a later microtask. *Difference, harmless:* TypeScript delivers the change and work events synchronously inside the emitting slot, Dart delivers `_changes` and `_work` asynchronously and `_channels` synchronously.
+4. **Invalidation is not queued.** `subscribe` and `unsubscribe` abandon the socket and the in-flight request *before* their channel write enters the queue, which is what the test `subscription invalidation cancels pending authentication before the exclusive queue drains` asserts. The `subscriptionsChanged` event that follows reaches Rust only when the queue frees; the epoch is what makes the interval safe, since every page and response from the older session is dropped on arrival.
+
 ## 10. Quality Requirements
 
 - **Listeners are established before the HTTP catch-up, and ordinary streamed pages do not trigger HTTP requests.** Evidence: [live.test.mjs](../../../../../../integration/bindings/client-js/live.test.mjs) `unified connection acknowledges listeners then catches up through HTTP before live delivery`; [live_test.dart](../../../../../../packages/dart/test/live_test.dart) `HTTP catch-up pages after ack, queues overlap, and rejects obsolete HTTP completion`.
@@ -87,3 +200,5 @@ Tests read, not executed.
 ## 11. Risks and Technical Debt
 
 **Accepted limitation (current structure).** The session logic exists twice, once per SDK, with small differences in buffering ([Transport](../transport.md)). Rust owns only scheduling and the cursor policy; the overview records this as a gap between current code and the target where the controller is Rust. Section 9 records the decided design and migration ([#58](https://github.com/zanminwang/ahead/issues/58)).
+
+**Issue overlap.** [#93](https://github.com/zanminwang/ahead/issues/93) restates this same work — lifecycle state machine, push scheduling, reconnect and retry, catch-up and gap recovery, subscription lifecycle — at a higher altitude, and has no design of its own; #58 owns this document, the merged design in section 9 and the acceptance criteria. The one item #93 adds is authentication-refresh coordination, and section 9 decides it: refresh stays a host concern because it needs the platform's credential store. What could still be shared later is the single-flight coordination that already exists in both SDKs (one refresh for two concurrent 401s), never the credential access itself. Track the work under #58.
