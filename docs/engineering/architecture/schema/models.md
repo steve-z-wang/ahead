@@ -19,7 +19,7 @@ A model declares the records an application stores: the stored fields, the ident
 - **Record key.** The identity object with exactly the identity fields, normalized; its canonical encoding is the record's key in every table and message ([Protocol / Common](../protocol/common.md)).
 - **State and patch shapes.** Received states must carry every non-identity field or a nullable default; patches may name only known non-identity fields; identity is immutable ([Protocol / Common](../protocol/common.md)).
 
-Code: parsing in [compiler/lib.rs](../../../../crates/compiler/src/lib.rs); descriptor rules and record keys in [core/schema.rs](../../../../crates/core/src/schema.rs); tables and indexes in [client/ddl.rs](../../../../crates/client/src/ddl.rs).
+Code: parsing in [compiler/parse.rs](../../../../crates/compiler/src/parse.rs); name, identity and unique checks in [compiler/validate.rs](../../../../crates/compiler/src/validate.rs); descriptor rules and record keys in [core/schema.rs](../../../../crates/core/src/schema.rs); tables and indexes in [client/ddl.rs](../../../../crates/client/src/ddl.rs).
 
 ## 10. Quality Requirements
 
@@ -30,5 +30,5 @@ Code: parsing in [compiler/lib.rs](../../../../crates/compiler/src/lib.rs); desc
 
 ## 11. Risks and Technical Debt
 
-- **Problem: no field default in the grammar.** `FieldDescriptor.default` exists and reconciliation uses it, but the compiler cannot emit it. Consequence: every `create` must spell out every non-nullable field, and adding a non-nullable field to a model with local data cannot open ([Reconciliation](../client/storage/reconciliation.md)). Evidence: no default attribute in [compiler/lib.rs](../../../../crates/compiler/src/lib.rs). Tracked in [#27](https://github.com/zanminwang/ahead/issues/27).
+- **Problem: no field default in the grammar.** `FieldDescriptor.default` exists and reconciliation uses it, but the compiler cannot emit it. Consequence: every `create` must spell out every non-nullable field, and adding a non-nullable field to a model with local data cannot open ([Reconciliation](../client/storage/reconciliation.md)). Evidence: no default attribute in [compiler/parse.rs](../../../../crates/compiler/src/parse.rs). Tracked in [#27](https://github.com/zanminwang/ahead/issues/27).
 - **Accepted limitation:** unique constraints and identities are enforced on the client only; the application's database schema is authoritative on the server.

@@ -29,7 +29,7 @@ Rules:
 - A list element must be a scalar; a list of enums or of lists is refused. A list cannot be nullable.
 - `null` is accepted only for a nullable field.
 
-Code: source names and list/nullable parsing in [compiler/lib.rs](../../../../crates/compiler/src/lib.rs); descriptor validation and value normalization in [core/schema.rs](../../../../crates/core/src/schema.rs); language mapping in [compiler/emit.rs](../../../../crates/compiler/src/emit.rs); column types in [client/ddl.rs](../../../../crates/client/src/ddl.rs).
+Code: source names and list/nullable parsing in [compiler/parse.rs](../../../../crates/compiler/src/parse.rs); type resolution in [compiler/validate.rs](../../../../crates/compiler/src/validate.rs); descriptor validation and value normalization in [core/schema.rs](../../../../crates/core/src/schema.rs); language mapping in [compiler/emit.rs](../../../../crates/compiler/src/emit.rs); column types in [client/ddl.rs](../../../../crates/client/src/ddl.rs).
 
 ## 8. Crosscutting Concepts
 

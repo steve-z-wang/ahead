@@ -23,7 +23,7 @@ Behavior the runtimes give a relation:
 - **Dependencies.** A queued create of a record another operation references becomes a lifecycle dependency ([Dependencies](../client/engine/push/dependencies.md)).
 - **Navigation.** `related` follows a reference (null when a reference field is null); `referencing` filters the referencing model by the reference fields ([Queries](../client/engine/local-operations/queries.md)).
 
-Code: resolution in [compiler/lib.rs](../../../../crates/compiler/src/lib.rs); descriptor checks in [core/schema.rs](../../../../crates/core/src/schema.rs); cascade in [client/mutate.rs](../../../../crates/client/src/mutate.rs) (`descendants`).
+Code: resolution in [compiler/validate.rs](../../../../crates/compiler/src/validate.rs); descriptor checks in [core/schema.rs](../../../../crates/core/src/schema.rs); cascade in [client/mutate.rs](../../../../crates/client/src/mutate.rs) (`descendants`).
 
 ## 10. Quality Requirements
 
@@ -32,4 +32,4 @@ Code: resolution in [compiler/lib.rs](../../../../crates/compiler/src/lib.rs); d
 
 ## 11. Risks and Technical Debt
 
-- **Accepted limitation:** `onTargetDelete` is a client-side rule. The server runtime has no relation handling; a handler must delete children itself, and the client's cascaded deletes never reach it. Evidence: [server/lib.rs](../../../../crates/server/src/lib.rs) never reads `relations`. **To confirm:** whether the schema reference should tell authors this explicitly.
+- **Accepted limitation:** `onTargetDelete` is a client-side rule. The server runtime has no relation handling; a handler must delete children itself, and the client's cascaded deletes never reach it. Evidence: [server/lib.rs](../../../../crates/server/src/lib.rs) never reads `relations`. Stated for authors in the [schema reference](../../../../website/docs/schema/reference.md#relations) and [What your backend owns](../../../../website/docs/backend/api.md#what-your-backend-owns).
