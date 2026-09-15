@@ -14,5 +14,6 @@ node integration/generated-api/test.ts
 node integration/generated-api/native.mts
 dart pub get --directory integration/generated-api
 dart analyze integration/generated-api
+bash integration/generated-api/negative/check.sh
 cd integration/generated-api
 dart test generated_test.dart

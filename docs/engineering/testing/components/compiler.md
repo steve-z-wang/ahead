@@ -10,7 +10,7 @@ cargo test -p ahead-compiler --locked
 
 Add a small schema fixture with an assertion on the resulting descriptor, generated output or diagnostic. When the claim is that generated code typechecks or runs, use [SDK integration tests](../integration/bindings.md) as well.
 
-Next review: generated-language negative cases (Dart) remain open.
+Generated-language negative cases exist for TypeScript and Dart; see [SDK integration](../integration/bindings.md).
 
 Verified 2026-09-14: `cargo test -p ahead-compiler --locked` passed (5 CLI, 12 compiler, 2 history tests) after the diagnostics and reserved-name changes.
 
@@ -29,4 +29,4 @@ Reviewed 2026-09-14 against [Parse](../../architecture/compiler/parse.md), [Vali
 | History and fence ([Mutations](../../architecture/schema/mutations.md)) | [history.rs](../../../../crates/compiler/tests/history.rs); `cli_retains_history_and_does_not_overwrite_on_break`; `cli_refuses_misuse_of_the_mutation_history` | covered | The refusal test asserts a missing explicit history, initialization above version 1, initialization over an existing history, and that a refused compile writes no output. |
 | Same input produces identical output | `cli_output_is_deterministic` | covered | Compiles the relations fixture twice and compares every output file byte for byte. |
 | Emitters produce the documented surfaces; older versions get suffixed handler keys | `emitters_include_typed_conversion`, `backend_emitter_declares_handlers_loaders_and_references`, `backend_emitter_suffixes_older_mutation_versions`, `generated_clients_expose_one_server_connection`, `cli_writes_backend_ts_with_the_requested_runtime_import` | covered | Content checks are substring assertions; the executable checks are in [SDK integration](../integration/bindings.md). |
-| Generated code rejects misuse at compile time | [test.ts](../../../../integration/generated-api/test.ts) `@ts-expect-error` block; [verify.sh](../../../../integration/generated-api/verify.sh) fails if `backend-missing.ts` typechecks | covered (TypeScript) | No Dart negative fixture; `dart analyze` runs only on valid code. |
+| Generated code rejects misuse at compile time | [test.ts](../../../../integration/generated-api/test.ts) `@ts-expect-error` block; [verify.sh](../../../../integration/generated-api/verify.sh) fails if `backend-missing.ts` typechecks; Dart [negative/misuse.dart](../../../../integration/generated-api/negative/misuse.dart) through `negative/check.sh` | covered (TypeScript and Dart) | none |
