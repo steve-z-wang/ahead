@@ -11,3 +11,18 @@ cargo test -p ahead-sim --test resilience --locked
 A generated failure reports its seed, step, error and traces. Keep the commit, client count, run settings and trace when reporting it. [Replay and shrinking](../../../../crates/sim/src/shrink.rs) replay an action list and remove actions while preserving the failure identity.
 
 Preserve a minimal failing trace as a named regression before fixing its cause. Next review: inspect crash-boundary coverage and ensure minimized traces still expose the original defect.
+
+## Coverage review
+
+Reviewed 2026-09-14; not executed.
+
+| Fault | How the harness injects it | What is covered | Limits |
+| --- | --- | --- | --- |
+| Drop, duplicate, delay, reorder | queue operations on one network queue ([net.rs](../../../../crates/sim/src/net.rs)) | R2 through the random runner; P1 through `Drop` of a receipt | Faults act on whole messages; there is no partial delivery or corruption. |
+| Client crash and restart | `Crash` drops the client handle, `Restart` reopens the same SQLite file | R3 at every step boundary of a round trip (`r3_crash_after_every_step_loses_nothing`); L2 and P4 across restart | A step is not a commit. Every client transaction is one SQLite commit, so a crash between two commits inside one action (for example between two changes of a page) is not reachable. An operating-system kill during a commit is out of scope; SQLite's own durability is assumed. |
+| Server failure | `FailNext` makes the next handler throw; the host rolls its tables back | P6, A4 abort path | No server crash mid-batch, no persistence failure, no partial commit. The host's savepoints are snapshots; real savepoint semantics are PostgreSQL-only. |
+| Rejection | `RejectNext` makes the next handler reject | P5 | none |
+| Subscription change | `Subscribe`, `Unsubscribe` | D6; the ignored [#32](https://github.com/zanminwang/ahead/issues/32) repro | The in-flight-page-after-resubscribe case fails today and is ignored. |
+| Membership move | `MoveMembership` with parent-and-child follow-through | D4 in random runs | Named coverage for the child clause is missing. |
+
+Shrinking replays candidate traces and keeps a removal only if the failure key (the invariant name or error text) is unchanged, so a minimized trace exposes the same failure, not merely some failure. A trace that references a crashed client after a removal is rejected rather than accepted. No test asserts that a shrunk trace still reproduces the original; that property follows from the key check, which was read, not exercised.

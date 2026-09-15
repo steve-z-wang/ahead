@@ -1,40 +1,48 @@
 # Coverage review
 
-This is the starting point for the next testing issue. The documentation PR defines responsibilities and expected behavior; test changes follow separately. The observations below come from reading this branch's code and assertions, not a fresh test-suite run. Recheck them against the implementation revision used for that issue.
+This page summarizes the coverage review of 2026-09-14 and lists the priorities for the next testing issue. The detailed tables (behavior, existing tests, coverage, gap) live in each testing topic:
 
-## Review process
+- [Schema](components/schema.md), [Protocol](components/protocol.md), [Compiler](components/compiler.md), [Client](components/client.md), [Server](components/server.md)
+- [Simulation scenarios](simulation/scenarios.md), [invariants](simulation/invariants.md), [failure and recovery](simulation/recovery.md)
+- [Storage and persistence](integration/persistence.md), [SDKs and bindings](integration/bindings.md), [Connection](integration/connection.md)
+- [End-to-end](end-to-end.md)
 
-For each component, read its contract and risks, then inspect test assertions. Record the behavior, owning document, test location, coverage gap and required scope. Distinguish a missing test from an implementation defect or an undecided contract. A test name, a fixture or a passing suite alone is not evidence for every clause.
+## How the review was done
 
-For each overall [guarantee](../guarantees.md), identify a named scenario and any generated invariant or real-boundary check it needs. Record commands and actual results when executing them. Keep detailed findings with the owning component; this page is the cross-cutting follow-up list.
+For each component the reviewer read its architecture document (sections 10 and 11), listed the behaviors and failure conditions, then read the setup, execution path and assertions of every test named as evidence. Coverage was judged on assertions, not names. Every observation comes from reading the code at commit `d682dd2`; no test suite was executed for this review. The one experiment cited (settlement without authority) was executed earlier on another branch and its reproduction steps are kept in [Settlement](../architecture/client/engine/settlement.md).
 
-## Existing evidence and follow-up
+Three things were kept apart throughout: a **missing test** (the behavior is decided and implemented, nobody asserts it), an **implementation defect** (a test would fail today), and an **undecided contract** (writing a test now would pin an accident). Ignored tests were not counted as coverage.
 
-| Area | Existing evidence | Follow-up |
-| --- | --- | --- |
-| Local writes (L) | [local scenarios](../../../crates/sim/tests/local.rs), [SQLite client tests](../../../crates/sqlite/tests/client.rs) | Check direct writes on pending creates and cascaded rejection. The current generated direct-write suite is ignored; do not report it as covered. |
-| Push (P) | [push scenarios](../../../crates/sim/tests/push.rs), [SQLite push tests](../../../crates/sqlite/tests/push.rs) | Split assertions for lifecycle, sequence and independent work. Two P3 test names claim cases their bodies omit. Verify frozen bytes through supported schema changes with a populated queue. |
-| Settlement (A) | [authority scenarios](../../../crates/sim/tests/authority.rs), [SQLite downlink tests](../../../crates/sqlite/tests/downlink.rs) | Assert overlapping pages, gaps and subscription generations. Decide state after settlement with no subscribed checkpoint; test visible records, not only pending count. Check A5 for receipt paths with no awaitable checkpoints as well as the normal prefix loop. |
-| Distribution (D) | [distribution scenarios](../../../crates/sim/tests/distribution.rs), [stamp scenarios](../../../crates/sqlite/tests/stamp_scenarios.rs) | Add parent/child channel moves; distinguish content stamps, claim removal and subscription epochs. |
-| Network faults (R1–R2) | [generated runs](../../../crates/sim/tests/invariants.rs), [invariant checks](../../../crates/sim/src/invariants.rs) | Map the seven implemented invariants to requirements. Finite seeded runs do not establish all guarantees; retain convergence preconditions and direct-write exclusions. |
-| Recovery (L2, R3–R4) | [resilience scenarios](../../../crates/sim/tests/resilience.rs), SQLite reopen and stale-writer tests | Current simulation restarts between actions. Add or explicitly defer process-failure injection at durable boundaries, including within an action. |
+## What is well covered
 
-## Component contracts
+The Rust sync core has named scenarios for every guarantee in L, P, A and D, most of them twice: once in the simulation across client and server, once in the SQLite harness with finer assertions. The random runner checks seven invariants after every step and forces convergence every 25 steps. Protocol encoding, argument decoding, checkpoint resolution and PostgreSQL atomicity each have direct assertions. Both language clients have parallel live-session tests for handshake, catch-up, overlap, gap recovery, subscription generations, cancellation and auth refresh.
 
-The former compatibility (C), developer-surface (S) and limitation (N) entries belong to these owners, rather than the overall guarantees list.
+## Priorities for the next testing issue
 
-| Owner | Contract and remaining evidence |
-| --- | --- |
-| [Schema](components/schema.md) / [Protocol](components/protocol.md) | Field completeness, unknown-field policies, counter limits and canonical wire values. Core hash tests do not establish server enforcement. |
-| [Compiler](components/compiler.md) | Deterministic output and useful diagnostics. Repeated compilation is not asserted; semantic validation currently reports EOF rather than the offending declaration. |
-| [SDKs and bindings](integration/bindings.md) | Generated positive and negative type checks, value translation, transaction callback failures and lifetimes. Dart lacks negative compilation fixtures. [Shared scenarios](../../../fixtures/scenarios) are three prose READMEs, not executable cross-language scripts. |
-| [Storage](integration/persistence.md) | Supported schema reconciliation, transaction isolation and durability. Current reconciliation retains extra columns, checks SQL storage types and identities, and leaves enum changes unchecked. It does not uniformly reject every unsupported schema change. Queue preservation and changed unique indexes need explicit cases. |
-| [Server](components/server.md) | Unsupported handler versions must abort before handlers; the current PostgreSQL test does not assert the error code. Same-sequence retries currently return the cached receipt even if the body differs; hash enforcement remains a contract decision in [Server Push](../architecture/server/engine/push.md). |
-| [Connection](integration/connection.md) | HTTP catch-up follows WebSocket acknowledgement; live delivery uses WebSocket. No HTTP polling fallback is planned. Test blocked upgrades and reconnect without treating HTTP write success as proof of downlink progress. |
-| [End-to-end](end-to-end.md) | Exercise assembled TypeScript and Dart paths. Separate language round trips do not establish identical outcomes for the same operation sequence. |
+Decisions come first, because several gaps cannot be tested without them:
 
-Storage retention belongs to storage/persistence risks; authorization belongs to the backend interface. Direct-write overwrite behavior belongs to L4, batch atomicity to P6, and delivery preconditions to R1. They do not need a separate miscellaneous guarantees group.
+1. **Undecided contracts to resolve before encoding expectations.** Settlement without authority (A3 exception) and the immediate settlement path versus A5 ([Settlement §11](../architecture/client/engine/settlement.md)); receipt-hash enforcement (C1, [Server Push §11](../architecture/server/engine/push.md)); the `backend.notify(tx, …)` shortcut that never wakes subscribers ([Notify §11](../architecture/server/engine/notify.md)); visibility of skipped changes on the SDK path ([Pull §11](../architecture/client/engine/pull.md)); greedy decoding of adjacent slots ([Mutations §11](../architecture/schema/mutations.md)). For each, a scenario that constructs the situation and records the current outcome is useful now; the assertion is written after the decision.
+2. **Defects with reproductions waiting to become regressions.** [#33](https://github.com/zanminwang/ahead/issues/33) (direct write on a pending create; the random direct-write run stays ignored until fixed) and [#32](https://github.com/zanminwang/ahead/issues/32) (page from a previous subscription; the sim repro is ignored). Semantic compiler errors reporting end-of-file ([Validate §11](../architecture/compiler/validate.md)) and `Model.update<>` compiling but never succeeding have no reproduction yet.
+3. **Missing tests for decided behavior, in rough order of risk.**
+   - Reconciliation with a populated queue: frozen bytes unchanged after an additive change (P4, C3).
+   - The no-polling consequence: push succeeds while the upgrade is refused, pending does not settle, the lane retries ([Connection](integration/connection.md)).
+   - Batching bounds: the 20-mutation cap and the zero byte budget; `drop_mutation` refusing a frozen mutation.
+   - HTTP status mapping: `403`, `409` (gap, overlap, unsupported version with its fields), `404`, `405`, `413`; upgrade refusals and `1011` on drain error.
+   - Core value rules with no assertion: `dateTime` and `float` normalization, enum value validation, list element and nullability rules, push-batch size boundaries.
+   - Compiler: determinism (compile twice), multi-file error relocation, `--initialize-mutation-history` refusals, Dart negative fixtures.
+   - Dart parity: `runPrerequisites`, buffer overflow at the Dart bound.
+   - Named D4 scenario with a child record following its parent across channels.
+   - Serialization-failure retry in the Prisma runner.
+4. **Test hygiene.** Rename the two P3 tests whose names promise clauses their bodies lack; consider splitting the single Dart client test that bundles seven clauses. Do not move tests between directories for tidiness: the SQLite-harness tests are component evidence where they are, and the query-file controller test is fine where it is.
+5. **Optional invariants.** A3 and A5 have no random-run predicate; both are expressible from queue and checkpoint tables and would extend R2's reach.
 
-## Completion of the follow-up
+## Classification notes
 
-The next issue should produce an assertion-level coverage map, focused regression tests or explicit deferred gaps, and verified commands for each affected area. Resolve behavior questions before encoding an expectation. Update component evidence and this review as cases are completed; do not rewrite assertions merely to match an accidental implementation behavior.
+- Simulation is a method, not a layer: its scenarios are counted as evidence for the guarantee they assert, and the same clause often has a SQLite-harness twin with finer assertions. That duplication is deliberate and cheap; it is not flagged as redundancy.
+- The PostgreSQL suite carries server *component* rules (checkpoint resolution, rejection versus failure, wake sets) because that logic lives in the TypeScript runtime and has no in-process fixture. The tables in [Server tests](components/server.md) list those rows with that caveat rather than moving them.
+- The Node transaction-bridge tests exercise the original spike probe, not `createBackend`. They remain useful boundary evidence for async callbacks inside a Prisma transaction but should not be cited for production server behavior.
+- A close-and-reopen is not a process interruption. R3 evidence establishes recovery at step and commit boundaries the harness can reach; a crash between commits inside one action is unreachable by construction, and a kill during a commit relies on SQLite.
+
+## Suggested scope for the testing issue
+
+One issue with three checklists, in this order: decisions (item 1, each linking the owning architecture section), regressions and missing tests (items 2 and 3, each naming the file it belongs in and the command that runs it), and hygiene (item 4). Record every command run and its result in the topic page; update the tables there as rows close, and keep this page as the summary.
