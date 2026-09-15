@@ -56,7 +56,7 @@ Loader registration is still by model name only and has no version dispatch; it 
 - **Slot arguments can be passed to `notify` directly.** Evidence: `slot arguments are tagged so notify accepts them directly`.
 - **Generated handlers group the retained versions of a mutation.** Evidence: [compiler/tests/compiler.rs](../../../../../crates/compiler/tests/compiler.rs) `backend_emitter_groups_handler_versions_under_the_mutation_name`, `backend_emitter_accepts_a_bare_function_only_for_a_v1_only_mutation`.
 
-Executed 2026-09-15: `bash integration/persistence/server/run.sh` (41 passed) and `cargo test -p ahead-compiler --locked` (23 passed).
+Executed 2026-09-15: `bash integration/persistence/server/run.sh` (41 passed) and `cargo test -p ahead-compiler --locked` (25 passed).
 
 ## 11. Risks and Technical Debt
 

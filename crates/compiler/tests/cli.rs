@@ -42,6 +42,109 @@ fn cli_retains_history_and_does_not_overwrite_on_break() {
             .len(),
         2
     );
+    let history: serde_json::Value =
+        serde_json::from_slice(&fs::read(input.join("history").join("mutations.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        history["mutations"]["Save"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>(),
+        ["1", "2"]
+    );
+    assert!(
+        !out.join("mutation-history.json").exists(),
+        "history is kept beside the schema, not with generated output"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cli_reads_the_superseded_history_location_and_writes_the_new_default() {
+    let (root, input) = workspace("relocation");
+    let out = root.join("out");
+    let model = input.join("test.model");
+    fs::write(
+        &model,
+        "model A { id UUID title String @@id(id) } mutation Save { a A.create }",
+    )
+    .unwrap();
+    assert!(
+        ahead(&[input.as_os_str(), out.as_os_str()])
+            .status
+            .success()
+    );
+    // Recreate the superseded layout: history in the output directory, nothing beside the schema.
+    let superseded = out.join("mutation-history.json");
+    let default = input.join("history").join("mutations.json");
+    fs::copy(&default, &superseded).unwrap();
+    let retained = fs::read(&superseded).unwrap();
+    fs::remove_dir_all(input.join("history")).unwrap();
+    fs::write(
+        &model,
+        "model A { id UUID title String count Int @@id(id) } mutation Save { a A.create @@version(2) }",
+    )
+    .unwrap();
+    let moved = ahead(&[input.as_os_str(), out.as_os_str()]);
+    assert!(moved.status.success());
+    let notice = String::from_utf8_lossy(&moved.stderr);
+    assert!(
+        notice.contains(&format!("{}", superseded.display())),
+        "{notice}"
+    );
+    assert!(
+        notice.contains(&format!("{}", default.display())),
+        "{notice}"
+    );
+    assert_eq!(notice.lines().count(), 1, "{notice}");
+    let history: serde_json::Value = serde_json::from_slice(&fs::read(&default).unwrap()).unwrap();
+    assert_eq!(
+        history["mutations"]["Save"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>(),
+        ["1", "2"],
+        "the retained version survives the move"
+    );
+    assert_eq!(
+        fs::read(&superseded).unwrap(),
+        retained,
+        "the old file is left in place, unchanged"
+    );
+    // A second run reads the new default and no longer reports a move.
+    let again = ahead(&[input.as_os_str(), out.as_os_str()]);
+    assert!(again.status.success());
+    assert_eq!(String::from_utf8_lossy(&again.stderr), "");
+    let refused = ahead(&[
+        input.as_os_str(),
+        out.as_os_str(),
+        "--initialize-mutation-history".as_ref(),
+    ]);
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("already exists"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cli_initializes_the_history_at_the_new_default_when_neither_location_exists() {
+    let (root, input) = workspace("initial-history");
+    let out = root.join("out");
+    fs::write(
+        input.join("test.model"),
+        "model A { id UUID title String @@id(id) } mutation Save { a A.create }",
+    )
+    .unwrap();
+    let first = ahead(&[input.as_os_str(), out.as_os_str()]);
+    assert!(first.status.success());
+    assert_eq!(String::from_utf8_lossy(&first.stderr), "");
+    let history: serde_json::Value =
+        serde_json::from_slice(&fs::read(input.join("history").join("mutations.json")).unwrap())
+            .unwrap();
+    assert_eq!(history["formatVersion"], 1);
+    assert_eq!(history["mutations"]["Save"]["1"]["version"], 1);
+    assert!(!out.join("mutation-history.json").exists());
     fs::remove_dir_all(root).unwrap();
 }
 #[test]
@@ -157,7 +260,8 @@ fn cli_output_is_deterministic() {
         .map(|e| e.unwrap().file_name())
         .collect();
     names.sort();
-    assert!(names.len() >= 7, "{names:?}");
+    assert!(names.len() >= 6, "{names:?}");
+    assert!(input.join("history").join("mutations.json").exists());
     for name in names {
         assert_eq!(
             fs::read(first.join(&name)).unwrap(),

@@ -86,7 +86,7 @@ Slot bindings and `@@sequence` express operation dependencies. Use the [compiler
 
 ## Evolve the contract
 
-Keep `mutation-history.json` with the generated artifacts. Regenerating retains prior input contracts so each queued mutation retains a defined input contract.
+Keep `history/mutations.json` beside your `.model` files and commit it. Regenerating retains prior input contracts so each queued mutation retains a defined input contract.
 
 A compatible change can keep the same version; breaking slot/input/policy changes require `@@version(n)` with a newer version. Implement every supported handler version exposed by the generated backend interface. Do not delete history to silence a compatibility error.
 

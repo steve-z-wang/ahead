@@ -6,7 +6,7 @@ Validate refuses schemas the runtimes could not execute consistently and schema 
 
 ## 3. Context and Scope
 
-- Input: the `Declarations` tree from [Parse](parse.md), which carries the source position of every model, field, mutation, slot, `@@unique`, `@@sequence` and prerequisite field; when present, the previous `mutation-history.json` and the previous `schema.json` (the fence).
+- Input: the `Declarations` tree from [Parse](parse.md), which carries the source position of every model, field, mutation, slot, `@@unique`, `@@sequence` and prerequisite field; when present, the previous `history/mutations.json` and the previous `schema.json` (the fence).
 - Output: validated descriptors for [Generate](generate.md) and the reconciled history.
 - Errors: `line:col: message`, where the position is the declaration the rule is about (a field for relation, type and `@requires` errors; a slot for binding and patch-field errors; the `@@sequence` directive for sequence errors; the model for identity and reserved-name errors). Positions are never written into descriptors.
 
