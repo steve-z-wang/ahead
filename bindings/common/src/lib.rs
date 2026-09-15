@@ -12,7 +12,7 @@ struct Entry {
     client: Client<SqliteStore>,
     cycle: SyncCycle,
     connection: ConnectionDriver,
-    live_connection: ConnectionDriver,
+    live: LiveSession,
 }
 impl RuntimeHost {
     pub fn call(&mut self, request: Value) -> Result<Value> {
@@ -37,7 +37,7 @@ impl RuntimeHost {
                     client,
                     cycle: SyncCycle::default(),
                     connection: ConnectionDriver::default(),
-                    live_connection: ConnectionDriver::default(),
+                    live: LiveSession::default(),
                 },
             );
             return Ok(
@@ -179,17 +179,8 @@ impl RuntimeHost {
                 }
                 match op {
                     "connection" => {
-                        let connection = match request.get("lane") {
-                            None => &mut e.connection,
-                            Some(Value::String(lane)) if lane == "push" => &mut e.connection,
-                            Some(Value::String(lane)) if lane == "live" => &mut e.live_connection,
-                            _ => return Err(invalid("unknown connection lane")),
-                        };
-                        let now = request
-                            .get("now")
-                            .map(|v| read_counter(v, false))
-                            .transpose()?
-                            .unwrap_or(0);
+                        let connection = &mut e.connection;
+                        let now = read_now(&request)?;
                         match text(&request, "event")? {
                             "start" => connection.start(now),
                             "stop" => connection.stop(),
@@ -197,15 +188,7 @@ impl RuntimeHost {
                             "resume" => connection.resume(now),
                             "wake" => connection.wake(),
                             "success" => connection.complete(true, now, 0),
-                            "failure" => connection.complete(
-                                false,
-                                now,
-                                request
-                                    .get("entropy")
-                                    .map(|v| read_counter(v, false))
-                                    .transpose()?
-                                    .unwrap_or(0),
-                            ),
+                            "failure" => connection.complete(false, now, read_entropy(&request)?),
                             "next" => {}
                             _ => return Err(invalid("unknown connection event")),
                         }
@@ -214,6 +197,13 @@ impl RuntimeHost {
                         } else {
                             Value::Null
                         }
+                    }
+                    "live" => {
+                        let event: LiveEvent = serde_json::from_value(request.clone())
+                            .map_err(|e| invalid(format!("invalid live event: {e}")))?;
+                        let now = read_now(&request)?;
+                        let entropy = read_entropy(&request)?;
+                        serde_json::to_value(e.live.handle(&mut e.client, event, now, entropy)?)?
                     }
                     "startSync" => {
                         match request.get("pushOnly") {
@@ -244,18 +234,6 @@ impl RuntimeHost {
                         e.client
                             .acknowledge(read_counter(&request["sequence"], true)?, receipt)?;
                         Value::Null
-                    }
-                    "downlinkRequest" => {
-                        json!(e.client.downlink_request(text(&request, "scope")?)?)
-                    }
-                    "downlinkPage" => {
-                        let pull = request
-                            .get("request")
-                            .map(|_| PullRequest::decode(text(&request, "request")?.as_bytes()))
-                            .transpose()?;
-                        let page =
-                            PullPage::decode(serde_json::to_string(&request["page"])?.as_bytes())?;
-                        serde_json::to_value(e.client.receive_downlink(page, pull)?)?
                     }
                     "pull" => {
                         let page =
@@ -294,6 +272,20 @@ impl RuntimeHost {
             json!({"value":value,"changed":generation!=e.client.generation(),"changedTables":e.client.last_changed(),"generation":e.client.generation()}),
         )
     }
+}
+fn read_now(request: &Value) -> Result<u64> {
+    request
+        .get("now")
+        .map(|v| read_counter(v, false))
+        .transpose()
+        .map(|now| now.unwrap_or(0))
+}
+fn read_entropy(request: &Value) -> Result<u64> {
+    request
+        .get("entropy")
+        .map(|v| read_counter(v, false))
+        .transpose()
+        .map(|entropy| entropy.unwrap_or(0))
 }
 fn text<'a>(v: &'a Value, key: &str) -> Result<&'a str> {
     v[key]

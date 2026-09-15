@@ -4,6 +4,7 @@ pub mod ddl;
 mod downlink;
 pub mod engine;
 pub mod ledger;
+pub mod live;
 mod mutate;
 mod policies;
 mod push;
@@ -15,6 +16,7 @@ pub mod transport;
 
 pub use ahead_core::*;
 pub use connection::*;
+pub use live::*;
 pub use query::{Direction, QueryOrder, QuerySpec};
 pub use store::*;
 pub use transport::*;
@@ -122,6 +124,9 @@ const SUBSCRIPTION_MARK: &str = "ahead_subscription:";
 struct PullLedger {
     epochs: BTreeMap<String, u64>,
     issued: std::collections::VecDeque<IssuedPull>,
+    /// Incremented by every committed subscribe or unsubscribe; the live
+    /// session compares it with the value it started under.
+    generation: u64,
 }
 struct IssuedPull {
     channel: String,
@@ -146,6 +151,7 @@ impl PullLedger {
                 .epochs
                 .entry(mark[SUBSCRIPTION_MARK.len()..].to_string())
                 .or_insert(0) += 1;
+            self.generation += 1;
         }
     }
     fn issue(&mut self, channel: &str, from_cursor: u64) {
@@ -498,6 +504,11 @@ impl<S: ClientStore> Client<S> {
     }
     pub fn desired_channels(&mut self) -> Result<BTreeSet<String>> {
         Ok(self.subscriptions()?.into_iter().map(|(c, _)| c).collect())
+    }
+    /// How many times the channel set changed since open. Not durable: a
+    /// process restart cannot have a session in flight.
+    pub fn subscription_generation(&self) -> u64 {
+        self.pulls.generation
     }
     pub fn checkpoint_channels(&mut self) -> Result<BTreeSet<String>> {
         self.view(|e| e.checkpoint_channels())
