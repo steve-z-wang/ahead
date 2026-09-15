@@ -6,7 +6,7 @@
 
 ## 3. Context and Scope
 
-- [Local operations](../local-operations.md) stores each mutation alongside its optimistic changes in the same transaction.
+- [Local operations](../local-operations/README.md) stores each mutation alongside its optimistic changes in the same transaction.
 - [Dependencies](dependencies.md) supplies ordering and prerequisite metadata; [Batching](batching.md) assigns mutations to a push.
 - [Settlement](../settlement.md) owns rejection and removal of completed mutations.
 
@@ -23,4 +23,4 @@
 
 ## 11. Risks and Technical Debt
 
-- Queue preservation across schema changes lacks direct test coverage; see [Storage](../../storage.md).
+- Queue preservation across schema changes lacks direct test coverage; see [Storage](../../storage/reconciliation.md).

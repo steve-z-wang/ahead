@@ -1,34 +1,36 @@
 # Transport
 
-Send and receive HTTP/WebSocket messages.
-
-Current code: [client-js/transport.mts](../../../../../packages/client-js/transport.mts) (`httpTransport`), [client-js/live.mts](../../../../../packages/client-js/live.mts) (`createServerConnection`: `push`, `stream`), [dart/live.dart](../../../../../packages/dart/lib/src/live.dart) (`SyncServer`, `ServerSession`: `push`, `pull`, `stream`, `cancelPush`).
-
 ## 1. Introduction and Goals
 
-- Move opaque request bodies and page frames between the host process and the server with authentication, cancellation and bounded buffering, and nothing else.
+The transport moves bytes. It knows the two HTTP routes and the WebSocket route, adds the bearer token, honors cancellation, and buffers streamed pages within a bound. It never looks inside a request body or a page; those come from and go to Rust.
 
 ## 3. Context and Scope
 
-- Configuration: `{url, token}` where `token` is a string or a function returning one (sync or async); the URL scheme is rewritten to `http(s)` for POSTs and `ws(s)` for the stream.
-- HTTP: `POST <url>/sync/mutations` (push) and `POST <url>/sync/pull` (catch-up) with `Authorization: Bearer <token>` and `content-type: application/json`; non-2xx becomes an error carrying `status` (TypeScript) or `AuthenticationExpired` for 401 and `HttpException` otherwise (Dart).
-- WebSocket: `<url>/sync/live` with the same bearer header; first frame `subscribe`, then pages ([Protocol / Subscriptions](../../protocol/subscriptions.md)).
-- Callers: [Controller](controller.md) supplies bodies produced by Rust and hands every received page back to Rust.
+Configuration is `{url, token}`, where `token` is a string or a function returning one. Push and catch-up are `POST <url>/sync/mutations` and `POST <url>/sync/pull`; the stream is a WebSocket on `<url>/sync/live`; all three carry `Authorization: Bearer <token>`. A non-2xx response becomes an error carrying `status` (TypeScript) or `AuthenticationExpired` for 401 and `HttpException` otherwise (Dart), which is what [scheduling](controller/scheduling.md) uses to trigger an auth refresh.
 
 ## 5. Building Block View
 
-- TypeScript `stream(subscription, apply, signal, catchUp)`: opens `ws` with `maxPayload` 8 MiB, validates the acknowledgement, then queues pages; `drain` pauses the socket while applying, calls `catchUp` once after the acknowledgement and whenever the queue overflowed (64 pages → queue cleared, recovery flagged); `AbortSignal` terminates the socket, including during the upgrade.
-- Dart `stream(channels, apply, cancellation, catchUp)`: same handshake; pages are buffered up to 128 frames or 8 MiB total, overflow clears the buffer and schedules `catchUp`; cancellation closes the socket and the `HttpClient`.
-- Dart `push`/`pull`: one `HttpClient` per request, force-closed afterwards; `cancelPush` bumps an epoch and closes in-flight clients so a token that resolves late cannot start a request; `pull` races the request against a cancellation future.
-- TypeScript `httpTransport` checks `signal.aborted` after resolving the token and passes the signal to `fetch`.
+Both transports do the same things with language-native tools:
+
+| Concern | TypeScript | Dart |
+| --- | --- | --- |
+| HTTP | `fetch` with an `AbortSignal` | one `HttpClient` per request, force-closed on cancel |
+| WebSocket | `ws` with an 8 MiB frame limit | `dart:io` with an 8 MiB text check |
+| Page buffer | 64 pages; the socket is paused while a page is applied | 128 pages or 8 MiB in total |
+| Overflow | buffer cleared, recovery requested | same |
+| Cancellation | abort signal terminates the socket, even mid-upgrade | a future completes and closes the socket |
+
+Recovery means the [live session](controller/live-session.md) runs its HTTP catch-up again; overflowing never restarts an in-flight HTTP request, so a burst of pages cannot starve the catch-up that advances the durable cursor.
+
+Code: [client-js/transport.mts](../../../../../packages/client-js/transport.mts), [client-js/live.mts](../../../../../packages/client-js/live.mts), [dart/live.dart](../../../../../packages/dart/lib/src/live.dart).
 
 ## 10. Quality Requirements
 
-- [live.test.mjs](../../../../../integration/bindings/client-js/live.test.mjs): stream handshake and serialization, cancellation with a stalled token, invalid credentials, bounded overflow preserving in-flight HTTP progress.
-- [dart/test/live_test.dart](../../../../../packages/dart/test/live_test.dart): cancellation of stalled tokens and in-flight responses, `cancelPush` before token resolution, close during the opening handshake.
+- **Cancellation ends a stalled token, an in-flight request and an opening handshake, and a token that resolves late cannot start a request.** Evidence: [live.test.mjs](../../../../../integration/bindings/client-js/live.test.mjs) `live transport cancellation does not wait for a stalled token`, `close cancels opening handshake…`, `client close abandons a stalled live token…`; [live_test.dart](../../../../../packages/dart/test/live_test.dart) `cancel push before token resolution prevents any later HTTP request`, `HTTP catch-up cancellation ends stalled token and in-flight response`.
+- **Overflow preserves in-flight HTTP progress and converges on the latest head.** Evidence: `bounded receive overflow preserves in-flight HTTP progress and recovers the latest head`.
+
+Tests read, not executed.
 
 ## 11. Risks and Technical Debt
 
-- **Confirmed gap versus the target: two transports, two behaviors.** The overflow thresholds (64 pages versus 128 pages / 8 MiB), backpressure (socket pause versus none) and 401 signalling differ between languages; no shared test pins them. Evidence: the two files above. This is part of the controller duplication owned by [Controller](controller.md).
-- **Confirmed limitation: not usable from a browser.** The WebSocket bearer header and the `ws` dependency are Node facilities; browsers cannot set upgrade headers. Evidence: [client-js/live.mts](../../../../../packages/client-js/live.mts). Whether a browser target exists needs deciding ([SDKs / Typed API](../../sdks/typed-api.md)).
-- **Potential risk: per-request `HttpClient` in Dart.** Every push and pull opens and force-closes a client, so there is no connection reuse during catch-up of many pages. Evidence: [dart/live.dart](../../../../../packages/dart/lib/src/live.dart) `push`, `pull`. Not measured ([#12](https://github.com/zanminwang/ahead/issues/12)).
+**Accepted limitation.** The TypeScript transport is Node-only: it depends on the `ws` package and sets an upgrade header browsers cannot set. Nothing in the repository records a browser target either way.

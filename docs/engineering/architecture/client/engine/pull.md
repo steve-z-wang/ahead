@@ -1,41 +1,48 @@
 # Pull
 
-Apply server changes and advance cursors.
-
-Current code: [client/downlink.rs](../../../../../crates/client/src/downlink.rs) (`apply_page`, `apply_change`), [client/ledger.rs](../../../../../crates/client/src/ledger.rs) (record stamps, claims, subscriptions); incoming-page dispositions in [client/transport.rs](../../../../../crates/client/src/transport.rs) (`receive_downlink`, `downlink_request`).
-
 ## 1. Introduction and Goals
 
-- Apply pages per channel in cursor order and record content per record in stamp order, so the same record delivered through several channels, in any order, converges.
+Pull applies what the server says about records. A page arrives for one channel; each change in it is the full state of one record with a *stamp*. Pull must keep two orders straight at once: pages within a channel apply in cursor order, and content for a record applies in stamp order no matter which channel delivered it. That second rule is what lets the same record be shared by several channels, delivered late or twice, and still converge.
 
 ## 3. Context and Scope
 
-- Input: a validated [PullPage](../../protocol/pull.md); optionally the `PullRequest` it answers (HTTP path).
-- Output: an `ApplyReport {applied, skipped, stale, conflicts, diagnostics}` from `apply_page`, or a `DownlinkProgress {disposition: covered|recover|applied, continues}` from `receive_downlink`.
-- Ledger tables: `ahead_subscription (channel, cursor)`, `ahead_claim (channel, model, identity)`, `ahead_record (model, identity, stamp)`.
-- Callers: `RuntimeHost` `downlinkPage` and `pull` commands ([SDKs / Bindings](../../sdks/bindings.md)); `SyncCycle::complete`.
+Pages come from two paths and go through one gate:
+
+| Path | Entry | Result |
+| --- | --- | --- |
+| HTTP catch-up or WebSocket stream, via the SDKs | `receive_downlink(page, request?)` | a disposition: `covered`, `recover` or `applied`, plus `continues` |
+| Direct callers (tests, simulation, `applyPull`) | `apply_page(page)` | an `ApplyReport` with applied, skipped, stale and conflict counts |
+
+Pull owns the ledger: `ahead_subscription` (channel → cursor), `ahead_claim` (which channels currently deliver a record) and `ahead_record` (the stamp last applied per record). It writes records through [Local operations](local-operations/README.md) and calls [Settlement](settlement.md) after every applied change.
 
 ## 5. Building Block View
 
-- Subscription: `set_channel(channel, true)` inserts a cursor row at 0 if absent; `false` runs `unsubscribe` ([Settlement](settlement.md)). A page for a channel without a row is dropped whole (`stale`), so an in-flight pull cannot re-subscribe.
-- Page gate (`apply_page`): `to_cursor ≤ cursor` → stale, nothing written; `from_cursor > cursor` → error `pull cursor gap`; otherwise each change with `cursor > current` is applied in its own write transaction under a savepoint: a failing change is rolled back and counted as `skipped`, the cursor still advances to that change's cursor, and `settle` runs; finally the cursor moves to `to_cursor`.
-- `receive_downlink`: validates the page, checks it matches the request when one is given, refuses a full page that did not advance, then classifies: not subscribed or `to_cursor ≤ cursor` → `covered`; `from_cursor > cursor` → `recover` (caller must catch up from the durable cursor); otherwise `apply_page` → `applied`. `continues` is `changes.len() == 50`.
-- `apply_change`: compare the incoming stamp with `ahead_record`; newer content replaces authority (`set_authority`), adds the channel's claim and stores the stamp; a newer delete removes the record regardless of remaining claims, releases this channel's claim and keeps a tombstone stamp while other claims remain; older content only maintains claims; an equal stamp with different content is counted as a `conflict` with a diagnostic and leaves local content alone.
-- Claims answer "which channels still deliver this record"; a record with no claims, no row and no pending mutation has its stamp row dropped.
+- **Cursor gate.** A page for a channel without a subscription row is dropped whole, so a pull still in flight when the user unsubscribed cannot re-subscribe. A page that ends at or before the current cursor is stale and ignored. A page that starts beyond the cursor is a gap: `receive_downlink` reports `recover` so the caller catches up from the durable cursor; `apply_page` returns an error.
+- **Stamp comparison.** Per record, content applies only when its stamp is newer than the stored one. Equal stamps are idempotent when the content matches and a diagnostic when it does not. Older content is discarded but still updates the channel's claim, because the channel did deliver the record.
+- **Claims.** A claim means "this channel still delivers this record". An upsert adds the channel's claim; a delete removes it. A newer delete removes the record for every channel at once; the remaining claims are the channels whose copy of the delete has not arrived, and a tombstone stamp is kept until the last one does.
+
+Code: `apply_page` and `apply_change` in [client/downlink.rs](../../../../../crates/client/src/downlink.rs); ledger statements in [client/ledger.rs](../../../../../crates/client/src/ledger.rs); dispositions in [client/transport.rs](../../../../../crates/client/src/transport.rs) (`receive_downlink`).
 
 ## 6. Runtime View
 
-- Streamed pages start at the server head; the catch-up from the durable cursor and the stream can overlap, which the gate resolves (`covered`) or applies directly when `from_cursor ≤ cursor < to_cursor` ([Connection / Controller](../connection/controller.md)).
-- Each applied change may satisfy a checkpoint, so `settle` runs after every change ([Settlement](settlement.md)).
+Applying a page is change by change. Each change that lies beyond the current cursor runs in its own transaction: apply the change under a savepoint, advance the cursor to the change's position, run settlement. If the change cannot be applied (its state fails schema validation), the savepoint is rolled back, the change is counted as skipped, and the cursor still advances. After the last change the cursor moves to the page's end. Skipping rather than failing is inherited from the reference implementation; its consequence is recorded in section 11.
+
+Streamed pages start at the server's current head, while the client's durable cursor may be behind. The connection therefore catches up over HTTP first, and a streamed page that overlaps the catch-up is either `covered` (already past) or applied directly when it starts at or before the cursor and ends beyond it ([Connection / Controller](../connection/controller/README.md)).
 
 ## 10. Quality Requirements
 
-- A2, D2–D6: [sqlite/tests/downlink.rs](../../../../../crates/sqlite/tests/downlink.rs), [sqlite/tests/stamp_scenarios.rs](../../../../../crates/sqlite/tests/stamp_scenarios.rs), [crates/sim/tests/authority.rs](../../../../../crates/sim/tests/authority.rs), [crates/sim/tests/distribution.rs](../../../../../crates/sim/tests/distribution.rs).
-- Dispositions: [bindings/common/tests/session.rs](../../../../../bindings/common/tests/session.rs) `incoming_pages_share_cursor_policy_and_do_not_overwrite_push_cycle`, `incoming_overlap_is_identical_with_or_without_http_request_metadata`.
+- **Pages apply only in cursor order; a stale page is a no-op and the cursor never decreases** (guarantee A2). Evidence: [crates/sim/tests/authority.rs](../../../../../crates/sim/tests/authority.rs) `a2_pages_apply_only_in_cursor_order`; [sqlite/tests/downlink.rs](../../../../../crates/sqlite/tests/downlink.rs) `original_bad_change_skip_policy_is_retained`; [sqlite/tests/stamp_scenarios.rs](../../../../../crates/sqlite/tests/stamp_scenarios.rs) `redelivered_page_is_a_no_op`.
+- **Content changes only by record stamp: newer wins, equal is idempotent, older is discarded, delivering channel is irrelevant** (guarantee D2). Evidence: [crates/sim/tests/distribution.rs](../../../../../crates/sim/tests/distribution.rs) `d2_…`; `older_stamp_cannot_regress_newer_authority_but_keeps_claim_bookkeeping`, `equal_stamp_is_idempotent_or_a_diagnostic`.
+- **Deletes and tombstones respect stamps and claims; records moving between channels end in the right state** (guarantees D4, D5). Evidence: `channel_claims_and_cross_channel_delete`, `delete_across_channels_keeps_a_tombstone_until_every_claim_confirms`, `move_between_channels_and_back`.
+- **Unsubscribing drops the channel's claims and the records nobody else claims; a null load is a delete** (guarantee D6). Evidence: [sqlite/tests/client.rs](../../../../../crates/sqlite/tests/client.rs) `unsubscribe_drops_records_nobody_else_claims_and_restarts_from_zero`; `unsubscribing_settles_its_checkpoint_and_later_pages_are_dropped`.
+- **HTTP and WebSocket pages share one cursor policy.** Evidence: [bindings/common/tests/session.rs](../../../../../bindings/common/tests/session.rs) `incoming_overlap_is_identical_with_or_without_http_request_metadata`.
+
+Tests read, not executed.
 
 ## 11. Risks and Technical Debt
 
-- **Confirmed bug: a page from a previous subscription of the same channel is a hard error in `apply_page`.** After unsubscribe and resubscribe the cursor is 0, so a page built against the old cursor hits `pull cursor gap`. The SDK live path avoids it because `receive_downlink` maps the case to `recover` and the controller drops stale sessions; direct `apply_page` callers (`applyPull`, the simulation) reproduce it. Evidence: [client/downlink.rs](../../../../../crates/client/src/downlink.rs) `apply_page`. Open: [#32](https://github.com/zanminwang/ahead/issues/32).
-- **Potential risk: skipped changes are invisible on the SDK path.** A change whose state fails `validate_state` (for example, the server omits a field this client's schema requires) is skipped and the cursor advances past it, so that record is never retried; `receive_downlink` discards the report and the binding returns only the disposition, so neither SDK can observe `skipped` or `conflicts`. Evidence: [client/downlink.rs](../../../../../crates/client/src/downlink.rs) lines around `Err(_) => rollback_to("change")`, [client/transport.rs](../../../../../crates/client/src/transport.rs) `receive_downlink`. The skip policy is inherited from the reference implementation; whether to surface or fail needs deciding.
-- **Confirmed debt: one transaction per change.** A 50-change page runs up to 50 commits, each bumping the generation and re-running `settle`. Evidence: `apply_page`. Cost center in [#12](https://github.com/zanminwang/ahead/issues/12); the atomic page transaction is also what [#17](https://github.com/zanminwang/ahead/issues/17) needs.
-- **Confirmed limitation: tombstones and stamps are never pruned** (guarantee N1). `ahead_record` rows for deleted records remain until every claiming channel confirms; nothing bounds a channel that never does.
+**Problem: a page from a previous subscription of the same channel is a hard error in `apply_page`.** *Condition:* unsubscribe then resubscribe while a pull built against the old cursor is still in flight; the cursor is now 0, so the page starts beyond it. *Consequence:* `apply_page` fails with `pull cursor gap`. The SDK path is unaffected because `receive_downlink` maps this to `recover` and the connection drops sessions from an older subscription generation; direct callers reproduce it. *Evidence:* the gate in [client/downlink.rs](../../../../../crates/client/src/downlink.rs). Tracked in [#32](https://github.com/zanminwang/ahead/issues/32).
+
+**Potential risk: skipped changes are invisible on the SDK path.** *Condition:* a change's state fails validation, for example the server omits a field this client's newer schema requires. *Consequence:* the change is skipped, the cursor moves past it, the record is never retried, and neither SDK can see it happened, because `receive_downlink` returns only the disposition. *Evidence:* the skip branch of `apply_page`; `receive_downlink` discards the report. **To confirm:** whether skipped changes and equal-stamp conflicts should be surfaced or should fail the page.
+
+**Accepted limitation.** Tombstone and stamp rows are retained until every claiming channel confirms; nothing bounds a channel that never does (guarantee N1). One transaction per change is a known cost ([#12](https://github.com/zanminwang/ahead/issues/12)) and the reason an atomic page hook ([#17](https://github.com/zanminwang/ahead/issues/17)) needs a design change.
