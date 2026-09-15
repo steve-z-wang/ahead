@@ -154,7 +154,7 @@ Current code locations for the components above. Some responsibilities still sha
 | Client / Connection / Controller / Scheduling | [client/connection.rs](../../crates/client/src/connection.rs); host loops in [client-js/connection.mts](../../packages/client-js/connection.mts) and [dart/connection.dart](../../packages/dart/lib/src/connection.dart) |
 | Client / Connection / Controller / Push lane | [client/transport.rs](../../crates/client/src/transport.rs) (`SyncCycle`); loops in [client-js/index.mts](../../packages/client-js/index.mts) and [dart/client.dart](../../packages/dart/lib/src/client.dart) |
 | Client / Connection / Controller / Live session | `connect` in [client-js/index.mts](../../packages/client-js/index.mts) and [dart/client.dart](../../packages/dart/lib/src/client.dart); dispositions in [client/transport.rs](../../crates/client/src/transport.rs) |
-| Server / Backend interface | `Host` in [server/lib.rs](../../crates/server/src/lib.rs); handler/loader dispatch in [server/index.mts](../../packages/server/index.mts) |
+| Server / Backend interface | Operation contract in [server/host.rs](../../crates/server/src/host.rs) and [server/host-contract.mts](../../packages/server/host-contract.mts); `Host` in [server/lib.rs](../../crates/server/src/lib.rs); handler/loader dispatch in [server/index.mts](../../packages/server/index.mts) |
 | Server / Engine / Push | [server/lib.rs](../../crates/server/src/lib.rs) (`process_push`) |
 | Server / Engine / Pull | [server/lib.rs](../../crates/server/src/lib.rs) (`process_pull`) |
 | Server / Engine / Notify | [server/lib.rs](../../crates/server/src/lib.rs) (`publish`) |

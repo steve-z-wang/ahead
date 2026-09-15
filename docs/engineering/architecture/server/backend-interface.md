@@ -15,6 +15,8 @@ The host operations the engine may issue:
 | `savepoint`, `rollback`, `release` | [Persistence](persistence.md) | isolate one mutation's effects |
 | `claim`, `saveReceipt`, `head`, `scan`, `publish` | [Persistence](persistence.md) | framework tables |
 
+Each operation is one variant of `HostRequest` with one response type, defined once in [server/host.rs](../../../../crates/server/src/host.rs) and restated for TypeScript in [server/host-contract.mts](../../../../packages/server/host-contract.mts) (section 9). [fixtures/protocol/host-operations.json](../../../../fixtures/protocol/host-operations.json) carries one example of every request and every response variant, and both hosts are tested against it.
+
 Application-facing contracts ([Typed API / Server](../sdks/typed-api/server.md) shows their types):
 
 - A **handler** receives the decoded input (one value per slot), the transaction, the user id and `notify`. It returns nothing or `{channel}`. Throwing `MutationRejected`, or an error `translateRejection` maps to a code, rejects that one mutation; any other error aborts the whole batch.
@@ -30,7 +32,7 @@ At runtime the host function shapes handler input from the engine's decoded argu
 
 A per-transaction **session** tracks every host callback promise. It records the first failure, refuses to let the transaction commit while callbacks are unfinished or failed, and snapshots the set of published channels around each mutation's savepoint so a rejected mutation wakes nobody ([Notify](engine/notify.md)). `bindTransaction(tx)` exposes the same machinery to application code that publishes outside a push.
 
-Code: the `Host` trait in [server/lib.rs](../../../../crates/server/src/lib.rs); `createBackend`, `host`, `Session` in [server/index.mts](../../../../packages/server/index.mts). The simulation implements the same operations in memory in [crates/sim/src/host.rs](../../../../crates/sim/src/host.rs).
+Code: the operation contract in [server/host.rs](../../../../crates/server/src/host.rs) (`HostRequest`, the response types, `HostExt::call_typed`) and the `Host` trait in [server/lib.rs](../../../../crates/server/src/lib.rs); on the TypeScript side the same contract in [server/host-contract.mts](../../../../packages/server/host-contract.mts) and `createBackend`, `host`, `Session` in [server/index.mts](../../../../packages/server/index.mts), with the persistence half implemented in [persistence-prisma/index.mts](../../../../packages/persistence-prisma/index.mts). The simulation implements the same operations in memory in [crates/sim/src/host.rs](../../../../crates/sim/src/host.rs).
 
 ## 6. Runtime View
 
@@ -68,7 +70,7 @@ Code: the `Host` trait in [server/lib.rs](../../../../crates/server/src/lib.rs);
 
 **Consequences.** Adding an operation or a field means editing `host.rs`, the fixture and `host-contract.mts`; the Rust compiler and the two conformance tests enforce the rest. Responses that used to be tolerated loosely (a `handle` returning `{}` with no channel) become explicit `host.invalid` errors with the same abort semantics as today's "invalid handler settlement". The boundary keeps JSON strings, so no binding change is needed.
 
-**Migration steps.** Each step is independently shippable and keeps every existing test green.
+**Migration steps.** Each step was independently shippable and kept every existing test green; all four have landed.
 
 1. Add `host.rs` with the types, `call_typed`, and the round-trip fixture test; switch the engine's call sites to build `HostRequest` and decode responses. No host implementation changes yet.
 2. Switch `MemHost` and the server test hosts to match on the decoded enum.
@@ -89,6 +91,8 @@ Tests read, not executed.
 
 ## 11. Risks and Technical Debt
 
-**Technical debt: the host operation set is an untyped string contract implemented three times** (the TypeScript host, the simulation host, the test host). Adding an operation or a field is a manual three-way change with no shared definition. The decision and migration in section 9 resolve this once implemented ([#45](https://github.com/zanminwang/ahead/issues/45)).
+**Resolved: the host operation set was an untyped string contract implemented three times.** Section 9 landed ([#45](https://github.com/zanminwang/ahead/issues/45)): `host.rs` is the one definition, `host-contract.mts` restates it for TypeScript, and the shared fixture fails whichever side drifts. What remains is the hand-written mirror — the two languages have no shared generator, so adding an operation still means editing `host.rs`, `host-contract.mts` and the fixture; the compiler and the two conformance tests catch a half-done edit, they do not spare it.
+
+**The contract types what the operations do today.** It does not widen them: `handle`, `rollback` and `load` keep exactly the shapes they had, and any extension belongs to [#95](https://github.com/zanminwang/ahead/issues/95).
 
 **Accepted limitation.** A loader must return exactly the schema's fields: identity fields may be present, an absent nullable field reads as `null`, an absent non-nullable field or any extra property fails normalization and aborts the pull with a 500. Evidence: `normalize_state` in `process_pull`; the loader-defect test above. Documented for authors under [Loaders](../../../../website/docs/backend/api.md#loaders).
