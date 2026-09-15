@@ -14,17 +14,16 @@ Engine behavior: [Client Push](../client/engine/push/README.md), [Client Settlem
 - **Receipt rules.** When `requiredCheckpoints` is absent the legacy pair becomes the single checkpoint; an explicit empty list with no rejections is invalid; checkpoint channels are unique; each rejection has a positive ordinal and a non-blank code.
 - **Identity of a mutation.** Ordinals are allocated by the client and never reused, so `(clientId, ordinal)` identifies a mutation across retries.
 - **Rejection codes.** `mutation.invalid`, `<mutation>.not_allowed`, `<mutation>.invalid`, and handler codes matching `^[a-z][a-z0-9]*([._-][a-z0-9]+)*$`. The client adds `dependency.rejected` and `dropped` locally; they never travel.
-- **Receipt hash.** `PushRequest::semantic_hash` hashes the canonical bytes. It is tested in core but not consumed by the server ([Server Push](../server/engine/push.md)).
 
 Code: [core/protocol.rs](../../../../crates/core/src/protocol.rs) (`PushRequest`, `PushReceipt`).
 
 ## 6. Runtime View
 
-Batch `n+1` is accepted only after `n`. Resending `n` returns the stored receipt; anything else is `gap` or `overlap` (guarantee P2). A receipt with an empty checkpoint list and at least one rejection means the whole batch was rejected and nothing is awaited.
+Batch `n+1` is accepted only after `n`. Resending `n` returns the stored receipt whatever its body carries ([Server Push §9](../server/engine/push.md#9-architecture-decisions)); anything else is `gap` or `overlap` (guarantee P2). A receipt with an empty checkpoint list and at least one rejection means the whole batch was rejected and nothing is awaited.
 
 ## 10. Quality Requirements
 
-- Unknown request fields survive a round trip and change the hash; a receipt without `requiredCheckpoints` decodes to the legacy checkpoint, and an explicit empty list is refused. Evidence: [core/tests/contracts.rs](../../../../crates/core/tests/contracts.rs) `batch_envelope_keeps_unknown_data_in_receipt_hash`, `checkpoint_wire_roundtrip_retains_legacy_fallback`, `receipt_distinguishes_missing_checkpoints_from_explicit_empty`.
+- Unknown request fields survive a round trip and appear in the canonical bytes, which do not depend on field order; a receipt without `requiredCheckpoints` decodes to the legacy checkpoint, and an explicit empty list is refused. Evidence: [core/tests/contracts.rs](../../../../crates/core/tests/contracts.rs) `batch_envelope_keeps_unknown_data_in_canonical_bytes`, `checkpoint_wire_roundtrip_retains_legacy_fallback`, `receipt_distinguishes_missing_checkpoints_from_explicit_empty`.
 - The receipt a client stores equals the one the server stored, byte for byte. Evidence: [crates/sim/tests/push.rs](../../../../crates/sim/tests/push.rs) `receipts_round_trip`.
 
 ## 11. Risks and Technical Debt

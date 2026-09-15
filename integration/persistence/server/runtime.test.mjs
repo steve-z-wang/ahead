@@ -68,8 +68,12 @@ test('Prisma persistence supports reusable bind without owning a transaction',as
 });
 test('push commits business + compacted publication + exact durable receipt together',async()=>{
  const request=push('dedup',1,[mutation(1,'first')]);const receipt=await backend.push('alice',request);assert.deepEqual(JSON.parse(receipt),{requiredCheckpoints:[{scope:'shared',syncId:1}],requiredScope:'shared',requiredSyncId:1,rejections:[]});const calls=called;
+ // Replay is keyed by (clientId, batchSequence): the same frozen bytes and a changed body both return the stored receipt without a handler call, a business write, a publication or a subscriber wake.
+ let wakes=0;const unsubscribe=backend.onCommitted('shared',()=>{wakes++;});const rows=await count('ahead_invalidation');
  assert.equal(await backend.push('alice',request),receipt);assert.equal(called,calls);
  assert.equal(await backend.push('alice',push('dedup',1,[mutation(1,'changed')])),receipt);assert.equal(called,calls);
+ await new Promise(resolve=>setImmediate(resolve));unsubscribe();assert.equal(wakes,0,'replayed receipts must not wake subscribers');
+ assert.deepEqual(await db.$queryRawUnsafe("SELECT title FROM business_task WHERE id='a'"),[{title:'first'}]);assert.equal(await count('ahead_invalidation'),rows);
  await assert.rejects(()=>backend.push('bob',request),/owner_mismatch/);
  await assert.rejects(()=>backend.push('alice',push('dedup',3,[mutation(1,'gap')])),/gap/);
  const page=await pull();assert.deepEqual(page,{scope:'shared',fromCursor:0,toCursor:1,changes:[{syncId:1,model:'Task',identity:{id:'a'},stamp:1,state:{title:'first'}}]});assert.equal(prepared,1);
@@ -486,4 +490,31 @@ test('a version dispatches only to its own handler and a function registers v1',
  await two.push('alice',push('register-dispatch',1,[mutation(1,'from v1','reg-b')]));
  await two.push('alice',push('register-dispatch',2,[{...mutation(1,'from v2','reg-c'),version:2}]));
  assert.deepEqual(seen.slice(2),[['v1','from v1'],['v2','from v2']],'no fallback between versions');
+});
+test('concurrent same-client delivery with different bodies commits at most one under the PostgreSQL lock',async()=>{
+ const before=called;const shared=async()=>Number((await db.$queryRawUnsafe("SELECT head FROM ahead_channel WHERE channel='shared'"))[0].head);
+ // A concurrent delivery of the same sequence with a different body commits at most one of the two: the loser waits on the row lock, then replays the winner's receipt.
+ const head=await shared();const changed=push('race-body',1,[mutation(1,'winner','race-body')]);const other=push('race-body',1,[mutation(1,'loser','race-body')]);
+ const pair=await Promise.all([backend.push('alice',changed),backend.push('alice',other)]);assert.equal(pair[0],pair[1]);assert.equal(called,before+1);
+ assert.equal(await shared(),head+1,'exactly one publication');const [row]=await db.$queryRawUnsafe("SELECT title FROM business_task WHERE id='race-body'");assert.ok(['winner','loser'].includes(row.title));
+ const [client]=await db.$queryRawUnsafe("SELECT sequence, receipt FROM ahead_client WHERE client_id='race-body'");assert.equal(Number(client.sequence),1);assert.equal(client.receipt,pair[0]);
+});
+test('fresh framework tables omit request_hash; a table that still carries the column keeps replaying receipts',async()=>{
+ const columns=async()=>(await db.$queryRawUnsafe("SELECT column_name FROM information_schema.columns WHERE table_name='ahead_client'")).map(row=>row.column_name).sort();
+ assert.deepEqual(await columns(),['client_id','owner_id','receipt','sequence']);
+ const migration=(await readFile(new URL('../../../packages/persistence-prisma/migration.sql',import.meta.url),'utf8')).split(';').map(x=>x.trim()).filter(Boolean);
+ const before=called;const request=push('legacy-column',1,[mutation(1,'legacy','legacy-column')]);let receipt;
+ await db.$executeRawUnsafe('ALTER TABLE ahead_client ADD COLUMN request_hash text');
+ try{
+  for(const sql of migration)await db.$executeRawUnsafe(sql);
+  assert.deepEqual(await columns(),['client_id','owner_id','receipt','request_hash','sequence'],'re-applying migration.sql leaves an existing table untouched');
+  receipt=await backend.push('alice',request);assert.equal(await backend.push('alice',push('legacy-column',1,[mutation(1,'changed','legacy-column')])),receipt);assert.equal(called,before+1);
+  const [row]=await db.$queryRawUnsafe("SELECT request_hash, sequence FROM ahead_client WHERE client_id='legacy-column'");assert.equal(row.request_hash,null);assert.equal(Number(row.sequence),1);
+ }finally{await db.$executeRawUnsafe('ALTER TABLE ahead_client DROP COLUMN request_hash');}
+ assert.deepEqual(await columns(),['client_id','owner_id','receipt','sequence']);
+ assert.equal(await backend.push('alice',request),receipt,'the stored receipt survives dropping the unused column');assert.equal(called,before+1);
+ await assert.rejects(()=>backend.push('alice',push('legacy-column',3,[mutation(2,'gap','legacy-column')])),/gap/);
+ // Only the most recently committed sequence replays; once sequence 2 commits, sequence 1 is an overlap even with its original body.
+ const next=await backend.push('alice',push('legacy-column',2,[mutation(2,'next','legacy-column')]));assert.notEqual(next,receipt);assert.equal(called,before+2);
+ await assert.rejects(()=>backend.push('alice',request),/overlap/);assert.equal(await backend.push('alice',push('legacy-column',2,[mutation(2,'changed','legacy-column')])),next);assert.equal(called,before+2);
 });
