@@ -25,7 +25,7 @@ A field type fixes how a value is written in the schema, normalized on every run
 
 Rules:
 
-- An enum declares non-empty, unique identifier values.
+- An enum declares non-empty, unique identifier values; a value may carry `@deprecated(reason: "…")`, which reaches generated code only ([Mutations](mutations.md#9-architecture-decisions)).
 - A list element must be a scalar; a list of enums or of lists is refused. A list cannot be nullable.
 - `null` is accepted only for a nullable field.
 

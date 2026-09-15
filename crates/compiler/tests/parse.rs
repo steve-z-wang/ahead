@@ -59,6 +59,54 @@ fn parse_keeps_every_declaration_with_its_position() {
 }
 
 #[test]
+fn deprecated_is_a_field_level_directive_with_an_optional_reason() {
+    // GraphQL style: on a field, an enum value or a mutation slot; the reason is optional.
+    let d = parse("enum Status { active archived @deprecated(reason: \"use closed\") closed }\nmodel Task {\n id UUID\n name String @deprecated(reason: \"renamed to title\")\n title String\n legacy Int? @deprecated\n @@id(id)\n}\nmutation Edit { task Task.update<title> old Task.update<name>? @deprecated(reason: \"use task\") }").unwrap();
+    assert_eq!(d.enums[0].values, vec!["active", "archived", "closed"]);
+    assert_eq!(
+        d.enums[0].deprecated,
+        vec![(String::from("archived"), Some(String::from("use closed")))]
+    );
+    let task = &d.models[0];
+    assert_eq!(
+        task.fields[1].deprecated,
+        Some(Some("renamed to title".into()))
+    );
+    assert_eq!(task.fields[2].deprecated, None);
+    assert_eq!(
+        task.fields[3].deprecated,
+        Some(None),
+        "a bare @deprecated has no reason"
+    );
+    assert_eq!(d.mutations[0].slots[0].deprecated, None);
+    assert_eq!(
+        d.mutations[0].slots[1].deprecated,
+        Some(Some("use task".into()))
+    );
+    for (source, message) in [
+        (
+            "model A { id UUID @deprecated(why: \"x\") @@id(id) }",
+            "deprecated accepts only reason",
+        ),
+        (
+            "model A { id UUID @deprecated(reason: x) @@id(id) }",
+            "deprecated reason must be a string",
+        ),
+        (
+            "model A { id UUID @deprecated @deprecated @@id(id) }",
+            "duplicate field directive",
+        ),
+        (
+            "enum S { a @deprecated @deprecated }",
+            "duplicate deprecated",
+        ),
+    ] {
+        let e = parse(source).unwrap_err();
+        assert!(e.contains(message), "{source}: {e}");
+    }
+}
+
+#[test]
 fn model_version_follows_the_mutation_rules() {
     // The same declaration, the same range and the same duplicate refusal as a mutation.
     for (source, message) in [

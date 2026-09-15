@@ -21,4 +21,8 @@ void misuse(GeneratedClient client, GeneratedTransaction tx, Entry row) {
   tx.mutate.editEntry(entry: EditEntryEntryUpdate(identity: EntryIdentity(id: row.id), title: const Present(null)));
   // enum typo
   final Entry bad = Entry(id: row.id, title: row.title, note: row.note, at: row.at, tags: row.tags, status: Status.typo);
+  // deprecated enum value, field and slot are reported with their reasons
+  final Status old = Status.archived;
+  final int? index = const Counter(id: 'c', index: 1).index;
+  tx.mutate.removeEntries(entries: const [], maybe: EntryIdentity(id: row.id));
 }

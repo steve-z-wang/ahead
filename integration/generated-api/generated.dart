@@ -4,7 +4,7 @@ import 'package:ahead/ahead.dart';
 export 'package:ahead/ahead.dart' show RuntimeConnection, SyncServer;
 class Present<T> { final T value; const Present(this.value); }
 final Map<String,dynamic> schema = jsonDecode(r'''{"clientPolicies":[{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Book"}]},"knownFields":{"Book":["id","title"]},"name":"AddBook","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"cardinality":"single","model":"Book","name":"book","operation":"create"}],"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"bookId","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Comment"}]},"knownFields":{"Comment":["id","bookId","text"]},"name":"AddComment","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"cardinality":"single","model":"Comment","name":"comment","operation":"create"}],"version":1},{"input":{"enums":[{"name":"Status","values":["active","archived"]}],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}},{"name":"at","nullable":false,"type":{"kind":"scalar","name":"dateTime"}},{"name":"tags","nullable":false,"type":{"element":{"kind":"scalar","name":"string"},"kind":"list"}},{"name":"status","nullable":false,"type":{"kind":"enum","name":"Status"}}],"identity":["id"],"name":"Entry"}]},"knownFields":{"Entry":["id","title","note","at","tags","status"]},"name":"CreateEntry","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"cardinality":"single","model":"Entry","name":"entry","operation":"create"}],"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Entry"}]},"knownFields":{"Entry":["id","title","note","at","tags","status"]},"name":"EditEntry","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"allowedPatchFields":["title"],"cardinality":"single","model":"Entry","name":"target","operation":"update"}],"version":1},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}},{"name":"at","nullable":false,"type":{"kind":"scalar","name":"dateTime"}}],"identity":["id"],"name":"Entry"}]},"knownFields":{"Entry":["id","title","note","at","tags","status"]},"name":"EditEntry","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"allowedPatchFields":["title","note","at"],"cardinality":"single","model":"Entry","name":"entry","operation":"update"}],"version":2},{"input":{"enums":[],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}}],"identity":["id"],"name":"Entry"}]},"knownFields":{"Entry":["id","title","note","at","tags","status"]},"name":"RemoveEntries","prerequisites":[],"requirements":[],"sequence":null,"slots":[{"cardinality":"list","model":"Entry","name":"entries","operation":"delete"},{"cardinality":"optional","model":"Entry","name":"maybe","operation":"delete"}],"version":1}],"enums":[{"name":"Status","values":["active","archived"]}],"models":[{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"uuid"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"note","nullable":true,"type":{"kind":"scalar","name":"string"}},{"name":"at","nullable":false,"type":{"kind":"scalar","name":"dateTime"}},{"name":"tags","nullable":false,"type":{"element":{"kind":"scalar","name":"string"},"kind":"list"}},{"name":"status","nullable":false,"type":{"kind":"enum","name":"Status"}}],"identity":["id"],"name":"Entry","relations":[],"unique":[],"version":2},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"title","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Book","relations":[],"unique":[],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"bookId","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}],"identity":["id"],"name":"Comment","relations":[{"fields":["bookId"],"name":"book","onDelete":"delete","target":"Book","targetFields":["id"]}],"unique":[],"version":1},{"fields":[{"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},{"name":"index","nullable":true,"type":{"kind":"scalar","name":"int"}}],"identity":["id"],"name":"Counter","relations":[],"unique":[],"version":1}],"prerequisites":[],"requirements":[]}''') as Map<String,dynamic>;
-enum Status { active, archived }
+enum Status { active, @Deprecated('archive with RemoveEntries instead') archived }
 class Entry {
  final String id;
  final String title;
@@ -125,6 +125,7 @@ class CommentPatch {
 }
 class Counter {
  final String id;
+ @Deprecated('counters are not indexed')
  final int? index;
  const Counter({required this.id,required this.index});
  Map<String,dynamic> toRecord() => {
@@ -148,6 +149,7 @@ class CounterIdentity {
  );
 }
 class CounterPatch {
+ @Deprecated('counters are not indexed')
  final Present<int?>? index;
  const CounterPatch({this.index});
  Map<String,dynamic> toRecord() => {
@@ -177,7 +179,7 @@ Map<String,dynamic> editEntry({required EditEntryEntryUpdate entry}) { final ope
  operations.add({'model':'Entry','op':'update','identity':value.identity.toRecord(),'values':value.toRecord()}); }
  return {'name':'EditEntry','version':2,'operations':operations}; }
 final _editEntry = editEntry;
-Map<String,dynamic> removeEntries({required List<EntryIdentity> entries,EntryIdentity? maybe}) { final operations=<Map<String,dynamic>>[];
+Map<String,dynamic> removeEntries({required List<EntryIdentity> entries,@Deprecated('use entries') EntryIdentity? maybe}) { final operations=<Map<String,dynamic>>[];
  for (final value in entries) {
  operations.add({'model':'Entry','op':'delete','identity':value.toRecord()}); }
  for (final value in [maybe].nonNulls) {
@@ -239,6 +241,7 @@ enum CommentOrderField {byId('id'),byBookId('bookId'),byText('text'); final Stri
 class CommentOrder { final CommentOrderField field; final bool descending; const CommentOrder(this.field,{this.descending=false}); Map<String,dynamic> toRecord()=>{'field':field.wireName,'direction':descending?'descending':'ascending'}; }
 class CounterFilter {
  final Present<String>? id;
+ @Deprecated('counters are not indexed')
  final Present<int?>? index;
  const CounterFilter({this.id,this.index});
  Map<String,dynamic> toRecord()=>{
@@ -301,7 +304,7 @@ class CounterTxModel extends CounterModel { final WritePort writer; CounterTxMod
 class Mutate { final WritePort port; Mutate(this.port);
  Future<int> createEntry({required Entry entry}) => port.mutate(_createEntry(entry:entry));
  Future<int> editEntry({required EditEntryEntryUpdate entry}) => port.mutate(_editEntry(entry:entry));
- Future<int> removeEntries({required List<EntryIdentity> entries,EntryIdentity? maybe}) => port.mutate(_removeEntries(entries:entries,maybe:maybe));
+ Future<int> removeEntries({required List<EntryIdentity> entries,@Deprecated('use entries') EntryIdentity? maybe}) => port.mutate(_removeEntries(entries:entries,maybe:maybe));
  Future<int> addBook({required Book book}) => port.mutate(_addBook(book:book));
  Future<int> addComment({required Comment comment}) => port.mutate(_addComment(comment:comment));
 }

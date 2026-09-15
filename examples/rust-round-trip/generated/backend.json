@@ -1,4 +1,5 @@
 {
+  "deprecations": [],
   "inverses": [],
   "loaders": [
     "Entry"
