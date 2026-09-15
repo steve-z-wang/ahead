@@ -1,5 +1,7 @@
 // Internal wire fixture for ACK-loss/transaction tests. Applications use Client.connect(server).
-export async function syncProtocol(client, transport) {
+/** The read contracts a client of `schema` declares: every model at its version. */
+export const declaredModels=schema=>Object.fromEntries(schema.models.map(model=>[model.name,model.version??1]));
+export async function syncProtocol(client, transport, models) {
  const completed=new Set();
  for (;;) {
   const frozen=await client.freeze();
@@ -10,7 +12,7 @@ export async function syncProtocol(client, transport) {
   }
   const status=await client.status();const scope=status.channels.find(scope=>!completed.has(scope));
   if(scope===undefined)return;
-  const body=JSON.stringify({clientId:client.clientId,scope,fromCursor:status.cursors[scope]??0});
+  const body=JSON.stringify({clientId:client.clientId,scope,fromCursor:status.cursors[scope]??0,models});
   const page=JSON.parse(await transport('pull',body));await client.applyPull(page);
   if(page.changes.length<50)completed.add(scope);
  }

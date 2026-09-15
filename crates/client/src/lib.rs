@@ -507,6 +507,17 @@ impl<S: ClientStore> Client<S> {
     }
     /// How many times the channel set changed since open. Not durable: a
     /// process restart cannot have a session in flight.
+    /// The read contracts this client expects, straight from its schema: every
+    /// model with the version its generated types read. Declared on every pull
+    /// and subscribe so HTTP catch-up and the live stream are served alike
+    /// ([#91](https://github.com/zanminwang/ahead/issues/91)).
+    pub fn declared_models(&self) -> std::collections::BTreeMap<String, u64> {
+        self.schema
+            .models
+            .iter()
+            .map(|m| (m.name.clone(), m.version))
+            .collect()
+    }
     pub fn subscription_generation(&self) -> u64 {
         self.pulls.generation
     }

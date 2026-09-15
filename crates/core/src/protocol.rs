@@ -1,7 +1,7 @@
 use crate::{MAX_SAFE_INTEGER, Result, canonical_json, invalid};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Limits both sides enforce without negotiating them on the wire. Every
 /// consumer reads them from here; making them configurable is
@@ -168,6 +168,29 @@ pub struct PullRequest {
     pub channel: String,
     #[serde(rename = "fromCursor")]
     pub from_cursor: u64,
+    /// The read contracts this client expects: every model of its schema
+    /// with the version it reads ([#91](https://github.com/zanminwang/ahead/issues/91)).
+    /// Required; the server serves each model at the declared version and
+    /// never guesses one.
+    pub models: BTreeMap<String, u64>,
+}
+/// `{"Task":2,"Note":1}`: one positive version per model, nothing else.
+pub fn read_models(value: &Value) -> Result<BTreeMap<String, u64>> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| invalid("models must declare a version per model"))?;
+    if object.is_empty() {
+        return Err(invalid("models must declare at least one model"));
+    }
+    object
+        .iter()
+        .map(|(name, version)| {
+            if name.is_empty() {
+                return Err(invalid("model name must not be empty"));
+            }
+            Ok((name.clone(), read_counter(version, true)?))
+        })
+        .collect()
 }
 impl PullRequest {
     pub fn decode(bytes: &[u8]) -> Result<Self> {
@@ -179,10 +202,12 @@ impl PullRequest {
                 .ok_or_else(|| invalid("scope must be string"))?
                 .into(),
             from_cursor: read_counter(&v["fromCursor"], false)?,
+            models: read_models(&v["models"])?,
         })
     }
     pub fn encode(&self) -> Result<Vec<u8>> {
         counter(self.from_cursor)?;
+        read_models(&serde_json::to_value(&self.models)?)?;
         Ok(canonical_json(&serde_json::to_value(self)?)?.into_bytes())
     }
 }
@@ -264,12 +289,15 @@ impl PullPage {
     }
 }
 
-/// The one client frame of a live session: `{"type":"subscribe","scopes":[…]}`.
-/// Scopes are normalized on decode and on construction: deduplicated and
-/// sorted by UTF-16 code units, the order the acknowledgement echoes.
+/// The one client frame of a live session:
+/// `{"type":"subscribe","scopes":[…],"models":{…}}`. Scopes are normalized on
+/// decode and on construction: deduplicated and sorted by UTF-16 code units,
+/// the order the acknowledgement echoes. `models` declares the read contracts
+/// every page of the session is served at, as in [`PullRequest::models`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SubscribeRequest {
     pub scopes: Vec<String>,
+    pub models: BTreeMap<String, u64>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -277,6 +305,8 @@ struct SubscribeWire {
     #[serde(rename = "type")]
     kind: String,
     scopes: Vec<String>,
+    #[serde(default)]
+    models: Value,
 }
 fn normalize_scopes(scopes: Vec<String>) -> Result<Vec<String>> {
     if scopes.is_empty() {
@@ -294,9 +324,10 @@ fn normalize_scopes(scopes: Vec<String>) -> Result<Vec<String>> {
     Ok(scopes)
 }
 impl SubscribeRequest {
-    pub fn new(scopes: Vec<String>) -> Result<Self> {
+    pub fn new(scopes: Vec<String>, models: BTreeMap<String, u64>) -> Result<Self> {
         Ok(Self {
             scopes: normalize_scopes(scopes)?,
+            models: read_models(&serde_json::to_value(&models)?)?,
         })
     }
     pub fn decode(bytes: &[u8]) -> Result<Self> {
@@ -304,13 +335,13 @@ impl SubscribeRequest {
         if wire.kind != "subscribe" {
             return Err(invalid("expected one subscribe frame with scopes"));
         }
-        Self::new(wire.scopes)
+        Self::new(wire.scopes, read_models(&wire.models)?)
     }
     pub fn encode(&self) -> Result<Vec<u8>> {
-        Ok(
-            canonical_json(&serde_json::json!({"type":"subscribe","scopes":self.scopes}))?
-                .into_bytes(),
-        )
+        Ok(canonical_json(
+            &serde_json::json!({"type":"subscribe","scopes":self.scopes,"models":self.models}),
+        )?
+        .into_bytes())
     }
 }
 

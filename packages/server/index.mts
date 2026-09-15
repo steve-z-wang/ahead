@@ -28,6 +28,7 @@ export type Native = {
   ): Promise<string>;
   /** Negotiates and opens the socket's `Subscriptions`; answers `{handle, actions}` JSON. */
   negotiateLive(
+    config: string,
     owner: string,
     request: string,
     callback: (request: string) => Promise<string>,
@@ -37,6 +38,7 @@ export type Native = {
     owner: string,
     scope: string,
     fromCursor: number,
+    models: string,
     callback: (request: string) => Promise<string>,
   ): Promise<string>;
   /** Applies one `LiveEvent` JSON to the session and answers its `LiveAction[]` JSON. */
@@ -53,7 +55,13 @@ export type LiveEvent =
 export type LiveAction =
   | { type: "listen"; scope: string }
   | { type: "send"; frame: string }
-  | { type: "pull"; scope: string; fromCursor: number };
+  | {
+      type: "pull";
+      scope: string;
+      fromCursor: number;
+      /** The read contracts the session declared: model name to version. */
+      models: Record<string, number>;
+    };
 export interface Persistence {
   call(request: Record<string, any>): Promise<unknown>;
 }
@@ -169,6 +177,7 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<string, number>> = {
   gap: 409,
   overlap: 409,
   mutation_version_unsupported: 409,
+  model_version_unsupported: 409,
 };
 export class MutationRejected extends Error {
   readonly code: string;
@@ -669,15 +678,23 @@ export function createBackend<T>(options: BackendOptions<T>) {
       request: Uint8Array | string,
     ): Promise<{ handle: number; actions: LiveAction[] }> =>
       run((tx, session) =>
-        native.negotiateLive(owner, text(request), host(tx, session)),
+        native.negotiateLive(config, owner, text(request), host(tx, session)),
       ).then(JSON.parse),
     pullLive: (
       owner: string,
       scope: string,
       fromCursor: number,
+      models: Record<string, number>,
     ): Promise<{ page: string; toCursor: number; continues: boolean }> =>
       run((tx, session) =>
-        native.pullLive(config, owner, scope, fromCursor, host(tx, session)),
+        native.pullLive(
+          config,
+          owner,
+          scope,
+          fromCursor,
+          JSON.stringify(models),
+          host(tx, session),
+        ),
       ).then(JSON.parse),
     liveEvent: (handle: number, event: LiveEvent): LiveAction[] =>
       JSON.parse(native.liveEvent(handle, JSON.stringify(event))),
@@ -842,6 +859,7 @@ interface LiveBackend {
     owner: string,
     scope: string,
     fromCursor: number,
+    models: Record<string, number>,
   ): Promise<{ page: string; toCursor: number; continues: boolean }>;
   liveEvent(handle: number, event: LiveEvent): LiveAction[];
   liveClose(handle: number): void;
@@ -959,7 +977,7 @@ async function serveLive(
       } else {
         const { scope } = action;
         backend
-          .pullLive(owner, scope, action.fromCursor)
+          .pullLive(owner, scope, action.fromCursor, action.models)
           .then(
             (progress) =>
               dispatch({ type: "pulled", scope, page: progress.page }),
@@ -1004,10 +1022,18 @@ async function serveLive(
       connection.once("error", () => resolve());
     });
   } catch (error) {
-    const invalid =
-      error instanceof EngineError && error.code === "request.invalid";
-    if (open()) connection.close(invalid ? 1002 : 1011, "request.invalid");
-    if (!invalid) onError?.(error);
+    // A malformed subscribe or a refused read-contract declaration is the
+    // client's fault: closed as a protocol violation, not reported as a failure.
+    const refused =
+      error instanceof EngineError &&
+      (error.code === "request.invalid" ||
+        error.code === "model_version_unsupported");
+    if (open())
+      connection.close(
+        refused ? 1002 : 1011,
+        refused ? (error as EngineError).code : "request.invalid",
+      );
+    if (!refused) onError?.(error);
   } finally {
     if (handle !== undefined) {
       closed();

@@ -134,14 +134,19 @@ fn live_invalid(message: &str) -> Error {
 /// session's first (listen, send the acknowledgement, pull each scope).
 #[napi]
 pub async fn negotiate_live(
+    config_json: String,
     owner: String,
     request_json: String,
     callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
 ) -> Result<String> {
-    let negotiation =
-        ahead_server::live::negotiate(&owner, request_json.as_bytes(), &CallbackHost(callback))
-            .await
-            .map_err(reason)?;
+    let negotiation = ahead_server::live::negotiate(
+        &config(&config_json)?,
+        &owner,
+        request_json.as_bytes(),
+        &CallbackHost(callback),
+    )
+    .await
+    .map_err(reason)?;
     let (subscriptions, actions) = Subscriptions::open(negotiation);
     let handle = {
         let mut sessions = live_sessions()?;
@@ -184,8 +189,17 @@ pub async fn pull_live(
     owner: String,
     scope: String,
     from_cursor: f64,
+    models_json: String,
     callback: ThreadsafeFunction<String, Promise<String>, String, Status, false>,
 ) -> Result<String> {
+    // The engine validates the declaration again when it decodes the pull.
+    let models: std::collections::BTreeMap<String, u64> = serde_json::from_str(&models_json)
+        .map_err(|_| {
+            reason(ahead_server::Error::new(
+                ahead_server::code::REQUEST_INVALID,
+                "invalid live models",
+            ))
+        })?;
     if !from_cursor.is_finite()
         || from_cursor.fract() != 0.0
         || from_cursor < 0.0
@@ -201,6 +215,7 @@ pub async fn pull_live(
         &owner,
         &scope,
         from_cursor as u64,
+        &models,
         &CallbackHost(callback),
     )
     .await

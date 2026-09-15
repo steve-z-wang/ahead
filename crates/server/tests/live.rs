@@ -4,9 +4,16 @@
 use ahead_core::{PullPage, RecordChange, limits};
 use ahead_server::live::{LiveAction, LiveEvent, Negotiation, Subscription, Subscriptions};
 use serde_json::json;
+use std::collections::BTreeMap;
+
+/// The read contracts every negotiation in these tests declares.
+fn models() -> BTreeMap<String, u64> {
+    BTreeMap::from([("Task".to_string(), 1)])
+}
 
 fn negotiation(scopes: &[(&str, u64)]) -> Negotiation {
     Negotiation {
+        models: models(),
         response: r#"{"type":"subscribed","scopes":[],"rejections":[]}"#.into(),
         subscriptions: scopes
             .iter()
@@ -44,6 +51,7 @@ fn pull(scope: &str, from_cursor: u64) -> LiveAction {
     LiveAction::Pull {
         scope: scope.into(),
         from_cursor,
+        models: models(),
     }
 }
 
@@ -227,7 +235,7 @@ fn events_and_actions_cross_the_boundary_as_tagged_json() {
     assert_eq!(closed, LiveEvent::Closed);
     assert_eq!(
         serde_json::to_value(pull("a", 7)).unwrap(),
-        json!({"type":"pull","scope":"a","fromCursor":7})
+        json!({"type":"pull","scope":"a","fromCursor":7,"models":{"Task":1}})
     );
     assert_eq!(
         serde_json::to_value(LiveAction::Listen { scope: "a".into() }).unwrap(),

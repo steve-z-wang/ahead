@@ -1,13 +1,16 @@
 {
   "limits": {"pushMutations": 20, "pushBytes": 262144, "pullChanges": 50},
   "subscribe": [
-    {"name": "normalized: deduplicated and sorted by UTF-16 units", "wire": "{\"type\":\"subscribe\",\"scopes\":[\"b\",\"a\",\"b\",\"\\uD83D\\uDE00\",\"\\uFFFF\"]}", "valid": true, "scopes": ["a", "b", "\uD83D\uDE00", "\uFFFF"]},
-    {"name": "one scope", "wire": "{\"type\":\"subscribe\",\"scopes\":[\"only\"]}", "valid": true, "scopes": ["only"]},
-    {"name": "no scopes", "wire": "{\"type\":\"subscribe\",\"scopes\":[]}", "valid": false},
-    {"name": "empty scope", "wire": "{\"type\":\"subscribe\",\"scopes\":[\"a\",\"\"]}", "valid": false},
-    {"name": "cursors are refused", "wire": "{\"type\":\"subscribe\",\"scopes\":[\"a\"],\"cursors\":{\"a\":1}}", "valid": false},
-    {"name": "wrong type", "wire": "{\"type\":\"subscribed\",\"scopes\":[\"a\"]}", "valid": false},
-    {"name": "scope must be a string", "wire": "{\"type\":\"subscribe\",\"scopes\":[1]}", "valid": false}
+    {"name": "normalized: deduplicated and sorted by UTF-16 units", "wire": "{\"type\":\"subscribe\",\"scopes\":[\"b\",\"a\",\"b\",\"\\ud83d\\ude00\",\"\\uffff\"],\"models\":{\"Task\":1,\"Note\":2}}", "valid": true, "scopes": ["a", "b", "\ud83d\ude00", "\uffff"], "models": {"Note": 2, "Task": 1}},
+    {"name": "one scope", "wire": "{\"type\":\"subscribe\",\"scopes\":[\"only\"],\"models\":{\"Task\":1,\"Note\":2}}", "valid": true, "scopes": ["only"], "models": {"Note": 2, "Task": 1}},
+    {"name": "no scopes", "wire": "{\"type\":\"subscribe\",\"scopes\":[],\"models\":{\"Task\":1}}", "valid": false},
+    {"name": "empty scope", "wire": "{\"type\":\"subscribe\",\"scopes\":[\"a\",\"\"],\"models\":{\"Task\":1}}", "valid": false},
+    {"name": "cursors are refused", "wire": "{\"type\":\"subscribe\",\"scopes\":[\"a\"],\"cursors\":{\"a\":1},\"models\":{\"Task\":1}}", "valid": false},
+    {"name": "wrong type", "wire": "{\"type\":\"subscribed\",\"scopes\":[\"a\"],\"models\":{\"Task\":1}}", "valid": false},
+    {"name": "scope must be a string", "wire": "{\"type\":\"subscribe\",\"scopes\":[1],\"models\":{\"Task\":1}}", "valid": false},
+    {"name": "models are required", "wire": "{\"type\":\"subscribe\",\"scopes\":[\"a\"]}", "valid": false},
+    {"name": "a model version must be positive", "wire": "{\"type\":\"subscribe\",\"scopes\":[\"a\"],\"models\":{\"Task\":0}}", "valid": false},
+    {"name": "models must be an object", "wire": "{\"type\":\"subscribe\",\"scopes\":[\"a\"],\"models\":[]}", "valid": false}
   ],
   "acknowledgement": [
     {"name": "confirms the requested set", "wire": "{\"type\":\"subscribed\",\"scopes\":[\"a\",\"b\"],\"rejections\":[]}", "valid": true, "scopes": ["a", "b"]},

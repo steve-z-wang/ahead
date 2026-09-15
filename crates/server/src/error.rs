@@ -20,6 +20,11 @@ pub mod code {
     pub const OVERLAP: &str = "overlap";
     /// A mutation names a version this backend does not serve; details carry `ordinal`, `name` and `version`.
     pub const MUTATION_VERSION_UNSUPPORTED: &str = "mutation_version_unsupported";
+    /// A model read contract this backend does not serve: the client declared
+    /// a model or version that is not retained, or a page holds a model the
+    /// client did not declare. Refuses the whole request today; per-read
+    /// isolation is [#95](https://github.com/zanminwang/ahead/issues/95).
+    pub const MODEL_VERSION_UNSUPPORTED: &str = "model_version_unsupported";
     /// The owner is blank.
     pub const PRINCIPAL_INVALID: &str = "principal.invalid";
     /// The backend configuration is invalid.

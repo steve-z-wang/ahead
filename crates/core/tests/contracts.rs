@@ -162,7 +162,9 @@ fn received_state_supports_additive_schema_evolution() {
 #[test]
 fn server_pull_request_accepts_js_integer_number_spellings() {
     for number in ["0.0", "1e0", "-0"] {
-        let wire = format!("{{\"clientId\":\"c\",\"scope\":\"s\",\"fromCursor\":{number}}}");
+        let wire = format!(
+            "{{\"clientId\":\"c\",\"scope\":\"s\",\"fromCursor\":{number},\"models\":{{\"Entry\":1}}}}"
+        );
         assert!(PullRequest::decode(wire.as_bytes()).is_ok(), "{number}");
     }
 }
@@ -385,7 +387,8 @@ fn push_and_pull_requests_refuse_a_blank_client_id() {
             PushRequest::decode(push.as_bytes()).is_err(),
             "push {blank:?}"
         );
-        let pull = json!({"clientId":blank,"scope":"a","fromCursor":0}).to_string();
+        let pull =
+            json!({"clientId":blank,"scope":"a","fromCursor":0,"models":{"Entry":1}}).to_string();
         assert!(
             PullRequest::decode(pull.as_bytes()).is_err(),
             "pull {blank:?}"
@@ -436,6 +439,7 @@ fn live_frames_decode_as_acknowledgement_or_page_and_scopes_normalize() {
             Ok(request) => {
                 assert_eq!(case["valid"], true, "{}", case["name"]);
                 assert_eq!(json!(request.scopes), case["scopes"], "{}", case["name"]);
+                assert_eq!(json!(request.models), case["models"], "{}", case["name"]);
                 let again = SubscribeRequest::decode(&request.encode().unwrap()).unwrap();
                 assert_eq!(again, request, "encoding is canonical: {}", case["name"]);
             }
@@ -465,7 +469,8 @@ fn live_frames_decode_as_acknowledgement_or_page_and_scopes_normalize() {
         };
         assert_eq!(kind, case["kind"], "{}", case["name"]);
     }
-    let request = SubscribeRequest::new(vec!["b".into(), "a".into()]).unwrap();
+    let models = std::collections::BTreeMap::from([("Task".to_string(), 1)]);
+    let request = SubscribeRequest::new(vec!["b".into(), "a".into()], models.clone()).unwrap();
     assert!(
         SubscriptionAck::new(vec!["a".into(), "b".into()])
             .unwrap()
@@ -492,4 +497,51 @@ fn live_frames_decode_as_acknowledgement_or_page_and_scopes_normalize() {
         .unwrap(),
         r#"{"rejections":[],"scopes":["a","b"],"type":"subscribed"}"#
     );
+}
+
+#[test]
+fn pull_and_subscribe_declare_the_read_contracts_and_refuse_a_missing_or_bad_declaration() {
+    // The declaration is the same object on both paths: one positive version per model.
+    let good = json!({"clientId":"c","scope":"a","fromCursor":0,"models":{"Task":2,"Note":1}});
+    let request = PullRequest::decode(good.to_string().as_bytes()).unwrap();
+    assert_eq!(request.models.get("Task"), Some(&2));
+    assert_eq!(request.models.get("Note"), Some(&1));
+    assert_eq!(
+        String::from_utf8(request.encode().unwrap()).unwrap(),
+        r#"{"clientId":"c","fromCursor":0,"models":{"Note":1,"Task":2},"scope":"a"}"#,
+        "canonical: models sorted by name"
+    );
+    for (name, models) in [
+        ("missing", Value::Null),
+        ("not an object", json!(["Task"])),
+        ("empty", json!({})),
+        ("zero version", json!({"Task":0})),
+        ("negative version", json!({"Task":-1})),
+        ("fractional version", json!({"Task":1.5})),
+        ("string version", json!({"Task":"1"})),
+        ("empty model name", json!({"":1})),
+    ] {
+        let mut pull = good.clone();
+        if models.is_null() {
+            pull.as_object_mut().unwrap().remove("models");
+        } else {
+            pull["models"] = models.clone();
+        }
+        assert!(
+            PullRequest::decode(pull.to_string().as_bytes()).is_err(),
+            "pull {name}"
+        );
+        let mut subscribe = json!({"type":"subscribe","scopes":["a"],"models":{"Task":1}});
+        if models.is_null() {
+            subscribe.as_object_mut().unwrap().remove("models");
+        } else {
+            subscribe["models"] = models;
+        }
+        assert!(
+            SubscribeRequest::decode(subscribe.to_string().as_bytes()).is_err(),
+            "subscribe {name}"
+        );
+    }
+    let empty = std::collections::BTreeMap::new();
+    assert!(SubscribeRequest::new(vec!["a".into()], empty).is_err());
 }

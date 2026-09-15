@@ -49,12 +49,27 @@ fn historical_known_field_outside_capability_is_refused() {
 #[test]
 fn live_subscribe_requires_one_subscribe_frame_and_normalizes_scopes() {
     let decoded = ahead_server::live::decode_subscribe(
-        br#"{"type":"subscribe","scopes":["shared","alice","shared"]}"#,
+        br#"{"type":"subscribe","scopes":["shared","alice","shared"],"models":{"Task":1}}"#,
     )
     .unwrap();
-    assert_eq!(decoded, vec!["alice", "shared"]);
-    assert!(ahead_server::live::decode_subscribe(br#"{"type":"other","scopes":["a"]}"#).is_err());
-    assert!(ahead_server::live::decode_subscribe(br#"{"type":"subscribe","scopes":[]}"#).is_err());
+    assert_eq!(decoded.scopes, vec!["alice", "shared"]);
+    assert_eq!(decoded.models.get("Task"), Some(&1));
+    assert!(
+        ahead_server::live::decode_subscribe(
+            br#"{"type":"other","scopes":["a"],"models":{"Task":1}}"#
+        )
+        .is_err()
+    );
+    assert!(
+        ahead_server::live::decode_subscribe(
+            br#"{"type":"subscribe","scopes":[],"models":{"Task":1}}"#
+        )
+        .is_err()
+    );
+    assert!(
+        ahead_server::live::decode_subscribe(br#"{"type":"subscribe","scopes":["a"]}"#).is_err(),
+        "models are required"
+    );
 }
 
 #[test]
@@ -281,7 +296,8 @@ mod refusals {
         assert_eq!(err.code, code::REQUEST_INVALID);
         let err = run(ahead_server::process_pull(&config(), "alice", b"[]", &host)).unwrap_err();
         assert_eq!(err.code, code::REQUEST_INVALID);
-        let ahead = json!({"clientId":"c","scope":"a","fromCursor":7}).to_string();
+        let ahead =
+            json!({"clientId":"c","scope":"a","fromCursor":7,"models":{"Task":1}}).to_string();
         let err = run(ahead_server::process_pull(
             &config(),
             "alice",

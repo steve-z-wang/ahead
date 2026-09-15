@@ -667,6 +667,7 @@ mod tests {
             channel: "b".into(),
             client_id: "c1".into(),
             from_cursor: 0,
+            models: schema::declared_models(),
         }
         .encode()
         .unwrap();
@@ -738,6 +739,7 @@ mod tests {
             channel: "a".into(),
             client_id: "c1".into(),
             from_cursor: 2,
+            models: schema::declared_models(),
         }
         .encode()
         .unwrap();
@@ -788,6 +790,7 @@ mod tests {
             channel: "a".into(),
             client_id: "c1".into(),
             from_cursor: 0,
+            models: schema::declared_models(),
         }
         .encode()
         .unwrap();
@@ -801,6 +804,7 @@ mod tests {
             channel: "b".into(),
             client_id: "c1".into(),
             from_cursor: 0,
+            models: schema::declared_models(),
         }
         .encode()
         .unwrap();

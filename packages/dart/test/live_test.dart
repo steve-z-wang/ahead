@@ -1358,6 +1358,7 @@ void moreTests() {
         expect(subscribes[1], {
           'type': 'subscribe',
           'scopes': ['scope'],
+          'models': {'Entry': 1},
         });
         sockets[1].add(
           jsonEncode({

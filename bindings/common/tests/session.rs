@@ -169,7 +169,7 @@ fn streaming(host: &mut RuntimeHost, id: &Value, first: &Value) -> Value {
     let epoch = opened[0]["epoch"].clone();
     assert_eq!(
         serde_json::from_str::<Value>(opened[0]["subscribe"].as_str().unwrap()).unwrap(),
-        json!({"type":"subscribe","scopes":["book"]})
+        json!({"type":"subscribe","scopes":["book"],"models":{"Entry":1}})
     );
     let ack = json!({"type":"subscribed","scopes":["book"],"rejections":[]}).to_string();
     let requested = host

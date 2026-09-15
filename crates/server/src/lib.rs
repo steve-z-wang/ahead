@@ -227,6 +227,29 @@ impl Config {
         }
         Ok(c)
     }
+    /// Check a client's declared read contracts: every declared model must
+    /// exist and every declared version must be retained. Nothing is inferred
+    /// for a model the client did not declare; a page holding one is refused
+    /// by [`process_pull`] with the same code.
+    pub fn check_declared(&self, models: &BTreeMap<String, u64>) -> Result<()> {
+        for (name, version) in models {
+            if self.schema.model(name).is_err() {
+                return Err(Error::new(
+                    code::MODEL_VERSION_UNSUPPORTED,
+                    format!("model {name} is not served by this backend"),
+                )
+                .with_details(json!({"model":name,"version":version})));
+            }
+            if self.contract(name, *version).is_none() {
+                return Err(Error::new(
+                    code::MODEL_VERSION_UNSUPPORTED,
+                    format!("model {name} v{version} is not a retained read contract"),
+                )
+                .with_details(json!({"model":name,"version":version})));
+            }
+        }
+        Ok(())
+    }
     /// The read contract a loader of `version` serves for `model`, or `None`
     /// when that version is not retained.
     pub fn contract(&self, model: &str, version: u64) -> Option<&Schema> {
@@ -579,6 +602,7 @@ pub async fn process_pull(
 ) -> Result<String> {
     principal(owner)?;
     let request = PullRequest::decode(bytes).map_err(request_invalid)?;
+    config.check_declared(&request.models)?;
     let maximum = head(host, &request.channel).await?;
     if request.from_cursor > maximum {
         return Err(request_invalid("cursor ahead of head"));
@@ -628,10 +652,17 @@ pub async fn process_pull(
             .iter()
             .map(|i| changes[*i].identity.clone())
             .collect();
-        // Until clients declare the read contracts they expect, a pull is served
-        // at the schema's own version of each model, which is what every
-        // generated client of this schema reads.
-        let version = config.schema.model(&model).map_err(internal)?.version;
+        // Served at the version the client declared, by that version's loader,
+        // and normalized with that version's contract. A model the client did
+        // not declare is not in its read contract: refused as a whole until
+        // per-read isolation ([#95](https://github.com/zanminwang/ahead/issues/95)).
+        let version = *request.models.get(&model).ok_or_else(|| {
+            Error::new(
+                code::MODEL_VERSION_UNSUPPORTED,
+                format!("model {model} is not declared by the client"),
+            )
+            .with_details(json!({"model":model}))
+        })?;
         let contract = config
             .contract(&model, version)
             .ok_or_else(|| internal(format!("model {model} v{version} is not retained")))?;

@@ -205,6 +205,7 @@ Protocol refusals are answered with a status and a JSON body chosen by the engin
 | `client.owner_mismatch` | 403 | The client identity belongs to another user |
 | `gap`, `overlap` | 409 | The batch sequence is not the next one and not a retry of the last |
 | `mutation_version_unsupported` | 409 | A mutation version this backend does not serve; the body adds `ordinal`, `name` and `version` |
+| `model_version_unsupported` | 409 | A model read contract this backend does not serve: the client declared an unknown model or an unretained version (body adds `model` and `version`), or a page holds a model the client did not declare (body adds `model`). On the WebSocket the handshake closes with `1002` and this code as the reason. |
 | anything else | 500 `{ code: "server" }` | A server-side failure; the `EngineError` or thrown error goes to `onError` |
 
 ## Listener

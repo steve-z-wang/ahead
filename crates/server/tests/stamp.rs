@@ -70,10 +70,18 @@ impl Host for Fixed {
     }
 }
 fn pull_body() -> Vec<u8> {
+    pull_body_declaring(&[("Entry", 1)])
+}
+/// A pull on `a` from cursor 0 declaring these read contracts.
+fn pull_body_declaring(models: &[(&str, u64)]) -> Vec<u8> {
     ahead_core::PullRequest {
         client_id: "c".into(),
         channel: "a".into(),
         from_cursor: 0,
+        models: models
+            .iter()
+            .map(|(name, version)| ((*name).to_string(), *version))
+            .collect(),
     }
     .encode()
     .unwrap()
@@ -125,10 +133,21 @@ fn pull_normalizes_loader_rows_with_the_retained_contract_of_the_served_version(
         {"name":"Entry","version":2,"identity":["id"],"enums":[],"fields":c["schema"]["models"][0]["fields"].clone()}
     ]);
     let config = Config::decode(c).unwrap();
+    // An old client declares v1: the v1 loader runs and the v1 contract shapes the row.
     let text = run(ahead_server::process_pull(
         &config,
         "u",
-        &pull_body(),
+        &pull_body_declaring(&[("Entry", 1)]),
+        &host,
+    ))
+    .unwrap();
+    let page = ahead_core::PullPage::decode(text.as_bytes()).unwrap();
+    assert_eq!(page.changes[0].state, json!({"text":"t"}));
+    // A new client declares v2 for the same data: the v2 loader and contract.
+    let text = run(ahead_server::process_pull(
+        &config,
+        "u",
+        &pull_body_declaring(&[("Entry", 2)]),
         &host,
     ))
     .unwrap();
@@ -136,9 +155,69 @@ fn pull_normalizes_loader_rows_with_the_retained_contract_of_the_served_version(
     assert_eq!(page.changes[0].state, json!({"text":"t","note":null}));
     assert_eq!(
         *host.loaded.lock().unwrap(),
-        [2],
-        "the schema's own version is served"
+        [1, 2],
+        "each pull reaches the loader of the version it declared"
     );
+    // A declared version that is not retained, or a model this backend does
+    // not have, is refused before anything is scanned or loaded.
+    for (models, detail) in [
+        (&[("Entry", 3)][..], json!({"model":"Entry","version":3})),
+        (
+            &[("Entry", 2), ("Ghost", 1)][..],
+            json!({"model":"Ghost","version":1}),
+        ),
+    ] {
+        let err = run(ahead_server::process_pull(
+            &config,
+            "u",
+            &pull_body_declaring(models),
+            &host,
+        ))
+        .unwrap_err();
+        assert_eq!(
+            err.code,
+            ahead_server::code::MODEL_VERSION_UNSUPPORTED,
+            "{err}"
+        );
+        assert_eq!(err.details, detail, "{err}");
+    }
+    assert_eq!(
+        *host.loaded.lock().unwrap(),
+        [1, 2],
+        "a refused declaration loads nothing"
+    );
+}
+
+#[test]
+fn a_page_holding_a_model_the_client_did_not_declare_is_refused_whole() {
+    // Pending per-read isolation (#95): the pull is refused as a whole, with
+    // the model named, rather than skipped or served at a guessed version.
+    let host = Fixed::new(row(json!(7)), Value::Null);
+    let c = json!({
+        "schema":{"enums":[],"models":[
+            {"name":"Entry","identity":["id"],"fields":[
+                {"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}},
+                {"name":"text","nullable":false,"type":{"kind":"scalar","name":"string"}}]},
+            {"name":"Note","identity":["id"],"fields":[
+                {"name":"id","nullable":false,"type":{"kind":"scalar","name":"string"}}]}]},
+        "loaders":["Entry","Note"],
+        "mutations":[]
+    });
+    let config = Config::decode(c).unwrap();
+    let err = run(ahead_server::process_pull(
+        &config,
+        "u",
+        &pull_body_declaring(&[("Note", 1)]),
+        &host,
+    ))
+    .unwrap_err();
+    assert_eq!(
+        err.code,
+        ahead_server::code::MODEL_VERSION_UNSUPPORTED,
+        "{err}"
+    );
+    assert_eq!(err.details, json!({"model":"Entry"}));
+    assert!(host.loaded.lock().unwrap().is_empty(), "no loader ran");
 }
 
 #[test]
@@ -175,12 +254,42 @@ fn publish_requires_cursor_and_stamp_from_the_host() {
 fn live_negotiation_establishes_current_heads_and_rejects_cursor_modes() {
     let host = Fixed::new(json!([]), Value::Null);
     let result = run(ahead_server::live::negotiate(
+        &config(),
         "u",
-        br#"{"type":"subscribe","scopes":["a"]}"#,
+        br#"{"type":"subscribe","scopes":["a"],"models":{"Entry":1}}"#,
         &host,
     ))
     .unwrap();
     assert_eq!(result.subscriptions[0].from_cursor, 5);
+    assert_eq!(
+        result.models.get("Entry"),
+        Some(&1),
+        "the session keeps the declaration"
+    );
+    // The declaration is checked at the handshake, like a pull's.
+    for (frame, code) in [
+        (
+            r#"{"type":"subscribe","scopes":["a"]}"#,
+            ahead_server::code::REQUEST_INVALID,
+        ),
+        (
+            r#"{"type":"subscribe","scopes":["a"],"models":{"Entry":2}}"#,
+            ahead_server::code::MODEL_VERSION_UNSUPPORTED,
+        ),
+        (
+            r#"{"type":"subscribe","scopes":["a"],"models":{"Ghost":1}}"#,
+            ahead_server::code::MODEL_VERSION_UNSUPPORTED,
+        ),
+    ] {
+        let err = run(ahead_server::live::negotiate(
+            &config(),
+            "u",
+            frame.as_bytes(),
+            &host,
+        ))
+        .unwrap_err();
+        assert_eq!(err.code, code, "{frame}: {err}");
+    }
     for cursors in [
         json!({"a":0}),
         json!({}),
@@ -194,9 +303,11 @@ fn live_negotiation_establishes_current_heads_and_rejects_cursor_modes() {
         json!(null),
         json!([]),
     ] {
-        let request = json!({"type":"subscribe","scopes":["a"],"cursors":cursors});
+        let request =
+            json!({"type":"subscribe","scopes":["a"],"models":{"Entry":1},"cursors":cursors});
         assert!(
             run(ahead_server::live::negotiate(
+                &config(),
                 "u",
                 request.to_string().as_bytes(),
                 &host
