@@ -311,3 +311,49 @@ test('concurrent notifies of one record receive distinct stamps',async()=>{
  const record=await db.$queryRawUnsafe(`SELECT stamp FROM ahead_record WHERE model='Task' AND identity_key='{"id":"stamp-race"}'`);assert.equal(Number(record[0].stamp),4);
  const page=await pull('race-stamp',0);assert.equal(page.changes.length,1);assert.equal(page.changes[0].stamp,4);
 });
+import {createServer as createProxyServer,request as httpRequest} from 'node:http';
+import {connect as tcpConnect} from 'node:net';
+/** A minimal reverse proxy: plain HTTP forwarding plus a TCP pass-through of the WebSocket upgrade, optionally stripping headers. */
+async function reverseProxy(upstreamUrl,{strip=[]}={}){
+ const target=new URL(upstreamUrl);
+ const forwardHeaders=headers=>{const copy={...headers};for(const name of strip)delete copy[name];return copy;};
+ const proxy=createProxyServer((req,res)=>{
+  const out=httpRequest({host:target.hostname,port:target.port,method:req.method,path:req.url,headers:forwardHeaders(req.headers)},up=>{res.writeHead(up.statusCode,up.headers);up.pipe(res);});
+  out.on('error',()=>{res.statusCode=502;res.end();});req.pipe(out);
+ });
+ proxy.on('upgrade',(req,socket,head)=>{
+  const upstream=tcpConnect(Number(target.port),target.hostname,()=>{
+   const lines=[`${req.method} ${req.url} HTTP/1.1`,...Object.entries(forwardHeaders(req.headers)).map(([k,v])=>`${k}: ${Array.isArray(v)?v.join(', '):v}`)];
+   upstream.write(lines.join('\r\n')+'\r\n\r\n');if(head.length)upstream.write(head);
+   socket.pipe(upstream);upstream.pipe(socket);
+  });
+  upstream.on('error',()=>socket.destroy());socket.on('error',()=>upstream.destroy());
+ });
+ await new Promise(resolve=>proxy.listen(0,'127.0.0.1',resolve));
+ return {url:`http://127.0.0.1:${proxy.address().port}`,close:()=>new Promise(resolve=>{proxy.closeAllConnections();proxy.close(()=>resolve());})};
+}
+test('a reverse proxy forwarding HTTP and the WebSocket upgrade with headers serves push, pull and live; a stripped Authorization header is refused',async()=>{
+ const server=await backend.listen({port:0});const proxy=await reverseProxy(server.url);
+ try{
+  const pushed=await fetch(`${proxy.url}/sync/mutations`,{method:'POST',headers:{authorization:'Bearer alice'},body:push('proxied',1,[mutation(1,'through proxy','proxy-a')])});
+  assert.equal(pushed.status,200);assert.deepEqual((await pushed.json()).rejections,[]);
+  const seen=[];for(let fromCursor=0;;){const page=await fetch(`${proxy.url}/sync/pull`,{method:'POST',headers:{authorization:'Bearer alice'},body:JSON.stringify({clientId:'c',scope:'shared',fromCursor})});
+   assert.equal(page.status,200);const body=await page.json();seen.push(...body.changes);if(body.changes.length<50)break;fromCursor=body.toCursor;}
+  assert.ok(seen.some(c=>c.identity.id==='proxy-a'&&c.state.title==='through proxy'),'the pushed record is pulled through the proxy');
+  const socket=new serverSdk.WebSocket(`${proxy.url.replace('http','ws')}/sync/live`,{headers:{authorization:'Bearer alice'}});
+  await new Promise((resolve,reject)=>{socket.on('open',resolve);socket.on('error',reject);});
+  const frames=[];socket.on('message',data=>frames.push(JSON.parse(String(data))));
+  socket.send(JSON.stringify({type:'subscribe',scopes:['shared']}));while(frames.length<1)await delay(5);
+  assert.equal(frames[0].type,'subscribed');
+  await backend.push('alice',push('proxied',2,[mutation(2,'live through proxy','proxy-a')]));
+  while(frames.length<2)await delay(5);assert.equal(frames.at(-1).changes.at(-1).state.title,'live through proxy');
+  socket.close();await new Promise(resolve=>socket.on('close',resolve));
+  const stripping=await reverseProxy(server.url,{strip:['authorization']});
+  try{
+   const denied=await fetch(`${stripping.url}/sync/pull`,{method:'POST',headers:{authorization:'Bearer alice'},body:'{}'});assert.equal(denied.status,401);
+   const refused=new serverSdk.WebSocket(`${stripping.url.replace('http','ws')}/sync/live`,{headers:{authorization:'Bearer alice'}});
+   const failure=await new Promise(resolve=>{refused.on('error',resolve);refused.on('open',()=>resolve(null));});
+   assert.ok(failure,'the upgrade is refused without the header');assert.match(String(failure.message),/401/);
+  }finally{await stripping.close();}
+ }finally{await proxy.close();await server.close();}
+});

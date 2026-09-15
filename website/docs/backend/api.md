@@ -38,6 +38,21 @@ The generated `Options<Tx>` requires:
 
 Optional options are `translateRejection`, `onError`, `loaderHooks` and `native`, described below. The generated function binds the schema and returns the backend synchronously. The generic function in `packages/server/index.mts` additionally requires `config`; normal generated integrations do not pass it.
 
+## What your backend owns
+
+The Rust runtime processes the sync protocol and nothing else. The rules below are yours to implement; the runtime neither enforces nor checks them, and the schema does not make it do so.
+
+| Rule | Who owns it | What the runtime does |
+| --- | --- | --- |
+| Authorization | Handlers decide what `userId` may write; loaders decide what `userId` may see on `channel` and return `null` for the rest. | Authenticates the request and passes `userId` and `channel` through. There is no channel-level policy. |
+| Unique constraints and identities | Your database schema. `@@unique` and `@@id` are enforced on the client only; the client's local database refuses a violating write, but nothing checks the server. | Decodes identities and patches by shape. A duplicate that your database allows is stored. |
+| Child deletion | Your handler. `onTargetDelete: delete` is a client-side cascade: the client deletes the children locally, and those deletes never reach the server. A handler that deletes a parent must delete its children itself and notify each channel that delivered them. | Delivers the parent's delete when the handler notifies it. |
+| Client identity | Each signed-in user gets their own local client database. A client id is bound to the first user that pushed with it; a push from another user with the same client id answers `403 client.owner_mismatch`, and there is no reassignment. | Stores the owner with the client row. |
+| Backend language | TypeScript on Node, through the generated `createBackend`. The Dart package is a client SDK; there is no Dart or Rust-hosted backend. | Runs the same Rust engine inside the Node addon. |
+| Prerequisite expressions | `@requires(Name(field: self))` is the only supported form: every argument is `self`, the value of the annotated field. The runner that satisfies prerequisites is client code. | Never sees prerequisites; they gate when the client sends a mutation, not what the backend receives. |
+
+These are accepted limits of the current runtime, not planned features. See [deployment](deployment.md) for the process and network boundaries.
+
 ## Handlers
 
 ```ts
@@ -106,7 +121,17 @@ export const loaders: Loaders<Prisma.TransactionClient> = {
 | `userId` | Caller whose visibility must be checked |
 | `channel` | Channel whose synchronization requested these records |
 
-A loader returns `Promise<readonly (Record | null)[]>`. Return exactly one item per identity, in the same order. Each record must be complete and match the generated model type. Return null when the record is missing or no longer visible. Do not filter out missing rows or return a differently ordered database result directly.
+A loader returns `Promise<readonly (Record | null)[]>`. Return exactly one item per identity, in the same order. Do not filter out missing rows or return a differently ordered database result directly.
+
+What each item may be:
+
+| Item | Meaning | Result |
+| --- | --- | --- |
+| A row object | The record's current state for this user on this channel | Delivered to the client with a new stamp |
+| `null` | The record does not exist, or this user must not see it on this channel | Delivered as a deletion; the client removes the record if no other channel still claims it |
+| `undefined`, a missing entry, a non-array result | A defect | The pull fails with `500 server` and `onError`; the client's cursor does not move |
+
+A row object must match the generated model type exactly. Include every non-identity field: a nullable field that is absent reads as `null`, but an absent non-nullable field is a defect. The identity fields may be present. Any other property, such as an extra database column or a relation object, is a defect. Map your rows to the model type rather than returning a wider database row.
 
 Loaders run during synchronization, not when the app calls local `get`, `query` or `watch`. A malformed result or thrown error fails the request; the backend does not silently skip the failed loader result and advance its cursor.
 
@@ -160,6 +185,8 @@ Unexpected exceptions abort the batch transaction. Do not translate every except
 | `POST /sync/mutations` | Receive mutation batches |
 | `POST /sync/pull` | Materialize changed records through loaders for catch-up and gap recovery |
 | `/sync/live` (WebSocket) | Subscribe to channels and stream ongoing record changes |
+
+The listener has no TLS, CORS or proxy-header handling and binds to loopback by default; run it behind a reverse proxy as described in [Deploy the backend](deployment.md).
 
 Generated clients use all three routes automatically from one `server` configuration. The WebSocket subscription acknowledgement confirms that channel listeners are installed before HTTP catch-up starts, so changes during catch-up can be queued and reconciled. Listener errors reject. `await server.close()` releases the listener and its live connections; your application must separately close its database pool. The supported listener owns its server; mounting into an application-owned HTTP server is not currently exposed.
 

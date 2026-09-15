@@ -20,6 +20,7 @@ Application-facing contracts ([Typed API / Server](../sdks/typed-api/server.md) 
 - A **handler** receives the decoded input (one value per slot), the transaction, the user id and `notify`. It returns nothing or `{channel}`. Throwing `MutationRejected`, or an error `translateRejection` maps to a code, rejects that one mutation; any other error aborts the whole batch.
 - A **loader** receives identities, the transaction, the user id and the channel that asked. It returns one row or `null` per identity, in order. `null` means "not visible or deleted" and is delivered as a delete; a missing entry or `undefined` is a defect.
 - `authenticate(request)` returns the user id or null. Handlers and loaders own application authorization; the framework does not enforce channel-level policy ([#22](https://github.com/zanminwang/ahead/issues/22)).
+- The application also owns unique and identity constraints on the server, child deletion (`onTargetDelete` is a client-side cascade), and one local database per signed-in user; the backend is TypeScript on Node only, and prerequisite arguments are `self` only. These accepted limits are stated for authors in [What your backend owns](../../../../website/docs/backend/api.md#what-your-backend-owns).
 
 ## 5. Building Block View
 
@@ -51,4 +52,4 @@ Tests read, not executed.
 
 **Technical debt: the host operation set is an untyped string contract implemented three times** (the TypeScript host, the simulation host, the test host). Adding an operation or a field is a manual three-way change with no shared definition.
 
-**Accepted limitation, worth documenting for authors.** A loader must return exactly the schema's fields; a row with extra columns fails normalization and aborts the pull with a 500. Evidence: `normalize_state` in `process_pull`; the loader-defect test above.
+**Accepted limitation.** A loader must return exactly the schema's fields: identity fields may be present, an absent nullable field reads as `null`, an absent non-nullable field or any extra property fails normalization and aborts the pull with a 500. Evidence: `normalize_state` in `process_pull`; the loader-defect test above. Documented for authors under [Loaders](../../../../website/docs/backend/api.md#loaders).
