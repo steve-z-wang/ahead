@@ -371,3 +371,27 @@ fn push_batches_hold_one_to_twenty_mutations_with_distinct_ordinals() {
     let zero = json!({"clientId":"c","batchSequence":1,"mutations":[{"ordinal":0,"name":"edit","operations":[]}]}).to_string();
     assert!(PushRequest::decode(zero.as_bytes()).is_err());
 }
+
+#[test]
+fn push_and_pull_requests_refuse_a_blank_client_id() {
+    let mutations = json!([{"ordinal":1,"name":"edit","operations":[]}]);
+    for blank in ["", "   "] {
+        let push = json!({"clientId":blank,"batchSequence":1,"mutations":mutations}).to_string();
+        assert!(
+            PushRequest::decode(push.as_bytes()).is_err(),
+            "push {blank:?}"
+        );
+        let pull = json!({"clientId":blank,"scope":"a","fromCursor":0}).to_string();
+        assert!(
+            PullRequest::decode(pull.as_bytes()).is_err(),
+            "pull {blank:?}"
+        );
+    }
+    let push = json!({"clientId":"c","batchSequence":1,"mutations":mutations}).to_string();
+    assert_eq!(PushRequest::decode(push.as_bytes()).unwrap().client_id, "c");
+    let missing = json!({"batchSequence":1,"mutations":mutations}).to_string();
+    assert!(
+        PushRequest::decode(missing.as_bytes()).is_err(),
+        "missing clientId"
+    );
+}

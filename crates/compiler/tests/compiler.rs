@@ -218,3 +218,62 @@ fn rejects_reserved_model_names_at_the_declaration() {
         );
     }
 }
+
+#[test]
+fn structural_refusals_a_schema_author_is_likely_to_hit() {
+    // Each case names the rule, the input that breaks it and a valid twin that
+    // differs only in that rule, so the refusal is attributable to the rule alone.
+    let cases: &[(&str, &str, &str, &str)] = &[
+        (
+            "duplicate field",
+            "model A {\n id UUID\n text String\n text String\n @@id(id)\n}",
+            "model A {\n id UUID\n text String\n note String\n @@id(id)\n}",
+            "duplicate field",
+        ),
+        (
+            "reference identity arity mismatch",
+            "model Parent { id UUID kind String @@id(id, kind) }\nmodel Child {\n id UUID\n parentId UUID\n parent Parent @reference(via: [parentId])\n @@id(id)\n}",
+            "model Parent { id UUID kind String @@id(id, kind) }\nmodel Child {\n id UUID\n parentId UUID\n parentKind String\n parent Parent @reference(via: [parentId, parentKind])\n @@id(id)\n}",
+            "reference identity arity mismatch",
+        ),
+        (
+            "reference field type mismatch",
+            "model Parent { id UUID @@id(id) }\nmodel Child {\n id UUID\n parentId String\n parent Parent @reference(via: [parentId])\n @@id(id)\n}",
+            "model Parent { id UUID @@id(id) }\nmodel Child {\n id UUID\n parentId UUID\n parent Parent @reference(via: [parentId])\n @@id(id)\n}",
+            "reference field type mismatch",
+        ),
+        (
+            "unknown reference argument",
+            "model Parent { id UUID @@id(id) }\nmodel Child {\n id UUID\n parentId UUID\n parent Parent @reference(via: [parentId], cascade: true)\n @@id(id)\n}",
+            "model Parent { id UUID @@id(id) }\nmodel Child {\n id UUID\n parentId UUID\n parent Parent @reference(via: [parentId], onTargetDelete: delete)\n @@id(id)\n}",
+            "unknown reference argument",
+        ),
+        (
+            "ambiguous inverse",
+            "model Parent {\n id UUID\n children Child[]\n @@id(id)\n}\nmodel Child {\n id UUID\n parentId UUID\n otherId UUID\n parent Parent @reference(via: [parentId])\n other Parent @reference(via: [otherId])\n @@id(id)\n}",
+            "model Parent {\n id UUID\n children Child[] @inverse(owner)\n @@id(id)\n}\nmodel Child {\n id UUID\n parentId UUID\n otherId UUID\n parent Parent @reference(owner, via: [parentId])\n other Parent @reference(via: [otherId])\n @@id(id)\n}",
+            "inverse must resolve to exactly one reference",
+        ),
+        (
+            "binding parent must be a single slot of the referenced model",
+            "model Parent { id UUID @@id(id) }\nmodel Child { id UUID parentId UUID parent Parent @reference(via: [parentId]) @@id(id) }\nmutation Add {\n parents Parent.create[]\n child Child.create(parent: parents)\n}",
+            "model Parent { id UUID @@id(id) }\nmodel Child { id UUID parentId UUID parent Parent @reference(via: [parentId]) @@id(id) }\nmutation Add {\n parent Parent.create\n child Child.create(parent: parent)\n}",
+            "binding parent must be single matching model",
+        ),
+        (
+            "sequence target model mismatch",
+            "model A { id UUID @@id(id) }\nmodel B { id UUID @@id(id) }\nmutation First { a A.create }\nmutation Second {\n b B.create\n @@sequence(after: [First(a: b)])\n}",
+            "model A { id UUID text String @@id(id) }\nmutation First { a A.create }\nmutation Second {\n a A.update<text>\n @@sequence(after: [First(a: a)])\n}",
+            "sequence target model mismatch",
+        ),
+    ];
+    for (rule, invalid, valid, message) in cases {
+        let e = compile(invalid).unwrap_err();
+        assert!(e.contains(message), "{rule}: expected {message:?} in {e:?}");
+        assert!(
+            compile(valid).is_ok(),
+            "{rule}: the valid twin was refused: {:?}",
+            compile(valid).err()
+        );
+    }
+}

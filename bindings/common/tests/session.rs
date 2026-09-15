@@ -257,3 +257,61 @@ fn incoming_overlap_is_identical_with_or_without_http_request_metadata() {
         }
     }
 }
+
+/// The two refusals every language binding relies on to keep its transaction
+/// object honest: a transaction-scoped command after the session ended is
+/// `transaction_closed`, and a sync command while a session is open is refused
+/// as `client transaction active`. Both are asserted directly here; the JS and
+/// Dart suites see them only as thrown errors.
+#[test]
+fn transaction_scoped_commands_and_sync_commands_are_refused_by_code() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut host = RuntimeHost::default();
+    let schema: Value =
+        serde_json::from_str(include_str!("../../../fixtures/schemas/entry.json")).unwrap();
+    let opened = host
+        .call(json!({"op":"open","path":dir.path().join("db"),"schema":schema,"owner":"u"}))
+        .unwrap();
+    let id = opened["value"]["handle"].clone();
+    let key = json!({"model":"Entry","identity":{"id":"e"}});
+    // No session yet: a transaction-scoped read is refused, a plain one is served.
+    let refused = host
+        .call(json!({"op":"read","handle":id,"key":key,"transaction":true}))
+        .unwrap_err();
+    assert_eq!(refused.to_string(), "transaction_closed");
+    assert!(
+        host.call(json!({"op":"read","handle":id,"key":key}))
+            .unwrap()["value"]
+            .is_null()
+    );
+    host.call(json!({"op":"begin","handle":id})).unwrap();
+    host.call(json!({"op":"direct","handle":id,"transaction":true,"operation":{"model":"Entry","op":"create","identity":{"id":"e"},"values":{"text":"hi"}}})).unwrap();
+    // While the session is open, sync commands are refused and change nothing.
+    for op in ["freeze", "status", "tasks"] {
+        let e = host.call(json!({"op":op,"handle":id})).unwrap_err();
+        assert_eq!(e.to_string(), "client transaction active", "{op}");
+    }
+    host.call(json!({"op":"commit","handle":id})).unwrap();
+    // After the commit the same transaction-scoped read is closed again, the
+    // committed row is visible to a plain read, and sync commands work.
+    let refused = host
+        .call(json!({"op":"read","handle":id,"key":key,"transaction":true}))
+        .unwrap_err();
+    assert_eq!(refused.to_string(), "transaction_closed");
+    assert_eq!(
+        host.call(json!({"op":"read","handle":id,"key":key}))
+            .unwrap()["value"]["text"],
+        "hi"
+    );
+    assert_eq!(
+        host.call(json!({"op":"status","handle":id})).unwrap()["value"]["pending"],
+        0
+    );
+    host.call(json!({"op":"close","handle":id})).unwrap();
+    assert_eq!(
+        host.call(json!({"op":"status","handle":id}))
+            .unwrap_err()
+            .to_string(),
+        "client_closed"
+    );
+}
