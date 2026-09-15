@@ -30,5 +30,5 @@ Code: parsing in [compiler/parse.rs](../../../../crates/compiler/src/parse.rs); 
 
 ## 11. Risks and Technical Debt
 
-- **Problem: no field default in the grammar.** `FieldDescriptor.default` exists and reconciliation uses it, but the compiler cannot emit it. Consequence: every `create` must spell out every non-nullable field, and adding a non-nullable field to a model with local data cannot open ([Reconciliation](../client/storage/reconciliation.md)). Evidence: no default attribute in [compiler/lib.rs](../../../../crates/compiler/src/lib.rs). Tracked in [#27](https://github.com/zanminwang/ahead/issues/27).
+- **Problem: no field default in the grammar.** `FieldDescriptor.default` exists and reconciliation uses it, but the compiler cannot emit it. Consequence: every `create` must spell out every non-nullable field, and adding a non-nullable field to a model with local data cannot open ([Reconciliation](../client/storage/reconciliation.md)). Evidence: no default attribute in [compiler/parse.rs](../../../../crates/compiler/src/parse.rs). Tracked in [#27](https://github.com/zanminwang/ahead/issues/27).
 - **Accepted limitation:** unique constraints and identities are enforced on the client only; the application's database schema is authoritative on the server.
