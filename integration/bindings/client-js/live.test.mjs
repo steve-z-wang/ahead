@@ -260,3 +260,30 @@ test('bounded receive overflow preserves in-flight HTTP progress and recovers th
   assert.ok(network.requests.length<=4,'bounded queue coalesces recovery work');
  }finally{gate.resolve();await fixture.close();await network.close();}
 });
+
+test('push succeeds while the WebSocket upgrade is refused; nothing settles until the upgrade is allowed and HTTP catch-up runs',async()=>{
+ const fixture=await openClient();const {client}=fixture;const errors=[];
+ let allowUpgrades=false,upgradeAttempts=0,pushes=0,pulls=0;
+ const server=createServer(async(req,res)=>{const chunks=[];for await(const c of req)chunks.push(c);const body=JSON.parse(Buffer.concat(chunks));
+  if(req.url==='/sync/mutations'){pushes++;res.end(JSON.stringify({requiredScope:'scope',requiredSyncId:1,requiredCheckpoints:[{scope:'scope',syncId:1}],rejections:[]}));return;}
+  pulls++;res.end(JSON.stringify(page('from catch-up',body.fromCursor)));});
+ const ws=new WebSocketServer({noServer:true});
+ server.on('upgrade',(req,socket,head)=>{upgradeAttempts++;if(!allowUpgrades){socket.end('HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n');return;}ws.handleUpgrade(req,socket,head,s=>{s.on('message',m=>s.send(JSON.stringify({type:'subscribed',scopes:JSON.parse(m).scopes,rejections:[]})));});});
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ try{
+  await client.transaction(tx=>tx.direct({model:'Entry',op:'create',identity:{id:'live'},values:{text:'local'}}));
+  await client.subscribe('scope');
+  await client.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'live'},values:{text:'edited offline'}}]});
+  await client.connect({url:`http://127.0.0.1:${server.address().port}`,token:'secret'},{onError:e=>errors.push(e)});
+  await until(()=>pushes===1&&upgradeAttempts>=2);
+  assert.equal(pulls,0,'no HTTP catch-up runs without an acknowledged WebSocket: there is no polling fallback');
+  assert.equal((await client.status()).pending,1,'the accepted mutation waits for a checkpoint no page has delivered');
+  assert.equal((await client.read('Entry',{id:'live'})).text,'edited offline');
+  assert.ok(errors.some(e=>/live failed: 503/.test(String(e.message))),`upgrade refusals reach onError: ${errors.map(e=>e.message)}`);
+  allowUpgrades=true;
+  await until(async()=>(await client.status()).pending===0);
+  assert.equal(pushes,1,'the receipt was not re-requested');
+  assert.ok(pulls>=1,'catch-up ran over HTTP once the upgrade was acknowledged');
+  assert.equal((await client.read('Entry',{id:'live'})).text,'from catch-up');
+ }finally{await fixture.close();for(const s of ws.clients)s.terminate();await new Promise(r=>ws.close(r));await new Promise(r=>server.close(r));}
+});
