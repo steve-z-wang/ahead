@@ -127,8 +127,8 @@ What each item may be:
 
 | Item | Meaning | Result |
 | --- | --- | --- |
-| A row object | The record's current state for this user on this channel | Delivered to the client with a new stamp |
-| `null` | The record does not exist, or this user must not see it on this channel | Delivered as a deletion; the client removes the record if no other channel still claims it |
+| A row object | The record's current state for this user on this channel | Delivered with the stamp stored by the record's publication |
+| `null` | The record does not exist, or this user must not see it on this channel | Delivered as a deletion. A newer stamp clears the authoritative row even if another channel still claims it; pending local operations are replayed on that state. |
 | `undefined`, a missing entry, a non-array result | A defect | The pull fails with `500 server` and `onError`; the client's cursor does not move |
 
 A row object must match the generated model type exactly. Include every non-identity field: a nullable field that is absent reads as `null`, but an absent non-nullable field is a defect. The identity fields may be present. Any other property, such as an extra database column or a relation object, is a defect. Map your rows to the model type rather than returning a wider database row.
