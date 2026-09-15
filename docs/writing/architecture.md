@@ -13,10 +13,10 @@
 
 ## Style
 
-- **Clarity:** Use plain language and explain unfamiliar terms.
+- **Clarity:** Give the simplest explanation a reader unfamiliar with the component can understand. Use plain language and explain unfamiliar terms.
 - **Precision:** Use concrete wording; avoid vague claims.
 - **Consistency:** Use the same term for the same concept.
-- **Concision:** Remove repetition while preserving the context needed to understand the design.
+- **Concision:** Remove repetition while preserving necessary context, causes and exceptions. Ease of understanding matters more than word count.
 
 ## Sections
 
@@ -29,7 +29,7 @@ Select sections for the system or component being documented.
 3. **Context and Scope.** Boundaries, dependencies and external interfaces: operations, inputs and outputs.
 4. **Solution Strategy.** The overall approach to meeting the goals.
 5. **Building Block View.** Internal components and responsibilities, with code links. For a leaf, identify its implementation without inventing further subdivisions.
-6. **Runtime View.** Interactions, state transitions, ordering and recovery.
+6. **Runtime View.** Interactions, state transitions, ordering and recovery. Where child documents do not explain the overall flow, show how the children work together in the parent document.
 7. **Deployment View.** Process, device and infrastructure placement.
 8. **Crosscutting Concepts.** Mechanisms shared across components; link to their owning document.
 9. **Architecture Decisions.** Significant choices, alternatives and consequences.
@@ -49,11 +49,13 @@ arc42 [does not prescribe a universal required/optional checklist](https://faq.a
 
 ### Component scope
 
-- Cover the component's own scope; link to shared explanations and code instead of repeating them. Choose paragraphs, lists, trees or diagrams to suit the content.
+- Explain the component's responsibilities, rules and interactions before implementation details. Link to shared explanations and code instead of repeating them.
+- Choose the form that makes each explanation easiest to understand: paragraphs, examples, lists, tables, trees or diagrams. Do not force one format across sections or add visuals without a clear purpose.
 
 ### Splitting components
 
-- Follow the [component tree](../engineering/architecture.md). Keep simple components in one file; split complex components by responsibility. READMEs contain links and brief descriptions.
+- Follow the [component tree](../engineering/architecture.md). Keep simple components in one file; split complex components by responsibility.
+- Decide what each parent needs to explain. A grouping may need only a brief description and links; when the children leave their collaboration unclear, explain it in the parent's README without repeating their details. Do not require a full document at every level.
 - Preserve agreed ownership boundaries. After splitting, update the tree, graph, code map and incoming links.
 
 ### Decisions and risks
