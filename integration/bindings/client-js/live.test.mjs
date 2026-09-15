@@ -287,3 +287,52 @@ test('push succeeds while the WebSocket upgrade is refused; nothing settles unti
   assert.equal((await client.read('Entry',{id:'live'})).text,'from catch-up');
  }finally{await fixture.close();for(const s of ws.clients)s.terminate();await new Promise(r=>ws.close(r));await new Promise(r=>server.close(r));}
 });
+test('a 401 on both lanes at once shares one refreshAuth; both lanes recover with the new token',async()=>{
+ const fixture=await openClient();const {client}=fixture;const errors=[];
+ let token='expired',refreshes=0,unauthorized=0,pushes=0,accepted=0,release;const gate=new Promise(r=>{release=r;});
+ const server=createServer(async(req,res)=>{const chunks=[];for await(const c of req)chunks.push(c);const body=JSON.parse(Buffer.concat(chunks));
+  if(req.headers.authorization!=='Bearer valid'){unauthorized++;res.statusCode=401;res.end();return;}
+  if(req.url==='/sync/mutations'){pushes++;res.end(JSON.stringify({requiredScope:'other',requiredSyncId:1,requiredCheckpoints:[{scope:'other',syncId:1}],rejections:[]}));return;}
+  res.end(JSON.stringify({scope:'scope',fromCursor:body.fromCursor,toCursor:body.fromCursor,changes:[]}));});
+ const ws=new WebSocketServer({noServer:true});
+ server.on('upgrade',(req,socket,head)=>{if(req.headers.authorization!=='Bearer valid'){unauthorized++;socket.end('HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n');return;}ws.handleUpgrade(req,socket,head,s=>{accepted++;s.on('message',m=>s.send(JSON.stringify({type:'subscribed',scopes:JSON.parse(m).scopes,rejections:[]})));});});
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ try{
+  await client.transaction(tx=>tx.direct({model:'Entry',op:'create',identity:{id:'live'},values:{text:'local'}}));
+  await client.subscribe('scope');
+  await client.mutate({name:'Edit',operations:[{model:'Entry',op:'update',identity:{id:'live'},values:{text:'edited offline'}}]});
+  await client.connect({url:`http://127.0.0.1:${server.address().port}`,token:()=>token},{onError:e=>errors.push(e),refreshAuth:async()=>{refreshes++;await gate;token='valid';}});
+  await until(()=>unauthorized>=2);
+  await new Promise(r=>setTimeout(r,100));
+  assert.equal(unauthorized,2,'each lane was refused once and neither retried while the refresh was pending');
+  assert.equal(refreshes,1,'the second lane joined the pending refresh instead of starting another');
+  release();
+  await until(()=>accepted>=1&&pushes>=1);
+  await until(async()=>(await client.status()).pending===0);
+  assert.equal(refreshes,1,'no further refresh once the token is valid');
+  assert.equal(unauthorized,2);
+ }finally{await fixture.close();for(const s of ws.clients)s.terminate();await new Promise(r=>ws.close(r));await new Promise(r=>server.close(r));}
+});
+test('a socket the server closes is reconnected after the backoff, resubscribed, and streaming resumes',async()=>{
+ const fixture=await openClient();const {client}=fixture;const errors=[];const t0=Date.now();const upgrades=[];const subscribes=[];const sockets=[];
+ const server=createServer(async(req,res)=>{const chunks=[];for await(const c of req)chunks.push(c);const body=JSON.parse(Buffer.concat(chunks));res.end(JSON.stringify({scope:'scope',fromCursor:body.fromCursor,toCursor:body.fromCursor,changes:[]}));});
+ const ws=new WebSocketServer({noServer:true});
+ server.on('upgrade',(req,socket,head)=>{upgrades.push(Date.now()-t0);ws.handleUpgrade(req,socket,head,s=>{sockets.push(s);s.on('message',m=>{subscribes.push(JSON.parse(m));s.send(JSON.stringify({type:'subscribed',scopes:JSON.parse(m).scopes,rejections:[]}));});});});
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ try{
+  await client.transaction(tx=>tx.direct({model:'Entry',op:'create',identity:{id:'live'},values:{text:'local'}}));
+  await client.subscribe('scope');
+  await client.connect({url:`http://127.0.0.1:${server.address().port}`,token:'secret'},{onError:e=>errors.push(e)});
+  await until(()=>subscribes.length===1);
+  const closedAt=Date.now()-t0;sockets[0].close(1001,'closing');
+  await until(()=>upgrades.length===2);
+  const waited=upgrades[1]-closedAt;
+  assert.ok(waited>=180,`the reconnect waited ${waited} ms; the first retry is due 250 ms later, minus 20% jitter`);
+  assert.ok(errors.some(e=>/live disconnected: 1001/.test(String(e.message))),`the close reaches onError: ${errors.map(e=>e.message)}`);
+  await until(()=>subscribes.length===2);
+  assert.deepEqual(subscribes[1],{type:'subscribe',scopes:['scope']},'the new socket subscribes again without an application event');
+  sockets[1].send(JSON.stringify(page('after reconnect',0)));
+  await until(async()=>(await client.read('Entry',{id:'live'}))?.text==='after reconnect');
+  assert.equal(upgrades.length,2,'one reconnect; no busy loop');
+ }finally{await fixture.close();for(const s of ws.clients)s.terminate();await new Promise(r=>ws.close(r));await new Promise(r=>server.close(r));}
+});

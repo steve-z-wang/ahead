@@ -1059,4 +1059,303 @@ void moreTests() {
       }
     },
   );
+
+  test(
+    'a 401 on both lanes at once shares one refreshAuth; both lanes recover with the new token',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('ahead-dart-refresh-');
+      final schema =
+          jsonDecode(
+                await File('../../fixtures/schemas/entry.json').readAsString(),
+              )
+              as Map<String, dynamic>;
+      final client = await Client.open(
+        path: '${dir.path}/db',
+        schema: schema,
+        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+      );
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      var token = 'expired', refreshes = 0, unauthorized = 0, pushes = 0;
+      final gate = Completer<void>();
+      final accepted = Completer<void>();
+      final errors = <Object>[];
+      final sockets = <WebSocket>[];
+      server.listen((request) async {
+        if (request.headers.value('authorization') != 'Bearer valid') {
+          unauthorized++;
+          request.response.statusCode = 401;
+          await request.response.close();
+          return;
+        }
+        if (request.uri.path == '/sync/mutations') {
+          pushes++;
+          await utf8.decoder.bind(request).join();
+          request.response.write(
+            jsonEncode({
+              'requiredScope': 'other',
+              'requiredSyncId': 1,
+              'requiredCheckpoints': [
+                {'scope': 'other', 'syncId': 1},
+              ],
+              'rejections': <Object>[],
+            }),
+          );
+          await request.response.close();
+          return;
+        }
+        if (request.uri.path == '/sync/pull') {
+          final pull =
+              jsonDecode(await utf8.decoder.bind(request).join()) as Map;
+          request.response.write(
+            jsonEncode({
+              'scope': pull['scope'],
+              'fromCursor': pull['fromCursor'],
+              'toCursor': pull['fromCursor'],
+              'changes': <Object>[],
+            }),
+          );
+          await request.response.close();
+          return;
+        }
+        final socket = await WebSocketTransformer.upgrade(request);
+        sockets.add(socket);
+        socket.listen((message) {
+          final sub = jsonDecode(message as String) as Map;
+          socket.add(
+            jsonEncode({
+              'type': 'subscribed',
+              'scopes': sub['scopes'],
+              'rejections': <Object>[],
+            }),
+          );
+          if (!accepted.isCompleted) accepted.complete();
+        });
+      });
+      Future<void> until(bool Function() predicate, String label) async {
+        final deadline = DateTime.now().add(const Duration(seconds: 5));
+        while (!predicate()) {
+          if (DateTime.now().isAfter(deadline)) {
+            throw StateError(
+              '$label: refreshes=$refreshes unauthorized=$unauthorized '
+              'pushes=$pushes errors=$errors',
+            );
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+      }
+
+      try {
+        await client.transaction((tx) async {
+          await tx.direct({
+            'model': 'Entry',
+            'op': 'create',
+            'identity': {'id': 'live'},
+            'values': {'text': 'local'},
+          });
+        });
+        await client.subscribe('scope');
+        await client.mutate({
+          'name': 'Edit',
+          'operations': [
+            {
+              'model': 'Entry',
+              'op': 'update',
+              'identity': {'id': 'live'},
+              'values': {'text': 'edited offline'},
+            },
+          ],
+        });
+        final connection = await client.connect(
+          SyncServer(
+            url: 'http://127.0.0.1:${server.port}',
+            token: () => token,
+          ),
+          onError: errors.add,
+          refreshAuth: () async {
+            refreshes++;
+            await gate.future;
+            token = 'valid';
+          },
+        );
+        await until(() => unauthorized >= 2, 'both lanes refused');
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        expect(
+          unauthorized,
+          2,
+          reason:
+              'each lane was refused once and neither retried while the refresh was pending',
+        );
+        expect(
+          refreshes,
+          1,
+          reason:
+              'the second lane joined the pending refresh instead of starting another',
+        );
+        gate.complete();
+        await until(
+          () => accepted.isCompleted && pushes >= 1,
+          'both lanes recovered',
+        );
+        var status = await client.status();
+        final settled = DateTime.now().add(const Duration(seconds: 5));
+        while (status['pending'] != 0 && DateTime.now().isBefore(settled)) {
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+          status = await client.status();
+        }
+        expect(status['pending'], 0);
+        expect(
+          refreshes,
+          1,
+          reason: 'no further refresh once the token is valid',
+        );
+        expect(unauthorized, 2);
+        await connection.close();
+      } finally {
+        if (!gate.isCompleted) gate.complete();
+        await client.close();
+        for (final socket in sockets) {
+          await socket.close();
+        }
+        await server.close(force: true);
+        await dir.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
+    'a socket the server closes is reconnected after the backoff, resubscribed, and streaming resumes',
+    () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'ahead-dart-reconnect-',
+      );
+      final schema =
+          jsonDecode(
+                await File('../../fixtures/schemas/entry.json').readAsString(),
+              )
+              as Map<String, dynamic>;
+      final client = await Client.open(
+        path: '${dir.path}/db',
+        schema: schema,
+        libraryPath: Platform.environment['AHEAD_LIBRARY']!,
+      );
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final started = DateTime.now();
+      final upgrades = <int>[];
+      final subscribes = <Map<String, dynamic>>[];
+      final sockets = <WebSocket>[];
+      final errors = <Object>[];
+      server.listen((request) async {
+        if (request.uri.path == '/sync/pull') {
+          final pull =
+              jsonDecode(await utf8.decoder.bind(request).join()) as Map;
+          request.response.write(
+            jsonEncode({
+              'scope': pull['scope'],
+              'fromCursor': pull['fromCursor'],
+              'toCursor': pull['fromCursor'],
+              'changes': <Object>[],
+            }),
+          );
+          await request.response.close();
+          return;
+        }
+        upgrades.add(DateTime.now().difference(started).inMilliseconds);
+        final socket = await WebSocketTransformer.upgrade(request);
+        sockets.add(socket);
+        socket.listen((message) {
+          final sub = jsonDecode(message as String) as Map<String, dynamic>;
+          subscribes.add(sub);
+          socket.add(
+            jsonEncode({
+              'type': 'subscribed',
+              'scopes': sub['scopes'],
+              'rejections': <Object>[],
+            }),
+          );
+        });
+      });
+      Future<void> until(
+        FutureOr<bool> Function() predicate,
+        String label,
+      ) async {
+        final deadline = DateTime.now().add(const Duration(seconds: 5));
+        while (!await predicate()) {
+          if (DateTime.now().isAfter(deadline)) {
+            throw StateError(
+              '$label: upgrades=$upgrades subscribes=${subscribes.length} '
+              'errors=$errors',
+            );
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+      }
+
+      try {
+        await client.transaction((tx) async {
+          await tx.direct({
+            'model': 'Entry',
+            'op': 'create',
+            'identity': {'id': 'live'},
+            'values': {'text': 'local'},
+          });
+        });
+        await client.subscribe('scope');
+        final connection = await client.connect(
+          SyncServer(
+            url: 'http://127.0.0.1:${server.port}',
+            token: () => 'secret',
+          ),
+          onError: errors.add,
+        );
+        await until(() => subscribes.length == 1, 'first subscribe');
+        final closedAt = DateTime.now().difference(started).inMilliseconds;
+        await sockets[0].close(1001, 'closing');
+        await until(() => upgrades.length == 2, 'reconnect');
+        final waited = upgrades[1] - closedAt;
+        expect(
+          waited,
+          greaterThanOrEqualTo(180),
+          reason:
+              'the reconnect waited $waited ms; the first retry is due 250 ms later, minus 20% jitter',
+        );
+        expect(errors, isNotEmpty, reason: 'the close reaches onError');
+        await until(() => subscribes.length == 2, 'second subscribe');
+        expect(subscribes[1], {
+          'type': 'subscribe',
+          'scopes': ['scope'],
+        });
+        sockets[1].add(
+          jsonEncode({
+            'scope': 'scope',
+            'fromCursor': 0,
+            'toCursor': 1,
+            'changes': [
+              {
+                'syncId': 1,
+                'model': 'Entry',
+                'identity': {'id': 'live'},
+                'stamp': 1,
+                'state': {'text': 'after reconnect', 'note': null},
+              },
+            ],
+          }),
+        );
+        await until(
+          () async =>
+              (await client.read('Entry', {'id': 'live'}))?['text'] ==
+              'after reconnect',
+          'page on the new socket applies',
+        );
+        expect(upgrades.length, 2, reason: 'one reconnect; no busy loop');
+        await connection.close();
+      } finally {
+        await client.close();
+        for (final socket in sockets) {
+          await socket.close();
+        }
+        await server.close(force: true);
+        await dir.delete(recursive: true);
+      }
+    },
+  );
 }
