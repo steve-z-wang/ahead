@@ -791,6 +791,30 @@ pub fn validate(d: &Declarations) -> Result<Validated, String> {
                 }
             }
         }
+        // Operations carry no slot name; the decoders match `(model, op)` in
+        // slot order and a non-single slot takes what it can. A later slot of
+        // the same kind, with no single slot fixing a position in between, is
+        // unreachable or takes an operation meant for the earlier one
+        // ([#54](https://github.com/zanminwang/ahead/issues/54)).
+        for j in 1..m.slots.len() {
+            let later = &m.slots[j];
+            for i in (0..j).rev() {
+                let earlier = &m.slots[i];
+                let same = earlier.model == later.model && earlier.operation == later.operation;
+                if same && earlier.cardinality != Cardinality::Single {
+                    return Err(at(
+                        decl.slots[j].pos,
+                        format!(
+                            "ambiguous slot: {} cannot be told apart from {}",
+                            later.name, earlier.name
+                        ),
+                    ));
+                }
+                if earlier.cardinality == Cardinality::Single {
+                    break;
+                }
+            }
+        }
     }
     Ok(validated)
 }

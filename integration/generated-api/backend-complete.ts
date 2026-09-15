@@ -8,7 +8,10 @@ export const handlers: Handlers<Tx> = {
     // Publication of the change set includes a record added after the call; explicit records publish only those.
     async v2({ input, changes, publish }) { publish({ channel: "c" }); changes.add(input.entry); publish({ channel: "audit", records: [input.entry] }); },
   },
-  async removeEntries({ input, publish }) { publish({ channel: "c", records: input.entries }); },
+  removeEntries: {
+    async v1({ input, publish }) { publish({ channel: "c", records: input.entries }); },
+    async v2({ input, publish }) { publish({ channel: "c", records: input.entries }); },
+  },
   async addBook({ input, changes, publish }) { changes.add(Book({ id: input.book.id })); publish({ channel: "c", records: [] }); },
   async addComment({ publish }) { publish({ channel: "c" }); },
 };
