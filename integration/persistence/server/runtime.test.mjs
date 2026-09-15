@@ -406,3 +406,54 @@ test('HTTP classifies native failures by code, not message wording; unknown code
   assert.equal(errors.length,3);assert.ok(!(errors[2] instanceof EngineError));assert.equal(errors[2].message,'not json at all');
  }finally{await server.close();}
 });
+test('prismaTransactions retries only serialization failures, a bounded number of times, and reports the last one',async()=>{
+ const attempts=[];const bodies=[];
+ const failing=(codes)=>({async $transaction(body,options){attempts.push(options);const code=codes.shift();await body({attempt:attempts.length});bodies.push(attempts.length);if(code)throw Object.assign(new Error(`fail ${code.code}`),code);return 'committed';}});
+ const conflict={code:'P2034'};const rawConflict={code:'P2010',meta:{code:'40001'}};const deadlock={code:'P2010',meta:{code:'40P01'}};const unique={code:'P2002'};
+ assert.equal(await prismaTransactions(failing([conflict,rawConflict,deadlock]))(async()=>'body'),'committed','the fourth attempt succeeds within the default of three retries');
+ assert.equal(attempts.length,4);assert.deepEqual(bodies,[1,2,3,4],'the body runs once per attempt');assert.deepEqual(attempts[0],{isolationLevel:'RepeatableRead',timeout:20000});
+ attempts.length=0;bodies.length=0;
+ await assert.rejects(()=>prismaTransactions(failing([conflict,conflict,conflict,conflict]))(async()=>{}),error=>error.code==='P2034'&&error.message==='fail P2034');
+ assert.equal(attempts.length,4,'three retries after the first attempt, then the failure is reported');
+ attempts.length=0;
+ await assert.rejects(()=>prismaTransactions(failing([conflict,conflict]),{retries:1})(async()=>{}),error=>error.code==='P2034');
+ assert.equal(attempts.length,2,'retries is the number of additional attempts');
+ attempts.length=0;
+ await assert.rejects(()=>prismaTransactions(failing([unique]))(async()=>{}),error=>error.code==='P2002');
+ assert.equal(attempts.length,1,'a non-serialization failure is not retried');
+ attempts.length=0;
+ const bundled=prisma(failing([conflict]),{retries:1,timeout:5});await bundled.transaction(async()=>{});
+ assert.deepEqual(attempts.map(o=>o.timeout),[5,5],'prisma() passes retries and timeout to the runner');
+});
+test('a RepeatableRead conflict on the real database retries the whole body once and commits it exactly once',async()=>{
+ await db.$executeRawUnsafe("INSERT INTO ahead_channel(channel,head) VALUES('serial',0) ON CONFLICT(channel) DO UPDATE SET head=0");
+ const run=prismaTransactions(db);let bodies=0;let entered,release;const inside=new Promise(resolve=>{entered=resolve;});const gate=new Promise(resolve=>{release=resolve;});
+ const first=run(async tx=>{bodies++;const [{head}]=await tx.$queryRawUnsafe("SELECT head FROM ahead_channel WHERE channel='serial'");if(bodies===1){entered();await gate;}
+  await tx.$executeRawUnsafe("UPDATE ahead_channel SET head=head+1 WHERE channel='serial'");return Number(head);});
+ await inside;
+ await db.$executeRawUnsafe("UPDATE ahead_channel SET head=head+10 WHERE channel='serial'");
+ release();
+ assert.equal(await first,10,'the retried body read the snapshot taken after the concurrent commit');
+ assert.equal(bodies,2,'the first attempt failed with a serialization error after the concurrent update and the body ran again');
+ assert.equal(Number((await db.$queryRawUnsafe("SELECT head FROM ahead_channel WHERE channel='serial'"))[0].head),11,'the rolled-back attempt left nothing behind and the retry committed once');
+ const exhausted=prismaTransactions(db,{retries:0});bodies=0;let entered2,release2;const inside2=new Promise(resolve=>{entered2=resolve;});const gate2=new Promise(resolve=>{release2=resolve;});
+ const second=exhausted(async tx=>{bodies++;await tx.$queryRawUnsafe("SELECT head FROM ahead_channel WHERE channel='serial'");entered2();await gate2;await tx.$executeRawUnsafe("UPDATE ahead_channel SET head=head+1 WHERE channel='serial'");});
+ await inside2;await db.$executeRawUnsafe("UPDATE ahead_channel SET head=head+10 WHERE channel='serial'");release2();
+ await assert.rejects(second,error=>error.code==='P2034'||(error.code==='P2010'&&error.meta?.code==='40001'));
+ assert.equal(bodies,1);assert.equal(Number((await db.$queryRawUnsafe("SELECT head FROM ahead_channel WHERE channel='serial'"))[0].head),21,'with no retries the conflict is reported and the transaction leaves no trace');
+});
+test('an upgrade whose authentication completes after close begins is refused with 503; missing and invalid credentials are refused with 401',async()=>{
+ let release;const gate=new Promise(resolve=>{release=resolve;});const seen=[];
+ const gated=createBackend({config,database:prisma(db),authenticate:async req=>{seen.push(req.headers.authorization);if(req.headers.authorization==='Bearer slow'){await gate;return 'alice';}return req.headers.authorization==='Bearer alice'?'alice':null;},handlers:{async edit(){}},loaders:{async task({ids}){return ids.map(()=>null)}}});
+ const server=await gated.listen({port:0});const ws=server.url.replace('http','ws');
+ const refusal=socket=>new Promise(resolve=>{socket.on('error',error=>resolve(String(error.message)));socket.on('open',()=>resolve('open'));});
+ try{
+  assert.match(await refusal(new serverSdk.WebSocket(`${ws}/sync/live`)),/401/,'no credentials');
+  assert.match(await refusal(new serverSdk.WebSocket(`${ws}/sync/live`,{headers:{authorization:'Bearer mallory'}})),/401/,'unknown credentials');
+  const slow=new serverSdk.WebSocket(`${ws}/sync/live`,{headers:{authorization:'Bearer slow'}});const outcome=refusal(slow);
+  while(!seen.includes('Bearer slow'))await delay(5);
+  const closing=server.close();release();
+  assert.match(await outcome,/503/,'authenticated after close began: refused, not served');
+  await closing;
+ }finally{await server.close();}
+});
