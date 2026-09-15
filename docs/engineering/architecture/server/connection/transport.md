@@ -10,7 +10,17 @@ The server transport terminates HTTP and WebSocket traffic, authenticates each r
 
 ## 5. Building Block View
 
-Request handling is a pipeline: `authenticate` (null or blank → `401 unauthenticated`), read the body under the size cap (`413`), parse strict UTF-8 JSON (`400 request.invalid`), call the engine inside a transaction, answer `200` with the engine's JSON. Engine errors map by message: `owner_mismatch` → `403 client.owner_mismatch`; `gap` and `overlap` → `409`; `mutation_version_unsupported` → `409` with ordinal, name and version; `request.invalid:*` → `400`; anything else → `onError` and `500 server`.
+Request handling is a pipeline: `authenticate` (null or blank → `401 unauthenticated`), read the body under the size cap (`413 request_too_large`), parse strict UTF-8 JSON (`400 request.invalid`), call the engine inside a transaction, answer `200` with the engine's JSON. Engine errors map by their code, never by message text ([Bindings](../../sdks/bindings.md)):
+
+| Engine code | Status | Body |
+| --- | --- | --- |
+| `request.invalid` | 400 | `{code}` |
+| `client.owner_mismatch` | 403 | `{code}` |
+| `gap`, `overlap` | 409 | `{code}` |
+| `mutation_version_unsupported` | 409 | `{code, ordinal, name, version}` |
+| any other code, or a non-engine error | 500 | `{code: "server"}`, and the error goes to `onError` |
+
+The live path closes with `1002` when negotiation fails with `request.invalid`, and with `1011` for any other failure, which also goes to `onError`.
 
 The upgrade path authenticates before accepting the socket and refuses with a raw `401`, `500` (authenticate threw) or `503` (server closing). `close` stops upgrades, closes sockets with `1001`, then closes the server.
 
@@ -23,14 +33,13 @@ One Node process runs the listener, the handlers, the loaders and the native eng
 ## 10. Quality Requirements
 
 - **Unauthenticated requests are refused, valid ones reach the native engine, malformed bodies are `400`, and server failures are `500 {code: "server"}` reported to `onError`.** Evidence: [runtime.test.mjs](../../../../../integration/persistence/server/runtime.test.mjs) `HTTP adapter authenticates and serves the real native persistence path`, `onError captures server-side failures and HTTP responds with {code:"server"}`, `listen answers pull over HTTP with authentication and closes cleanly`.
+- **Every mapped status is produced from the real engine, and the mapping keys on the code alone.** Evidence: `HTTP maps engine codes to statuses: 403, 409 gap/overlap/version fields, 404, 405, 413, 400` (real backend over PostgreSQL) and `HTTP classifies native failures by code, not message wording; unknown codes fall back to 500` (a fake native whose messages are reworded; also asserts the live `1002`/`1011` close codes and that unclassified codes reach `onError` as `EngineError`).
 
 - **Behind a reverse proxy that forwards HTTP and relays the WebSocket upgrade with headers preserved, push, pull and live work; a proxy that strips `Authorization` is refused.** Evidence: `a reverse proxy forwarding HTTP and the WebSocket upgrade with headers serves push, pull and live; a stripped Authorization header is refused` (an in-process proxy with TCP-level upgrade pass-through). Verified 2026-09-14 by `bash integration/persistence/server/run.sh`.
 
-Other tests read, not executed.
+Verified 2026-09-14: `bash integration/persistence/server/run.sh` passed with the proxy and structured-error tests.
 
 ## 11. Risks and Technical Debt
-
-**Technical debt.** Status mapping keys on error message text from Rust ([Bindings](../../sdks/bindings.md)).
 
 **Accepted limitation.** No TLS, CORS, compression or proxy-header handling is built in; the listener is meant to sit behind a reverse proxy on loopback ([Deployment View](#7-deployment-view)). TLS termination and specific proxy products are not exercised by any test; browser clients ([#59](https://github.com/zanminwang/ahead/issues/59)) and multi-process live delivery ([#62](https://github.com/zanminwang/ahead/issues/62)) are separate decisions.
 

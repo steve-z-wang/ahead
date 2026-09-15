@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createRequire} from 'node:module';
 import * as serverSdk from '../../../packages/server/index.mts';
-import {createBackend,MutationRejected,RECORD} from '../../../packages/server/index.mts';
+import {createBackend,MutationRejected,EngineError,RECORD} from '../../../packages/server/index.mts';
 import {PrismaPersistence,prismaTransactions,prisma} from '../../../packages/persistence-prisma/index.mts';
 const require=createRequire(import.meta.url);
 const {PrismaClient}=require('../../bindings/node/generated/client');
@@ -77,7 +77,7 @@ test('unknown error rolls back entire batch including earlier effects and client
  assert.equal(await count('business_task'),3);assert.equal((await pull()).toCursor,head);assert.equal((await db.$queryRawUnsafe("SELECT * FROM ahead_client WHERE client_id='crash'")).length,0);
 });
 test('unsupported versions abort before handlers, invalid bodies settle with empty checkpoints',async()=>{
- const before=called;await assert.rejects(()=>backend.push('alice',push('version',1,[mutation(1,'ignored','v'),{...mutation(2,'bad','w'),version:2}])),/mutation_version_unsupported/);assert.equal(called,before);
+ const before=called;await assert.rejects(()=>backend.push('alice',push('version',1,[mutation(1,'ignored','v'),{...mutation(2,'bad','w'),version:2}])),error=>error instanceof EngineError&&error.code==='mutation_version_unsupported'&&error.details.ordinal===2&&error.details.name==='edit'&&error.details.version===2);assert.equal(called,before);
  const result=JSON.parse(await backend.push('alice',push('invalid',1,[{ordinal:1,name:'absent',operations:[]}])));assert.deepEqual(result,{requiredCheckpoints:[],requiredScope:'',requiredSyncId:0,rejections:[{ordinal:1,code:'mutation.invalid'}]});
 });
 test('loaders receive the channel whose pull requested the rows',async()=>{
@@ -356,4 +356,53 @@ test('a reverse proxy forwarding HTTP and the WebSocket upgrade with headers ser
    assert.ok(failure,'the upgrade is refused without the header');assert.match(String(failure.message),/401/);
   }finally{await stripping.close();}
  }finally{await proxy.close();await server.close();}
+});
+test('HTTP maps engine codes to statuses: 403, 409 gap/overlap/version fields, 404, 405, 413, 400',async()=>{
+ const server=await backend.listen({port:0});const url=server.url;
+ const post=(path,body,headers={authorization:'Bearer alice'})=>fetch(`${url}${path}`,{method:'POST',headers,body});
+ try{
+  await backend.push('alice',push('map',1,[mutation(1,'one','map-a')]));
+  const gap=await post('/sync/mutations',push('map',5,[mutation(1,'x','map-a')]));assert.equal(gap.status,409);assert.deepEqual(await gap.json(),{code:'gap'});
+  const overlap=await post('/sync/mutations',push('map',1,[mutation(9,'other','map-a')]));assert.equal(overlap.status,200,'a retry of the accepted sequence returns its receipt');
+  await backend.push('alice',push('map',2,[mutation(2,'second','map-a')]));
+  const behind=await post('/sync/mutations',push('map',1,[mutation(1,'one','map-a')]));assert.equal(behind.status,409);assert.deepEqual(await behind.json(),{code:'overlap'});
+  const bobBackend=createBackend({config,database:prisma(db),authenticate:async req=>req.headers.authorization==='Bearer bob'?'bob':null,handlers:{async edit(){}},loaders:{async task({ids}){return ids.map(()=>null)}}});
+  const bobServer=await bobBackend.listen({port:0});
+  try{const owner=await fetch(`${bobServer.url}/sync/mutations`,{method:'POST',headers:{authorization:'Bearer bob'},body:push('map',3,[mutation(3,'x','map-a')])});assert.equal(owner.status,403);assert.deepEqual(await owner.json(),{code:'client.owner_mismatch'});}
+  finally{await bobServer.close();}
+  const version=await post('/sync/mutations',push('map',3,[{...mutation(3,'x','map-a'),version:7}]));assert.equal(version.status,409);
+  assert.deepEqual(await version.json(),{code:'mutation_version_unsupported',ordinal:3,name:'edit',version:7});
+  const ahead=await post('/sync/pull',JSON.stringify({clientId:'c',scope:'shared',fromCursor:1e9}));assert.equal(ahead.status,400);assert.deepEqual(await ahead.json(),{code:'request.invalid'});
+  const array=await post('/sync/pull','[]');assert.equal(array.status,400);assert.deepEqual(await array.json(),{code:'request.invalid'});
+  const missing=await post('/sync/nowhere','{}');assert.equal(missing.status,404);assert.deepEqual(await missing.json(),{code:'not_found'});
+  const get=await fetch(`${url}/sync/pull`,{headers:{authorization:'Bearer alice'}});assert.equal(get.status,405);assert.equal(get.headers.get('allow'),'POST');assert.deepEqual(await get.json(),{code:'method_not_allowed'});
+  const large=await post('/sync/pull',JSON.stringify({clientId:'c',scope:'shared',fromCursor:0,padding:'x'.repeat(1_048_577)}));assert.equal(large.status,413);assert.deepEqual(await large.json(),{code:'request_too_large'});
+ }finally{await server.close();}
+});
+test('HTTP classifies native failures by code, not message wording; unknown codes fall back to 500',async()=>{
+ const errors=[];
+ const reason=(code,message,details)=>Object.assign(new Error(JSON.stringify({code,message,...(details?{details}:{})})),{});
+ const fake={validateConfig(){},async processPush(){throw reason('gap','the batch sequence 5 skips ahead of 1 (reworded)');},async processPull(){throw reason('mutation_version_unsupported','anything',{ordinal:2,name:'edit',version:9});},async publish(){return '[]';},async negotiateLive(){throw reason('request.invalid','no');},async pullLive(){throw reason('loader.unregistered','unregistered loader');}};
+ const memory={transaction:body=>body({}),persistence:()=>({call:async()=>null})};
+ const fakeBackend=createBackend({config,database:memory,native:fake,authenticate,onError:e=>errors.push(e),handlers:{async edit(){}},loaders:{async task({ids}){return ids.map(()=>null)}}});
+ await assert.rejects(()=>fakeBackend.push('alice','{}'),error=>error instanceof EngineError&&error.code==='gap'&&error.message.includes('reworded'));
+ const server=await fakeBackend.listen({port:0});
+ try{
+  const gap=await fetch(`${server.url}/sync/mutations`,{method:'POST',headers:{authorization:'Bearer alice'},body:'{}'});assert.equal(gap.status,409);assert.deepEqual(await gap.json(),{code:'gap'});
+  const version=await fetch(`${server.url}/sync/pull`,{method:'POST',headers:{authorization:'Bearer alice'},body:'{}'});assert.equal(version.status,409);assert.deepEqual(await version.json(),{code:'mutation_version_unsupported',ordinal:2,name:'edit',version:9});
+  assert.equal(errors.length,0,'classified refusals are not server errors');
+  const socket=new serverSdk.WebSocket(`${server.url.replace('http','ws')}/sync/live`,{headers:{authorization:'Bearer alice'}});
+  const closed=await new Promise(resolve=>{socket.on('open',()=>socket.send(JSON.stringify({type:'subscribe',scopes:['shared']})));socket.on('close',(code,reasonText)=>resolve({code,reason:String(reasonText)}));socket.on('error',()=>{});});
+  assert.equal(closed.code,1002);assert.equal(errors.length,0);
+  fake.negotiateLive=async()=>JSON.stringify({response:JSON.stringify({type:'subscribed',scopes:['shared'],rejections:[]}),subscriptions:[{scope:'shared',fromCursor:0}]});
+  const drained=new serverSdk.WebSocket(`${server.url.replace('http','ws')}/sync/live`,{headers:{authorization:'Bearer alice'}});
+  const drainClose=await new Promise(resolve=>{drained.on('open',()=>drained.send(JSON.stringify({type:'subscribe',scopes:['shared']})));drained.on('close',code=>resolve(code));drained.on('error',()=>{});});
+  assert.equal(drainClose,1011);assert.equal(errors.length,1);assert.ok(errors[0] instanceof EngineError);assert.equal(errors[0].code,'loader.unregistered');
+  fake.processPush=async()=>{throw reason('storage.invalid','receipt missing');};
+  const unknown=await fetch(`${server.url}/sync/mutations`,{method:'POST',headers:{authorization:'Bearer alice'},body:'{}'});assert.equal(unknown.status,500);assert.deepEqual(await unknown.json(),{code:'server'});
+  assert.equal(errors.length,2);assert.equal(errors[1].code,'storage.invalid');assert.equal(errors[1].message,'receipt missing');
+  fake.processPush=async()=>{throw new Error('not json at all');};
+  const plain=await fetch(`${server.url}/sync/mutations`,{method:'POST',headers:{authorization:'Bearer alice'},body:'{}'});assert.equal(plain.status,500);
+  assert.equal(errors.length,3);assert.ok(!(errors[2] instanceof EngineError));assert.equal(errors[2].message,'not json at all');
+ }finally{await server.close();}
 });

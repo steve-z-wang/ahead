@@ -20,7 +20,7 @@ cargo run -p ahead-compiler -- compile INPUT_DIR OUTPUT_DIR \
 | `--initialize-mutation-history` | Allow a missing explicitly selected history file; only version 1 declarations |
 | `--schema-fence FILE` | Published schema to check; default existing output `schema.json` |
 
-For source-checkout use, supply runtime paths relative to the output directory; see the [working command](define.md#generate-from-a-source-checkout). Default package names are not evidence of published packages. Unknown syntax or incompatible contracts fail with a diagnostic; syntax errors include source location. Validation runs before generated artifacts are replaced.
+For source-checkout use, supply runtime paths relative to the output directory; see the [working command](define.md#generate-from-a-source-checkout). Default package names are not evidence of published packages. Unknown syntax or incompatible contracts fail with a diagnostic that names the file and line of the offending declaration. Validation runs before generated artifacts are replaced.
 
 ## Outputs
 
@@ -50,7 +50,7 @@ Dart output imports `package:ahead/ahead.dart`. Commit the history used to gener
 | `T?` | Nullable type | Nullable type | Field can be null |
 | `T[]` | Array | List | List of scalar/enum values |
 
-`@@id(field,...)` defines identity, including composite keys. Identity fields must be nonnullable. `@@unique(field,...)` declares a unique group that the client's local database enforces; the server does not check it, so your application database schema must carry its own constraints ([What your backend owns](../backend/api.md#what-your-backend-owns)). Generated patches exclude identity fields. Complete records contain all declared fields, including nullable ones; an optional patch field is a separate concept.
+`@@id(field,...)` defines identity, including composite keys. Identity fields must be nonnullable. Model names starting with `ahead_` or `sqlite_` (in any letter case) are reserved and refused. `@@unique(field,...)` declares a unique group that the client's local database enforces; the server does not check it, so your application database schema must carry its own constraints ([What your backend owns](../backend/api.md#what-your-backend-owns)). Generated patches exclude identity fields. Complete records contain all declared fields, including nullable ones; an optional patch field is a separate concept.
 
 TypeScript omission leaves a patch field unchanged; null clears a nullable field. Dart uses `Present<T>` to distinguish supplied values from omission. Generated TypeScript is intended for `exactOptionalPropertyTypes`.
 

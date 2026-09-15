@@ -21,7 +21,7 @@ Use this index to find the interface you call or implement. The examples use the
 | `createBackend`, `Options<Tx>` | Connect your implementations to the backend runtime | [Backend setup](backend/api.md#createbackend), [What your backend owns](backend/api.md#what-your-backend-owns) |
 | `backend.listen` | Serve sync requests and close the listener | [Listener](backend/api.md#listener), [Deploy the backend](backend/deployment.md) |
 | `Authenticate`, `devAuth` | Identify the caller | [Authentication](backend/api.md#authentication) |
-| `MutationRejected`, `translateRejection`, `onError` | Reject business operations and diagnose failures | [Errors](backend/api.md#errors) |
+| `MutationRejected`, `translateRejection`, `onError`, `EngineError` | Reject business operations and diagnose failures | [Errors](backend/api.md#errors) |
 | `backend.notify`, `backend.bindTransaction` | Notify about writes performed outside a handler | [Background writes](backend/api.md#background-writes) |
 | `Database`, `Persistence`, `prisma` | Run business and sync storage in the same database transaction | [Database adapters](backend/database.md) |
 

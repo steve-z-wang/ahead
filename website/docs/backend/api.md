@@ -171,10 +171,21 @@ Each notification allocates a per-record **stamp** and a channel **cursor**. Sta
 | `new MutationRejected(code)` | Reject a business operation with a stable machine-readable code |
 | `translateRejection(error)` | Return a stable rejection code for a known application error; return null/undefined for other errors |
 | `onError(error)` | Log server failures that are returned to the client as a generic server error |
+| `EngineError` | A failure from the native engine: `code` (stable), `message` (readable, may change), `details` (fields the code promises) |
 
 Codes must match `^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$`, such as `entry.denied`. An invalid code is itself an error. A recognized business rejection rolls back that mutation's business writes and notifications and is included in the receipt. The client rolls back its optimistic change and retains a rejection entry. A network error is not a business rejection and must not cause a duplicate business action.
 
 Unexpected exceptions abort the batch transaction. Do not translate every exception into a rejection: a database outage or programming error should remain a retryable request failure. `onError` receives failures including authentication exceptions, persistence faults, checkpoint errors and live-drain failures.
+
+Protocol refusals are answered with a status and a JSON body chosen by the engine error's `code`. Rewording a message never changes a status.
+
+| Code | HTTP status | Meaning |
+| --- | --- | --- |
+| `request.invalid` | 400 | Malformed body, or a pull cursor ahead of the channel head |
+| `client.owner_mismatch` | 403 | The client identity belongs to another user |
+| `gap`, `overlap` | 409 | The batch sequence is not the next one and not a retry of the last |
+| `mutation_version_unsupported` | 409 | A mutation version this backend does not serve; the body adds `ordinal`, `name` and `version` |
+| anything else | 500 `{ code: "server" }` | A server-side failure; the `EngineError` or thrown error goes to `onError` |
 
 ## Listener
 

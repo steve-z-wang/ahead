@@ -119,3 +119,102 @@ fn generated_clients_expose_one_server_connection() {
     assert!(!dart.contains("LiveTransport"));
     assert!(!dart.contains("Transport? transport"));
 }
+
+fn line_of(error: &str) -> usize {
+    error
+        .split(':')
+        .next()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| panic!("no line in {error}"))
+}
+
+#[test]
+fn semantic_errors_report_the_offending_declaration() {
+    // Every case pads the input so end-of-file is far below the declaration.
+    let pad = "\n\n\n\n// trailing comment\n";
+    let cases: &[(&str, usize, &str)] = &[
+        (
+            "model Parent { id UUID @@id(id) }\nmodel Child {\n id UUID\n parent Parent @reference(via: [missing])\n @@id(id)\n}",
+            4,
+            "unknown reference field",
+        ),
+        (
+            "model Parent { id UUID @@id(id) }\nmodel Child {\n id UUID\n parentId UUID\n parent Parent @reference(via: [parentId])\n twin Parent @reference(via: [parentId], onTargetDelete: cascade)\n @@id(id)\n}",
+            6,
+            "unsupported onTargetDelete",
+        ),
+        (
+            "model Parent { id String child Child? @@id(id) }\nmodel Child {\n id String\n parentId String\n parent Parent @reference(via:[parentId])\n @@id(id)\n}",
+            1,
+            "singular inverse requires unique reference fields",
+        ),
+        (
+            "model A {\n id UUID\n\n label Missing\n @@id(id)\n}",
+            4,
+            "unknown or unsupported field type",
+        ),
+        (
+            "model Parent { id UUID @@id(id) }\nmodel Child { id UUID parentId UUID parent Parent @reference(via: [parentId]) @@id(id) }\nmutation Add {\n parent Parent.create\n child Child.create(parent: nobody)\n}",
+            5,
+            "unknown parent slot",
+        ),
+        (
+            "model A { id UUID @@id(id) }\nmutation Add {\n a A.create\n @@sequence(after: [Missing(a: a)])\n}",
+            4,
+            "unknown sequence mutation",
+        ),
+        (
+            "prerequisite Exists(key String)\nmodel A {\n id UUID\n label String @requires(Missing(key: self))\n @@id(id)\n}",
+            4,
+            "unknown prerequisite",
+        ),
+        (
+            "model A { id UUID @@id(id) }\nmutation Add { a A.create }\n\nmutation Add { a A.create }",
+            4,
+            "duplicate mutation",
+        ),
+        (
+            "model A { id UUID @@id(id) }\nmutation Edit {\n a A.update<nope>\n}",
+            3,
+            "invalid allowed patch field",
+        ),
+        (
+            "model A {\n id UUID\n @@id(id)\n @@unique(missing)\n}",
+            4,
+            "invalid unique fields",
+        ),
+        (
+            "model A { id UUID @@id(id) }\n\nmodel A { id UUID @@id(id) }",
+            3,
+            "duplicate",
+        ),
+        (
+            "model A { id UUID @@id(id) }\n\nmodel B {\n id UUID\n}",
+            3,
+            "identity",
+        ),
+    ];
+    for (source, line, message) in cases {
+        let e = compile(&format!("{source}{pad}")).unwrap_err();
+        assert!(e.contains(message), "expected {message:?} in {e:?}");
+        assert_eq!(line_of(&e), *line, "{e}");
+    }
+}
+
+#[test]
+fn rejects_reserved_model_names_at_the_declaration() {
+    for name in ["sqlite_entry", "SQLite_Entry", "ahead_entry", "Ahead_entry"] {
+        let e = compile(&format!(
+            "model Other {{ id UUID @@id(id) }}\n\nmodel {name} {{ id UUID @@id(id) }}\n\n\n"
+        ))
+        .unwrap_err();
+        assert!(e.contains("reserved"), "{name}: {e}");
+        assert_eq!(line_of(&e), 3, "{name}: {e}");
+    }
+    for name in ["Sqlite", "sqlitex", "my_sqlite_table", "aheadEntry"] {
+        assert!(
+            compile(&format!("model {name} {{ id UUID @@id(id) }}")).is_ok(),
+            "{name} should stay valid"
+        );
+    }
+}
