@@ -697,3 +697,39 @@ test('the live stream serves the declared model version and refuses an unretaine
   assert.equal(await closedToo,1002);
  }finally{await server.close();}
 });
+
+test('backend.transaction publishes in the application transaction and wakes after commit',async()=>{
+ let woke=0;const unsubscribe=backend.onCommitted('shared',()=>{woke++;});
+ const from=(await pull('shared',0)).toCursor;
+ const result=await backend.transaction(async({tx,notify})=>{await write(tx,'tx-1','via transaction');await notify({channel:'shared',records:[{model:'Task',identity:{id:'tx-1'}}]});return 'done';});
+ assert.equal(result,'done');await delay(0);assert.equal(woke,1,'one wake after commit');
+ const page=await pull('shared',from);assert.ok(page.changes.some(c=>c.identity.id==='tx-1'&&c.state.title==='via transaction'),JSON.stringify(page));
+ unsubscribe();
+});
+test('backend.transaction rolls back a failing body and wakes nobody',async()=>{
+ let woke=0;const unsubscribe=backend.onCommitted('shared',()=>{woke++;});
+ const before=await head('shared');
+ await assert.rejects(()=>backend.transaction(async({tx,notify})=>{await write(tx,'tx-rollback','never');await notify({channel:'shared',records:[{model:'Task',identity:{id:'tx-rollback'}}]});throw new Error('cancel');}),/cancel/);
+ await delay(0);assert.equal(woke,0);assert.equal(await head('shared'),before);
+ assert.equal((await db.$queryRawUnsafe("SELECT count(*) AS count FROM business_task WHERE id='tx-rollback'"))[0].count,0n);
+ unsubscribe();
+});
+test('backend.transaction refuses to commit an unawaited notify',async()=>{
+ const before=await head('shared');
+ await assert.rejects(()=>backend.transaction(async({tx,notify})=>{await write(tx,'tx-unawaited','never');void notify({channel:'shared',records:[{model:'Task',identity:{id:'tx-unawaited'}}]});}),/unawaited/);
+ assert.equal(await head('shared'),before);
+});
+test('backend.transaction wakes a connected live subscriber without reconnect',async()=>{
+ const server=await backend.listen({port:0});const port=Number(new URL(server.url).port);
+ const socket=await openSocket(port);const frames=[];socket.addEventListener('message',event=>frames.push(JSON.parse(String(event.data))));
+ socket.send(JSON.stringify({type:'subscribe',scopes:['shared'],models:{Task:1}}));while(frames.length<1)await delay(5);
+ await backend.transaction(async({tx,notify})=>{await write(tx,'tx-live','live via transaction');await notify({channel:'shared',records:[{model:'Task',identity:{id:'tx-live'}}]});});
+ while(frames.length<2)await delay(5);
+ assert.deepEqual(frames[1].changes.at(-1).identity,{id:'tx-live'});assert.deepEqual(frames[1].changes.at(-1).state,{title:'live via transaction'});
+ socket.close();await new Promise(resolve=>socket.addEventListener('close',resolve,{once:true}));await server.close();
+});
+test('the unbound notify shortcut is gone and bindTransaction still works end to end',async()=>{
+ assert.equal(backend.notify,undefined);
+ const after=await db.$transaction(async tx=>{const session=backend.bindTransaction(tx);try{await session.notify({channel:'shared',records:[{model:'Task',identity:{id:'bound-still-works'}}]});await session.assertCommittable();return session.afterCommit();}finally{session.close();}});
+ after();
+});
