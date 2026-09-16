@@ -12,8 +12,8 @@ Three ways in, one path:
 | --- | --- | --- | --- |
 | a handler | `publish({channel})` | the mutation's final change set, resolved after the handler returns | the stamp the mutation allocated for each record |
 | a handler | `publish({channel, records})` | exactly those records, changed or not; `[]` publishes nothing | the mutation's stamp for changed records, the existing stamp for others, initialized at 1 when a record has none |
-| application code with a bound transaction | `bindTransaction(tx).notify({channel, records})` | those records, as a business change made outside a handler | one new stamp per record, shared by every channel named |
-| application code, shortcut | `backend.notify(tx, …)` | as above | as above |
+| application code | `backend.transaction(async ({tx, notify}) => …)` | those records, as a business change made outside a handler | one new stamp per record, shared by every channel named |
+| application code that owns its transaction (advanced) | `bindTransaction(tx).notify({channel, records})` | as above | as above |
 
 A handler reports changes beyond its uploaded operations with `changes.add({model, identity})`; that registers a change (a stamp and a readback) without publishing it. Each publication asks [Persistence](../persistence.md) to allocate the next *cursor* for the channel and to upsert the invalidation row at the given stamp ([Pull](pull.md)). The set of channels published in a transaction feeds the wake after commit ([Server / Connection / Controller](../connection/controller.md)).
 
@@ -23,11 +23,15 @@ A handler reports changes beyond its uploaded operations with `changes.add({mode
 - **Publication order** within a mutation is the order of `publish` calls, with records in canonical key order inside each; external notifications publish in the order they are awaited.
 - **Wake set.** The TypeScript session records every channel a `publish` host request passed through in the transaction, snapshots that set at each mutation's savepoint and restores it on rollback, so a rejected mutation's publications neither remain nor wake anyone. After the transaction commits, an in-process hub calls the wake callbacks registered by live sockets for those channels.
 
-Code: publication resolution in [server/readback.rs](../../../../../crates/server/src/readback.rs) (`read_back`, `publish_one`); the external path `publish` in [server/lib.rs](../../../../../crates/server/src/lib.rs); `changes`, `publish`, `Session.touched` and `WakeHub` in [server/index.mts](../../../../../packages/server/index.mts).
+Code: publication resolution in [server/readback.rs](../../../../../crates/server/src/readback.rs) (`read_back`, `publish_one`); the external path `publish` in [server/lib.rs](../../../../../crates/server/src/lib.rs); `changes`, `publish`, `transaction`, `Session.touched` and `WakeHub` in [server/index.mts](../../../../../packages/server/index.mts).
 
 ## 6. Runtime View
 
-Inside a push: handler runs, collecting `changes.add` and `publish` intents → stamps allocated for the change set → loaders read it back → publications go out at those stamps → receipt → commit → wakes. Outside a push with `bindTransaction`: `notify` (awaited: stamps advance, invalidations written) → `assertCommittable` → commit → the application calls the function returned by `afterCommit()` to wake subscribers.
+Inside a push: handler runs, collecting `changes.add` and `publish` intents → stamps allocated for the change set → loaders read it back → publications go out at those stamps → receipt → commit → wakes. Outside a push with `backend.transaction`: the framework opens the application transaction and binds a session → the body writes and awaits `notify` (stamps advance, invalidations written) → the body returns → completion check → commit → the framework wakes the touched channels. With `bindTransaction` the application performs the last three steps itself: `assertCommittable` → commit → call the function returned by `afterCommit()`.
+
+## 9. Architecture Decisions
+
+**External writes go through `backend.transaction` (decided in [#50](https://github.com/zanminwang/ahead/issues/50), implemented 2026-09-15).** The framework owns the transaction, the completion check and the after-commit wake, so an application cannot publish without waking. Business writes and publications share one transaction; a failure rolls back both and wakes nobody. `bindTransaction` remains for an application whose framework already owns the transaction. The unbound `backend.notify(tx, …)` shortcut, which published without a wake set, was removed. Cross-process wakes stay with [#62](https://github.com/zanminwang/ahead/issues/62). Evidence: [runtime.test.mjs](../../../../../integration/persistence/server/runtime.test.mjs) `backend.transaction publishes in the application transaction and wakes after commit`, `backend.transaction rolls back a failing body and wakes nobody`, `backend.transaction refuses to commit an unawaited notify`, `backend.transaction wakes a connected live subscriber without reconnect`.
 
 ## 10. Quality Requirements
 
@@ -38,8 +42,6 @@ Inside a push: handler runs, collecting `changes.add` and `publish` intents → 
 Rust evidence executed 2026-09-15 (`cargo test -p ahead-server --locked`); the PostgreSQL rows are named after the tests in `runtime.test.mjs` — see the pull request for that run.
 
 ## 11. Risks and Technical Debt
-
-**Problem: the shortcut `backend.notify(tx, …)` never wakes live subscribers.** *Condition:* application code publishes outside a push without `bindTransaction`. *Consequence:* the publication is stored, but the touched set is discarded, so connected clients learn of the change only when they reconnect and catch up. The round-trip fixture backend and the To-do example seed use this shortcut. *Evidence:* `publish` falls back to a throwaway session in [server/index.mts](../../../../../packages/server/index.mts); [fixtures/round-trip/server.mts](../../../../../integration/e2e/fixtures/round-trip/server.mts). **To confirm:** remove the shortcut or document the `afterCommit` requirement. The external API's own redesign belongs with [#50](https://github.com/zanminwang/ahead/issues/50) and [#103](https://github.com/zanminwang/ahead/issues/103); this page records what it does today.
 
 **Accepted limitation.** Wakes are in-process: a second server instance, or a publication from another process, does not wake this process's sockets; those clients catch up on reconnect. Cross-process notification delivery is [#62](https://github.com/zanminwang/ahead/issues/62).
 

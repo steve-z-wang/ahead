@@ -19,19 +19,22 @@ export const SEED_TODOS = [
 
 /**
  * Creates the demo users and tasks when they are missing and publishes them on
- * `todo:demo` inside the caller's transaction. Existing rows are left untouched,
- * so an ordinary restart never resets edits made through the app.
+ * `todo:demo` in one backend transaction, so connected phones are woken once
+ * it commits. Existing rows are left untouched, so an ordinary restart never
+ * resets edits made through the app.
  */
-export async function seed(tx: Tx, backend: Backend): Promise<void> {
-  for (const user of SEED_USERS)
-    await tx.user.upsert({ where: { id: user.id }, create: user, update: {} });
-  for (const todo of SEED_TODOS)
-    await tx.todo.upsert({ where: { id: todo.id }, create: todo, update: {} });
-  await backend.notify(tx, {
-    channel: CHANNEL,
-    records: [
-      ...SEED_USERS.map((user) => ({ model: "User", identity: { id: user.id } })),
-      ...SEED_TODOS.map((todo) => ({ model: "Todo", identity: { id: todo.id } })),
-    ],
+export async function seed(backend: Backend): Promise<void> {
+  await backend.transaction(async ({ tx, notify }) => {
+    for (const user of SEED_USERS)
+      await tx.user.upsert({ where: { id: user.id }, create: user, update: {} });
+    for (const todo of SEED_TODOS)
+      await tx.todo.upsert({ where: { id: todo.id }, create: todo, update: {} });
+    await notify({
+      channel: CHANNEL,
+      records: [
+        ...SEED_USERS.map((user) => ({ model: "User", identity: { id: user.id } })),
+        ...SEED_TODOS.map((todo) => ({ model: "Todo", identity: { id: todo.id } })),
+      ],
+    });
   });
 }

@@ -197,6 +197,12 @@ export type NotifyArgs = {
   channel: string;
   records: readonly (RecordRef | object)[];
 };
+/** What `backend.transaction` hands its body: the application transaction and the external notify bound to it. */
+export interface TransactionCall<Tx> {
+  tx: Tx;
+  /** Reports a business change made outside a handler: every record gets a new stamp and the channel an invalidation, inside `tx`. Await it; a pending notify fails the transaction. */
+  notify(args: NotifyArgs): Promise<void>;
+}
 /**
  * One publication a handler asks for. `records` absent publishes the
  * mutation's final change set, additions made after the call included;
@@ -656,7 +662,13 @@ export function createBackend<T>(options: BackendOptions<T>) {
     changes: readonly RecordRef[],
     channels: readonly string[],
   ): Promise<unknown> => {
-    const session = sessions.get(tx) ?? new Session();
+    const session = sessions.get(tx);
+    if (!session)
+      return Promise.reject(
+        new Error(
+          "transaction not bound: use backend.transaction or bindTransaction",
+        ),
+      );
     return session.track(async () => {
       const result = JSON.parse(
         await native.publish(
@@ -670,18 +682,21 @@ export function createBackend<T>(options: BackendOptions<T>) {
       return result;
     });
   };
+  const notifyIn =
+    (tx: T) =>
+    ({ channel, records }: NotifyArgs): Promise<void> =>
+      publish(
+        tx,
+        records.map((record) => toRef(record, "notify")),
+        [channel],
+      ).then(() => undefined);
   const bindTransaction = (tx: T) => {
     if (sessions.has(tx)) throw new Error("transaction already bound");
     const session = new Session();
     sessions.set(tx, session);
     return {
       /** Reports a business change made outside a handler: every record gets a new stamp and the channel an invalidation. Unlike a handler's `publish`, this returns a promise the caller must await before the transaction commits. */
-      notify: ({ channel, records }: NotifyArgs) =>
-        publish(
-          tx,
-          records.map((record) => toRef(record, "notify")),
-          [channel],
-        ),
+      notify: notifyIn(tx),
       assertCommittable: () => session.assertCommittable(),
       afterCommit: () => {
         const scopes = [...session.touched];
@@ -717,6 +732,15 @@ export function createBackend<T>(options: BackendOptions<T>) {
     wakes.notify(committed);
     return result;
   };
+  /**
+   * Runs `body` in one application transaction with the external notify bound
+   * to it. After the adapter commits, the live subscribers of every channel
+   * notified are woken; a failure rolls back and wakes nobody. Not for use
+   * inside a handler, which already has a transaction and `publish`.
+   */
+  const transaction = <R,>(
+    body: (call: TransactionCall<T>) => Promise<R>,
+  ): Promise<R> => run((tx) => body({ tx, notify: notifyIn(tx) }));
   const text = (request: Uint8Array | string) =>
     typeof request === "string"
       ? request
@@ -761,14 +785,8 @@ export function createBackend<T>(options: BackendOptions<T>) {
       wakes.subscribe(scope, wake),
     notifyCommitted: (scopes: readonly string[]) => wakes.notify(scopes),
     closeLive: () => wakes.clear(),
-    /** Reports a business change made outside a handler: every record gets a new stamp and the channel an invalidation. Unlike a handler's `publish`, this returns a promise the caller must await before the transaction commits. */
-    notify: (tx: T, args: NotifyArgs) =>
-      publish(
-        tx,
-        args.records.map((record) => toRef(record, "notify")),
-        [args.channel],
-      ),
     bindTransaction,
+    transaction,
   };
   const authenticate = async (request: IncomingMessage) => {
     const id = await options.authenticate(request);

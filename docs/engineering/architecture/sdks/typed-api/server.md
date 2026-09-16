@@ -6,7 +6,7 @@ A backend author writes handlers (one per mutation) and loaders (one per model) 
 
 ## 3. Context and Scope
 
-`createBackend({database, authenticate, handlers, loaders, loaderHooks?, translateRejection?, onError?})` returns `{listen, notify, bindTransaction, …}`. Generated `backend.ts` supplies `Handlers<Tx>` and `Loaders<Tx>` so a missing or misnamed handler is a type error, and wraps `createBackend` with the compiled config ([Compiler / Generate](../../compiler/generate.md)). The behavior behind each option is owned by the [backend interface](../../server/backend-interface.md); this page is about the shape an application sees.
+`createBackend({database, authenticate, handlers, loaders, loaderHooks?, translateRejection?, onError?})` returns `{listen, transaction, bindTransaction, …}`. Generated `backend.ts` supplies `Handlers<Tx>` and `Loaders<Tx>` so a missing or misnamed handler is a type error, and wraps `createBackend` with the compiled config ([Compiler / Generate](../../compiler/generate.md)). The behavior behind each option is owned by the [backend interface](../../server/backend-interface.md); this page is about the shape an application sees.
 
 | Piece | Shape |
 | --- | --- |
@@ -14,7 +14,7 @@ A backend author writes handlers (one per mutation) and loaders (one per model) 
 | Change set | `changes.records` (the records the uploaded operations target) and `changes.add(record)` for a record the handler changed beyond them; every member is stamped, read back and returned in the receipt |
 | Loader | `({ids, tx, userId}: LoaderCall) => Promise<(Row \| null)[]>`, aligned with `ids`; one per retained model version, `Row` being that version's record type; no channel |
 | Rejecting one mutation, or refusing a read | throw `MutationRejected(code)`, or throw anything `translateRejection` maps to a code; from a loader in a push this rejects the mutation, in a pull it fails the page |
-| Publishing | `publish({channel})` or `publish({channel, records})` (`PublishArgs`) inside a handler; `backend.bindTransaction(tx).notify({channel, records})` (`NotifyArgs`) or the `backend.notify(tx, …)` shortcut outside one, which advance a stamp per record ([Notify](../../server/engine/notify.md)) |
+| Publishing | `publish({channel})` or `publish({channel, records})` (`PublishArgs`) inside a handler; `backend.transaction(async ({tx, notify}) => …)` outside one (`bindTransaction(tx).notify({channel, records})` for a transaction your framework already owns), which advance a stamp per record ([Notify](../../server/engine/notify.md)) |
 | Serving | `backend.listen({port, host?})` → `{url, close}` |
 | Development auth | `devAuth()` treats the bearer token as the user id; documented as development only |
 

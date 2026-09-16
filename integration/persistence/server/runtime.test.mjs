@@ -167,16 +167,20 @@ test('a pull reaches the loader of the declared model version and normalizes row
 });
 test('compaction materializes latest state; deletion is aligned null',async()=>{
  await backend.push('alice',push('dedup',2,[mutation(1,'updated')]));await assert.rejects(()=>backend.push('alice',push('dedup',1,[mutation(1,'first')])),/overlap/);
- await db.$transaction(async tx=>{await tx.$executeRawUnsafe("DELETE FROM business_task WHERE id='a'");await backend.notify(tx,{channel:'shared',records:[{model:'Task',identity:{id:'a'}}]});});
+ await backend.transaction(async({tx,notify})=>{await tx.$executeRawUnsafe("DELETE FROM business_task WHERE id='a'");await notify({channel:'shared',records:[{model:'Task',identity:{id:'a'}}]});});
  const page=await pull();assert.equal(page.changes.length,3);assert.deepEqual(page.changes.at(-1).state,null);assert.equal(page.toCursor,5);
  await assert.rejects(()=>pull('shared',999),/cursor ahead/);
 });
 test('50-row pages retain original cursor progression and remainder reaches head',async()=>{
- await db.$transaction(async tx=>{for(let i=0;i<51;i++){await tx.$executeRawUnsafe('INSERT INTO business_task(id,title) VALUES($1,$2)',`page-${i}`,'page');await backend.notify(tx,{channel:'shared',records:[{model:'Task',identity:{id:`page-${i}`}}]});}},{timeout:20000});
+ // backend.transaction has no timeout parameter (Database<Tx>.transaction takes only the body), so this
+ // 51-statement loop stays on db.$transaction with bindTransaction, the advanced path for this one call.
+ let wakeFifty;
+ await db.$transaction(async tx=>{const session=backend.bindTransaction(tx);try{for(let i=0;i<51;i++){await tx.$executeRawUnsafe('INSERT INTO business_task(id,title) VALUES($1,$2)',`page-${i}`,'page');await session.notify({channel:'shared',records:[{model:'Task',identity:{id:`page-${i}`}}]});}await session.assertCommittable();wakeFifty=session.afterCommit();}finally{session.close();}},{timeout:20000});
+ wakeFifty();
  const first=await pull('shared',5);assert.equal(first.changes.length,50);assert.equal(first.toCursor,55);const last=await pull('shared',55);assert.equal(last.changes.length,1);assert.equal(last.toCursor,56);
 });
 test('concurrent same-client retry executes once under PostgreSQL lock',async()=>{const before=called;const request=push('race',1,[mutation(1,'race','race')]);const receipts=await Promise.all([backend.push('alice',request),backend.push('alice',request)]);assert.equal(receipts[0],receipts[1]);assert.equal(called,before+1);});
-test('publication rollback uses user transaction and rejects unregistered models',async()=>{const before=(await pull('shared',56)).toCursor;await assert.rejects(()=>db.$transaction(async tx=>{await backend.notify(tx,{channel:'shared',records:[{model:'Task',identity:{id:'rollback'}}]});throw new Error('cancel');}),/cancel/);assert.equal((await pull('shared',56)).toCursor,before);await assert.rejects(()=>db.$transaction(tx=>backend.notify(tx,{channel:'shared',records:[{model:'Unknown',identity:{id:'x'}}]})),/unregistered loader/);});
+test('publication rollback uses user transaction and rejects unregistered models',async()=>{const before=(await pull('shared',56)).toCursor;await assert.rejects(()=>backend.transaction(async({tx,notify})=>{await notify({channel:'shared',records:[{model:'Task',identity:{id:'rollback'}}]});throw new Error('cancel');}),/cancel/);assert.equal((await pull('shared',56)).toCursor,before);await assert.rejects(()=>backend.transaction(({notify})=>notify({channel:'shared',records:[{model:'Unknown',identity:{id:'x'}}]})),/unregistered loader/);});
 test('loader defects abort pull instead of silently advancing its cursor',async()=>{
  const make=load=>createBackend({config:{...config,mutations:[]},database:prisma(db),authenticate,handlers:{},loaders:{task:load}});
  await assert.rejects(()=>make(async()=>[]).pull('alice',JSON.stringify({clientId:'c',scope:'shared',fromCursor:56,models:{Task:1}})),/misaligned loader/);
@@ -221,8 +225,8 @@ test('external transaction binding retains swallowed publication failure until i
  assert.equal((await db.$queryRawUnsafe("SELECT * FROM business_task WHERE id='external'")).length,0);
 });
 test('repeatable-read runner keeps head, scan, and loader coherent across concurrent publication',async()=>{
- await db.$transaction(tx=>backend.notify(tx,{channel:'snapshot',records:[{model:'Task',identity:{id:'a'}}]}));let changed=false;
- const reader=createBackend({config:{...config,mutations:[]},database:{transaction:prismaTransactions(db),persistence:tx=>{const storage=new PrismaPersistence(tx);return {call:async r=>{const result=await storage.call(r);if(r.op==='head'&&!changed){changed=true;await db.$transaction(other=>backend.notify(other,{channel:'snapshot',records:[{model:'Task',identity:{id:'b'}}]}));}return result;}}}},authenticate,handlers:{},loaders:{async task({ids}){return ids.map(()=>null)}}});
+ await backend.transaction(({notify})=>notify({channel:'snapshot',records:[{model:'Task',identity:{id:'a'}}]}));let changed=false;
+ const reader=createBackend({config:{...config,mutations:[]},database:{transaction:prismaTransactions(db),persistence:tx=>{const storage=new PrismaPersistence(tx);return {call:async r=>{const result=await storage.call(r);if(r.op==='head'&&!changed){changed=true;await backend.transaction(({notify})=>notify({channel:'snapshot',records:[{model:'Task',identity:{id:'b'}}]}));}return result;}}}},authenticate,handlers:{},loaders:{async task({ids}){return ids.map(()=>null)}}});
  const page=JSON.parse(await reader.pull('alice',JSON.stringify({clientId:'c',scope:'snapshot',fromCursor:0,models:{Task:1}})));assert.equal(page.toCursor,1);assert.equal(page.changes.length,1);
  const next=JSON.parse(await reader.pull('alice',JSON.stringify({clientId:'c',scope:'snapshot',fromCursor:1,models:{Task:1}})));assert.equal(next.toCursor,2);assert.equal(next.changes.length,1);
 });
@@ -313,7 +317,7 @@ test('loader safely converts PostgreSQL BigInt scalar and list values without wi
       'SELECT $1::bigint AS count, ARRAY[$1::bigint,(-$1)::bigint] AS counts', value,
     )}},
   });
-  await db.$transaction(tx => bigintBackend.notify(tx, {channel: 'bigints', records: [{model: 'Counter', identity: {id: 'one'}}]}));
+  await bigintBackend.transaction(({notify}) => notify({channel: 'bigints', records: [{model: 'Counter', identity: {id: 'one'}}]}));
   const request = JSON.stringify({clientId: 'bigint-reader', scope: 'bigints', fromCursor: 0,models:{Counter:1}});
   let page = JSON.parse(await bigintBackend.pull('alice', request));
   assert.deepEqual(page.changes[0].state, {count: Number.MAX_SAFE_INTEGER, counts: [Number.MAX_SAFE_INTEGER, -Number.MAX_SAFE_INTEGER]});
@@ -425,7 +429,7 @@ test('one push publishing to two channels carries the same stamp to both and adv
  assert.deepEqual([await head('shared'),await head('other')],[before[0]+1,before[1]+1]);
 });
 test('an external notify advances the stamp on every call; a push publishing an unchanged record does not',async()=>{
- const notify=()=>db.$transaction(tx=>backend.notify(tx,{channel:'other',records:[{model:'Task',identity:{id:'pub-only'}}]}));
+ const notify=()=>backend.transaction(({notify})=>notify({channel:'other',records:[{model:'Task',identity:{id:'pub-only'}}]}));
  const start=await recordStamp('pub-only');await notify();await notify();assert.equal(await recordStamp('pub-only'),start+2,'an external notification reports a business change');
  const [[,cursor,stamp]]=await invalidations('pub-only');assert.equal(stamp,start+2);
  await backend.push('alice',push('pub-only',3,[mutation(3,'publish-only','pub-only-c')]));
@@ -464,7 +468,7 @@ test('scan pairs the invalidation cursor with the current record stamp; a missin
  await assert.rejects(()=>pull('orphan',0),/Record metadata missing/);
 });
 test('concurrent notifies of one record receive distinct stamps',async()=>{
- const notify=()=>db.$transaction(async tx=>{await backend.notify(tx,{channel:'race-stamp',records:[{model:'Task',identity:{id:'stamp-race'}}]});});
+ const notify=()=>backend.transaction(async({notify})=>{await notify({channel:'race-stamp',records:[{model:'Task',identity:{id:'stamp-race'}}]});});
  await Promise.all([notify(),notify(),notify(),notify()]);
  assert.equal(await recordStamp('stamp-race'),4);
  const page=await pull('race-stamp',0);assert.equal(page.changes.length,1);assert.equal(page.changes[0].stamp,4);
@@ -696,4 +700,40 @@ test('the live stream serves the declared model version and refuses an unretaine
   undeclared.send(JSON.stringify({type:'subscribe',scopes:['shared']}));
   assert.equal(await closedToo,1002);
  }finally{await server.close();}
+});
+
+test('backend.transaction publishes in the application transaction and wakes after commit',async()=>{
+ let woke=0;const unsubscribe=backend.onCommitted('shared',()=>{woke++;});
+ const from=await head('shared');
+ const result=await backend.transaction(async({tx,notify})=>{await write(tx,'tx-1','via transaction');await notify({channel:'shared',records:[{model:'Task',identity:{id:'tx-1'}}]});return 'done';});
+ assert.equal(result,'done');await delay(0);assert.equal(woke,1,'one wake after commit');
+ const page=await pull('shared',from);assert.ok(page.changes.some(c=>c.identity.id==='tx-1'&&c.state.title==='via transaction'),JSON.stringify(page));
+ unsubscribe();
+});
+test('backend.transaction rolls back a failing body and wakes nobody',async()=>{
+ let woke=0;const unsubscribe=backend.onCommitted('shared',()=>{woke++;});
+ const before=await head('shared');
+ await assert.rejects(()=>backend.transaction(async({tx,notify})=>{await write(tx,'tx-rollback','never');await notify({channel:'shared',records:[{model:'Task',identity:{id:'tx-rollback'}}]});throw new Error('cancel');}),/cancel/);
+ await delay(0);assert.equal(woke,0);assert.equal(await head('shared'),before);
+ assert.equal((await db.$queryRawUnsafe("SELECT count(*) AS count FROM business_task WHERE id='tx-rollback'"))[0].count,0n);
+ unsubscribe();
+});
+test('backend.transaction refuses to commit an unawaited notify',async()=>{
+ const before=await head('shared');
+ await assert.rejects(()=>backend.transaction(async({tx,notify})=>{await write(tx,'tx-unawaited','never');void notify({channel:'shared',records:[{model:'Task',identity:{id:'tx-unawaited'}}]});}),/unawaited/);
+ assert.equal(await head('shared'),before);
+});
+test('backend.transaction wakes a connected live subscriber without reconnect',async()=>{
+ const server=await backend.listen({port:0});const port=Number(new URL(server.url).port);
+ const socket=await openSocket(port);const frames=[];socket.addEventListener('message',event=>frames.push(JSON.parse(String(event.data))));
+ socket.send(JSON.stringify({type:'subscribe',scopes:['shared'],models:{Task:1}}));while(frames.length<1)await delay(5);
+ await backend.transaction(async({tx,notify})=>{await write(tx,'tx-live','live via transaction');await notify({channel:'shared',records:[{model:'Task',identity:{id:'tx-live'}}]});});
+ while(frames.length<2)await delay(5);
+ assert.deepEqual(frames[1].changes.at(-1).identity,{id:'tx-live'});assert.deepEqual(frames[1].changes.at(-1).state,{title:'live via transaction'});
+ socket.close();await new Promise(resolve=>socket.addEventListener('close',resolve,{once:true}));await server.close();
+});
+test('the unbound notify shortcut is gone and bindTransaction still works end to end',async()=>{
+ assert.equal(backend.notify,undefined);
+ const after=await db.$transaction(async tx=>{const session=backend.bindTransaction(tx);try{await session.notify({channel:'shared',records:[{model:'Task',identity:{id:'bound-still-works'}}]});await session.assertCommittable();return session.afterCommit();}finally{session.close();}});
+ after();
 });
