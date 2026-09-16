@@ -45,6 +45,4 @@ Rust evidence executed 2026-09-15 (`cargo test -p ahead-server --locked`); the P
 
 **Accepted limitation.** Wakes are in-process: a second server instance, or a publication from another process, does not wake this process's sockets; those clients catch up on reconnect. Cross-process notification delivery is [#62](https://github.com/zanminwang/ahead/issues/62).
 
-
-
 **Potential risk.** Every publication to a channel updates the same channel row under a row lock, so handlers touching one hot channel serialize and may retry on serialization failure; every change to a record locks its stamp row the same way. Not measured ([#12](https://github.com/zanminwang/ahead/issues/12)).
