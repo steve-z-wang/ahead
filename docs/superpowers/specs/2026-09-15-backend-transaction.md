@@ -62,8 +62,8 @@ Unchanged contract (`notify`, `assertCommittable`, `afterCommit`, `close`). Docu
 
 ## 6. Done when (from #50)
 
-- [ ] A publication made through `backend.transaction` reaches an already connected live subscriber without reconnect (PostgreSQL test with a real WebSocket).
-- [ ] A body that throws rolls back business writes and publication and wakes nobody; an un-awaited `notify` cannot be committed unnoticed.
-- [ ] `backend.notify(tx, …)` no longer exists; `bindTransaction` keeps its tested contract.
-- [ ] Every caller in §4 migrated; e2e and persistence suites pass; the To-do and React Native servers typecheck.
-- [ ] Docs in §5 updated.
+- [x] A publication made through `backend.transaction` reaches an already connected live subscriber without reconnect (PostgreSQL test with a real WebSocket).
+- [x] A body that throws rolls back business writes and publication and wakes nobody; an un-awaited `notify` cannot be committed unnoticed.
+- [x] `backend.notify(tx, …)` no longer exists; `bindTransaction` keeps its tested contract.
+- [x] Every caller in §4 migrated; e2e and persistence suites pass; the To-do and React Native servers typecheck.
+- [x] Docs in §5 updated.
