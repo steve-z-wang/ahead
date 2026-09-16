@@ -177,7 +177,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 **Interfaces:**
 - Consumes: `backend.transaction(async ({ tx, notify }) => …)` from Task 1.
 
-- [ ] **Step 1: Rewrite each call**
+- [x] **Step 1: Rewrite each call**
 
 Pattern, for a call that only publishes:
 
@@ -203,12 +203,12 @@ For the 51-row loop that passes `{timeout:20000}` to `db.$transaction`: try `bac
 
 Tests whose subject is `bindTransaction` (`pending unawaited publication prevents outer transaction commit`, `external transaction binding retains swallowed publication failure…`, the bound sections of `live transport negotiates…`, the `versioned` backend test near the end) stay on `bindTransaction`.
 
-- [ ] **Step 2: Run the suite**
+- [x] **Step 2: Run the suite**
 
 Run: `bash integration/persistence/server/run.sh`
 Expected: all PASS. Record the passed count.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add integration/persistence/server/runtime.test.mjs
