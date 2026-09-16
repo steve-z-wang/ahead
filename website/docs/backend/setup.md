@@ -68,21 +68,16 @@ Publish to every channel that provides a record whenever that record changes, in
 
 ## Background jobs
 
-Outside a Handler there is no readback and no receipt, so a change must be published to reach clients. Use `backend.notify(tx, { channel, records })` for a one-shot publication bound to an existing transaction, or `backend.bindTransaction(tx).notify({ channel, records })` when the transaction owner needs to await commit and only then wake live subscribers. Either advances the stamp of every record named, on every call, and publishes it to the channel:
+Outside a Handler there is no readback and no receipt, so a change must be published to reach clients. Use `backend.transaction`; it advances the stamp of every record named, publishes it to the channel inside the same transaction as your writes, and wakes live subscribers after commit:
 
 ```ts
-const notifyCommitted = await db.$transaction(async tx => {
-  const session = backend.bindTransaction(tx);
-  try {
-    await session.notify({ channel: 'book:demo', records: changes });
-    await session.assertCommittable();
-    return session.afterCommit();
-  } finally {
-    session.close();
-  }
-}, { isolationLevel: 'RepeatableRead' });
-notifyCommitted();
+await backend.transaction(async ({ tx, notify }) => {
+  await tx.entry.update({ where: { id: 'entry-1' }, data: { text: 'From a job' } });
+  await notify({ channel: 'book:demo', records: [Entry({ id: 'entry-1' })] });
+});
 ```
+
+If your framework already owns the transaction, see [externally owned transactions](api.md#externally-owned-transactions).
 
 ## Transaction ownership
 

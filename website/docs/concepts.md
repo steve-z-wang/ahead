@@ -30,9 +30,9 @@ The TypeScript backend SDK connects three operations to your application:
 
 After a Handler returns, the framework allocates a stamp for every changed Record, reads those Records back through the Loaders in the same transaction, and returns their content in the receipt. The application provides the transaction runner. Batch processing uses one outer transaction with per-mutation savepoints; business writes, stamps, publications and receipts participate in that transaction. A business rejection can roll back one mutation's savepoint. Unexpected failures abort the batch.
 
-Background jobs can also publish inside an existing application transaction with `backend.notify`, which advances the stamps of the records it names. A publication inside that transaction is not proof of commit: use the SDK's completion check and invoke the returned wakeup hook only after the transaction resolves.
+Background jobs publish through `backend.transaction`, which runs the job's writes and its publication in one application transaction, advances the stamps of the records it names, and wakes live subscribers once the transaction commits.
 
-The [backend SDK guide](backend/setup.md) shows both registration and transaction-bound publication. The first adapter targets [Prisma/PostgreSQL](backend/prisma.md).
+The [backend SDK guide](backend/setup.md) shows registration and background publication. The first adapter targets [Prisma/PostgreSQL](backend/prisma.md).
 
 ## Channel and Cursor
 

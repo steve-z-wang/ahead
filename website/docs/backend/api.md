@@ -261,9 +261,29 @@ Generated clients use all three routes automatically from one `server` configura
 
 ## Background writes
 
-Writes outside handlers have no readback and no receipt; they reach clients only through channels. `await backend.notify(tx, args)` advances the stamp of every record in `args.records` and publishes them to `args.channel` inside your existing transaction. This alone does not signal a later commit to live sessions.
+Writes outside handlers have no readback and no receipt; they reach clients only through channels. Run them through `backend.transaction`: the framework opens the application transaction, `notify` advances the stamp of every record named and publishes them to the channel inside it, and once the transaction commits the framework wakes the live subscribers of those channels.
 
-For commit-aware wakeups, use a bound session:
+```ts
+await backend.transaction(async ({ tx, notify }) => {
+  await tx.entry.update({ where: { id: 'entry-1' }, data: { text: 'From a job' } });
+  await notify({
+    channel: 'book:demo', records: [Entry({ id: 'entry-1' })],
+  });
+});
+```
+
+`tx` is the transaction of the `Database<Tx>` adapter passed to `createBackend`, and `Entry` is the generated reference function. The body's return value is returned. Await every `notify`; a pending notify when the body returns fails the transaction. If the body throws, the transaction rolls back and nobody is woken; the error propagates so the adapter can retry serialization failures. Do not call `backend.transaction` from a handler: a handler already has a transaction and publishes with `publish`.
+
+| `TransactionCall<Tx>` member | Contract |
+| --- | --- |
+| `tx` | The application transaction; write business data through it |
+| `notify(args)` | Await the stamps and the publication in `tx`; `args` is `NotifyArgs`, `{ channel: string, records: readonly (RecordRef | object)[] }` |
+
+Unlike a handler's `publish`, `notify` is asynchronous and allocates a new stamp per record on every call, because it is the only place the change is reported. Wakeups are process-local; distributed wake delivery needs additional application infrastructure.
+
+### Externally owned transactions
+
+When your framework already owns the transaction and Ahead cannot open it, bind that transaction instead and perform the completion and wake steps yourself:
 
 ```ts
 const afterCommit = await database.transaction(async tx => {
@@ -282,16 +302,14 @@ const afterCommit = await database.transaction(async tx => {
 afterCommit();
 ```
 
-Here `database` is the same `Database<Tx>` adapter passed to `createBackend`, and `Entry` is the generated reference function. The transaction runner must resolve only after committing.
+The transaction runner must resolve only after committing. Never invoke the commit callback if the transaction fails.
 
 | Bound-session method | Contract |
 | --- | --- |
-| `notify(args)` | Await the stamps and the publication in the supplied transaction; `args` is `NotifyArgs`, `{ channel: string, records: readonly (RecordRef | object)[] }` |
+| `notify(args)` | Await the stamps and the publication in the supplied transaction |
 | `assertCommittable()` | Await/check pending work; failure must abort the transaction |
 | `afterCommit()` | Capture a zero-argument wakeup callback; call it only after the database commits |
 | `close()` | Release the bound session, including on rollback |
-
-Unlike a handler's `publish`, external `notify` is asynchronous, must be awaited, and allocates a new stamp per record on every call, because it is the only place the change is reported. Never invoke the commit callback if the transaction fails. Wakeups are process-local; distributed wake delivery needs additional application infrastructure.
 
 ## Extension points
 

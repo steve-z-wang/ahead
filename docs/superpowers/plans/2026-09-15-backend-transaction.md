@@ -347,7 +347,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Modify: `website/docs/backend/api.md` ("Background writes"), `website/docs/backend/setup.md` ("Background jobs"), `website/docs/concepts.md` (the "Background jobs can also publish…" paragraph), `website/docs/api-index.md` (the `backend.notify` row)
 - Modify: `docs/engineering/testing/components/server.md` (Notify row's last column), `docs/engineering/testing/integration/persistence.md` (add a row), `docs/engineering/testing/end-to-end.md` (the sentence about the shortcut), `docs/engineering/testing/review.md` (item 1)
 
-- [ ] **Step 1: `notify.md`**
+- [x] **Step 1: `notify.md`**
 
 §3 table: replace the two "application code" rows with
 
@@ -372,7 +372,7 @@ Add a section `## 9. Architecture Decisions` between §6 and §10:
 
 §11: delete the paragraph starting `**Problem: the shortcut \`backend.notify(tx, …)\` never wakes live subscribers.**`. Keep the accepted limitation and the potential risk. Also update the "Code:" line in §5 to name `transaction` next to `Session.touched` and `WakeHub`.
 
-- [ ] **Step 2: Website docs**
+- [x] **Step 2: Website docs**
 
 `website/docs/backend/api.md`, "Background writes": replace the section body (up to "## Extension points") with
 
@@ -460,7 +460,7 @@ and the following sentence `The [backend SDK guide](backend/setup.md) shows both
 
 If `api-index.md` has an "Advanced interfaces" table, put the `bindTransaction` row there instead.
 
-- [ ] **Step 3: Testing docs**
+- [x] **Step 3: Testing docs**
 
 `docs/engineering/testing/components/server.md`, Notify row, last column: replace the text about the shortcut with `none; external writes are covered by the `backend.transaction` tests in [Persistence](../integration/persistence.md).`
 
@@ -474,12 +474,12 @@ If `api-index.md` has an "Advanced interfaces" table, put the `bindTransaction` 
 
 `docs/engineering/testing/review.md`, item 1: remove `the \`backend.notify(tx, …)\` shortcut that never wakes subscribers ([#50](https://github.com/zanminwang/ahead/issues/50), [Notify §11](../architecture/server/engine/notify.md));` and fix the sentence.
 
-- [ ] **Step 4: Sweep**
+- [x] **Step 4: Sweep**
 
 Run: `grep -rn "backend.notify\|bindTransaction\|afterCommit" docs website README.md packages/server/README.md examples --include='*.md'`
 Expected: every remaining mention is the advanced path or history. Check that every relative link and anchor you wrote resolves (`#externally-owned-transactions` must match the heading in `api.md`).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add docs website README.md packages/server/README.md
