@@ -127,7 +127,7 @@ export async function createExample() {
       await db.$executeRawUnsafe(
         'CREATE TABLE IF NOT EXISTS "Todo" (id TEXT PRIMARY KEY, title TEXT NOT NULL, done BOOLEAN NOT NULL, "createdById" TEXT NOT NULL REFERENCES "User"(id))',
       );
-      await db.$transaction((tx) => seed(tx, backend));
+      await seed(backend);
     },
     listen(port: number) {
       return backend.listen({ port }).then((started) => {

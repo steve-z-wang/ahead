@@ -227,7 +227,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Modify: `examples/todo/seed.mts` (`seed`), `examples/todo/server.mts` (the `seed(tx, backend)` call near line 130)
 - Modify: `integration/e2e/parity.test.mjs` (`reseed`), `integration/e2e/round-trip.test.mjs` (the 55-row seed)
 
-- [ ] **Step 1: Fixture server**
+- [x] **Step 1: Fixture server**
 
 In `integration/e2e/fixtures/round-trip/server.mts`, replace
 
@@ -261,11 +261,11 @@ with
       });
 ```
 
-- [ ] **Step 2: React Native server**
+- [x] **Step 2: React Native server**
 
 Same substitution in `integration/platform/react-native/server.mts` (its `create` has `note: null`; keep it).
 
-- [ ] **Step 3: To-do seed**
+- [x] **Step 3: To-do seed**
 
 In `examples/todo/seed.mts`, change the function to open the transaction itself:
 
@@ -295,7 +295,7 @@ export async function seed(backend: Backend): Promise<void> {
 
 Remove the now-unused `Tx` alias only if nothing else in the file uses it (`Backend` still needs `createBackend<Tx>`; keep `Tx` if it is referenced there). In `examples/todo/server.mts`, replace `await db.$transaction((tx) => seed(tx, backend));` with `await seed(backend);`. Grep `examples/todo` for other `seed(` callers and `Tx` imports from `seed.mts`.
 
-- [ ] **Step 4: e2e tests**
+- [x] **Step 4: e2e tests**
 
 `integration/e2e/parity.test.mjs`, `reseed`:
 
@@ -318,18 +318,18 @@ async function reseed(app){
   });
 ```
 
-- [ ] **Step 5: Confirm nothing else calls the shortcut**
+- [x] **Step 5: Confirm nothing else calls the shortcut**
 
 Run: `grep -rn "backend.notify(\|\.notify(tx" --include='*.mts' --include='*.mjs' --include='*.ts' . | grep -v node_modules | grep -v "^./.worktrees" | grep -v "^./target"`
 Expected: no hits outside `bindTransaction(...).notify` session calls.
 
-- [ ] **Step 6: Typecheck and run e2e**
+- [x] **Step 6: Typecheck and run e2e**
 
 Typecheck the touched `.mts` files the way the repo does (look for a `typecheck` or `check` script in the root `package.json`, `examples/todo/package.json` and `integration/platform/react-native/package.json`; if none, use `npx tsc --noEmit -p <dir>` where a `tsconfig.json` exists). The React Native server cannot be run here; typechecking it is the evidence.
 
 Run the e2e suite with the command in `docs/engineering/testing/end-to-end.md` (it creates a temporary PostgreSQL cluster). Expected: PASS, including `parity` and `round-trip`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add integration/e2e examples/todo integration/platform/react-native/server.mts

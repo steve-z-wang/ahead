@@ -59,13 +59,13 @@ export async function createExample() {
       await db.$executeRawUnsafe(
         'CREATE TABLE IF NOT EXISTS "Entry" (id TEXT PRIMARY KEY,text TEXT NOT NULL,note TEXT)',
       );
-      await db.$transaction(async (tx) => {
+      await backend.transaction(async ({ tx, notify }) => {
         await tx.entry.upsert({
           where: { id: "entry-1" },
           create: { id: "entry-1", text: "Hello from the server" },
           update: {},
         });
-        await backend.notify(tx, {
+        await notify({
           channel: "book:demo",
           records: [{ model: "Entry", identity: { id: "entry-1" } }],
         });
